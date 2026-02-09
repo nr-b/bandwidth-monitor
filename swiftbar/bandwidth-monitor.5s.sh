@@ -124,6 +124,15 @@ else empty end),
     "  Clients:  \(.wifi.clients) | font=JetBrainsMono-Regular size=12"
 else empty end),
 
+# NAT section (only if present)
+(if .nat then
+    "---",
+    "NAT — Conntrack | size=11 color=#888888",
+    "  Connections: \(.nat.total)/\(.nat.max) (\(.nat.usage_pct * 10 | round / 10)%) | font=JetBrainsMono-Regular size=12\(if .nat.usage_pct > 80 then " color=#ef4444" elif .nat.usage_pct > 50 then " color=#eab308" else "" end)",
+    "  IPv4: \(.nat.ipv4)  IPv6: \(.nat.ipv6) | font=JetBrainsMono-Regular size=12",
+    "  SNAT: \(.nat.snat)  DNAT: \(.nat.dnat) | font=JetBrainsMono-Regular size=12"
+else empty end),
+
 # Footer
 "---",
 "Open Dashboard | href=\($server)",

@@ -31,6 +31,7 @@
 
         <div class="main-nav">
             <button class="main-nav-tab active" data-tab="traffic" onclick="window._switchTab('traffic')">Traffic</button>
+            <button class="main-nav-tab" data-tab="nat" onclick="window._switchTab('nat')">NAT</button>
             <button class="main-nav-tab" data-tab="dns" onclick="window._switchTab('dns')">DNS</button>
             <button class="main-nav-tab" data-tab="wifi" onclick="window._switchTab('wifi')">WiFi</button>
         </div>
@@ -170,6 +171,168 @@
         </div>
 
         </div><!-- /tabTraffic -->
+
+        <div class="tab-panel" id="tabNat">
+        <div id="natNoData" style="text-align:center;padding:48px 16px;color:var(--text-2)">
+            <div style="font-size:14px;font-weight:500;margin-bottom:4px">Conntrack not available</div>
+            <div style="font-size:12px">Requires Linux with nf_conntrack module loaded (/proc/net/nf_conntrack)</div>
+        </div>
+        <div id="natHasData" style="display:none">
+            <div class="card" style="margin-bottom:16px">
+                <div class="card-header">
+                    <div>
+                        <div class="card-title">NAT &mdash; Connection Tracking</div>
+                        <div class="card-subtitle">Active conntrack entries</div>
+                    </div>
+                    <div style="font-size:11px;color:var(--text-2)" id="natStatus"></div>
+                </div>
+            </div>
+            <div class="nat-stats-row">
+                <div class="nat-stat-card">
+                    <div class="nat-stat-label">Active Connections</div>
+                    <div class="nat-stat-value total" id="natTotal">--</div>
+                </div>
+                <div class="nat-stat-card">
+                    <div class="nat-stat-label">Max Connections</div>
+                    <div class="nat-stat-value max" id="natMax">--</div>
+                </div>
+                <div class="nat-stat-card">
+                    <div class="nat-stat-label">Table Usage</div>
+                    <div class="nat-stat-value pct" id="natUsagePct">--</div>
+                </div>
+                <div class="nat-stat-card">
+                    <div class="nat-stat-label">IPv4</div>
+                    <div class="nat-stat-value v4" id="natIPv4">--</div>
+                </div>
+                <div class="nat-stat-card">
+                    <div class="nat-stat-label">IPv6</div>
+                    <div class="nat-stat-value v6" id="natIPv6">--</div>
+                </div>
+            </div>
+            <div class="breakdown-row">
+                <div class="breakdown-card">
+                    <div class="card-header">
+                        <div>
+                            <div class="card-title">Protocols</div>
+                            <div class="card-subtitle">Connection distribution</div>
+                        </div>
+                    </div>
+                    <div class="breakdown-chart-body">
+                        <div class="breakdown-chart-wrap"><canvas id="natProtoChart"></canvas></div>
+                        <div class="breakdown-legend" id="natProtoLegend"></div>
+                    </div>
+                </div>
+                <div class="breakdown-card">
+                    <div class="card-header">
+                        <div>
+                            <div class="card-title">States</div>
+                            <div class="card-subtitle">TCP connection states</div>
+                        </div>
+                    </div>
+                    <div class="breakdown-chart-body">
+                        <div class="breakdown-chart-wrap"><canvas id="natStateChart"></canvas></div>
+                        <div class="breakdown-legend" id="natStateLegend"></div>
+                    </div>
+                </div>
+                <div class="breakdown-card">
+                    <div class="card-header">
+                        <div>
+                            <div class="card-title">NAT Type</div>
+                            <div class="card-subtitle">SNAT / DNAT / Both / None</div>
+                        </div>
+                    </div>
+                    <div class="breakdown-chart-body">
+                        <div class="breakdown-chart-wrap"><canvas id="natTypeChart"></canvas></div>
+                        <div class="breakdown-legend" id="natTypeLegend"></div>
+                    </div>
+                </div>
+                <div class="breakdown-card">
+                    <div class="card-header">
+                        <div>
+                            <div class="card-title">IP Version</div>
+                            <div class="card-subtitle">IPv4 vs IPv6 connections</div>
+                        </div>
+                    </div>
+                    <div class="breakdown-chart-body">
+                        <div class="breakdown-chart-wrap"><canvas id="natIPvChart"></canvas></div>
+                        <div class="breakdown-legend" id="natIPvLegend"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="two-col" style="margin-bottom:20px">
+                <div class="card">
+                    <div class="card-header">
+                        <div>
+                            <div class="card-title">Top LAN Clients</div>
+                            <div class="card-subtitle">By connection count</div>
+                        </div>
+                    </div>
+                    <table>
+                        <thead><tr><th>#</th><th>LAN IP</th><th>Connections</th><th style="width:28%"></th></tr></thead>
+                        <tbody id="natSrcTable">
+                            <tr><td colspan="4" class="empty-state">Waiting for data</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <div>
+                            <div class="card-title">Top Remote Destinations</div>
+                            <div class="card-subtitle">By connection count</div>
+                        </div>
+                    </div>
+                    <table>
+                        <thead><tr><th>#</th><th>Remote IP</th><th>Connections</th><th style="width:28%"></th></tr></thead>
+                        <tbody id="natDstTable">
+                            <tr><td colspan="4" class="empty-state">Waiting for data</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="nat-version-tabs">
+                <button class="nat-version-tab active" data-ver="v4" onclick="window._switchNatVersion('v4')">IPv4 Translations</button>
+                <button class="nat-version-tab" data-ver="v6" onclick="window._switchNatVersion('v6')">IPv6 Translations</button>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <div>
+                        <div class="card-title" id="natTableTitle">IPv4 NAT Translations</div>
+                        <div class="card-subtitle" id="natTableSubtitle">Active conntrack entries (top 200 by TTL)</div>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center">
+                        <input type="text" id="natSearch" placeholder="Filter entries…" style="padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text-1);font-size:12px;width:200px;outline:none">
+                        <select id="natFilter" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text-1);font-size:12px;outline:none">
+                            <option value="all">All NAT Types</option>
+                            <option value="snat">SNAT</option>
+                            <option value="dnat">DNAT</option>
+                            <option value="both">Both</option>
+                            <option value="none">No NAT</option>
+                        </select>
+                    </div>
+                </div>
+                <div style="max-height:600px;overflow-y:auto">
+                <table>
+                    <thead><tr>
+                        <th>Proto</th>
+                        <th>State</th>
+                        <th>Original Src</th>
+                        <th>Original Dst</th>
+                        <th>Reply Src</th>
+                        <th>Reply Dst</th>
+                        <th>NAT</th>
+                        <th>Bytes</th>
+                        <th>Packets</th>
+                        <th>TTL</th>
+                    </tr></thead>
+                    <tbody id="natEntryTable">
+                        <tr><td colspan="10" class="empty-state">Waiting for data</td></tr>
+                    </tbody>
+                </table>
+                </div>
+            </div>
+        </div>
+        </div><!-- /tabNat -->
 
         <div class="tab-panel" id="tabDns">
         <div class="dns-section" id="dnsSection">
