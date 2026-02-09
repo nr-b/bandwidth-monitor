@@ -33,6 +33,18 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 - **Per-client traffic table** — hostname, IP, SSID, AP, signal strength (color badges), RX/TX totals, live rates
 - **Search & sort** — filter clients by name/IP/MAC/SSID/AP; sort by traffic, rate, name, or signal
 
+### NAT Tab
+- **Conntrack via netlink** — uses [ti-mo/conntrack](https://github.com/ti-mo/conntrack) to query the kernel's connection tracking table directly via Netlink (no `/proc/net/nf_conntrack` needed)
+- **Connection table overview** — total active connections, max table size, usage percentage (color-coded warnings at >50% and >80%)
+- **IPv4 / IPv6 split** — separate counts and sub-tabs for browsing entries by IP version
+- **Protocol breakdown** — TCP / UDP / ICMP / other pie chart
+- **TCP state distribution** — ESTABLISHED, TIME_WAIT, SYN_SENT, CLOSE_WAIT, etc. with color-coded badges
+- **NAT type detection** — classifies each flow as SNAT, DNAT, both, or none by comparing original vs reply tuples
+- **Per-flow counters** — bytes and packets per connection (requires `net.netfilter.nf_conntrack_acct=1`)
+- **Top sources & destinations** — ranked tables by connection count
+- **Full entry table** — original and reply tuples with translated addresses highlighted, searchable and filterable by NAT type
+- **macOS menu bar** — SwiftBar plugin shows connection count, table usage, IPv4/IPv6 split, and SNAT/DNAT counts
+
 ### General
 - **WebSocket live updates** — 1-second refresh with automatic reconnection
 - **Dark/light/auto theme** — saved to localStorage
@@ -43,6 +55,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 
 - **Linux** — reads `/proc/net/dev` and `/sys/class/net/`
 - **libpcap-dev** — for packet capture (top talkers)
+- **nf_conntrack kernel module** — for the NAT tab (loaded automatically on most routers)
 - **Go 1.24+** — to build
 
 ```bash
@@ -102,7 +115,21 @@ chmod 0600 /opt/bandwidth-monitor/.env
 | `LOCAL_NETS` | *(auto-detect)* | Comma-separated CIDRs for RX/TX direction detection (e.g. `192.0.2.0/24,2001:db8::/48`). Auto-discovered from local interfaces if not set. |
 | `SPAN_DEVICE` | *(disabled)* | SPAN/mirror port interface for direction-aware RX/TX (requires `LOCAL_NETS`; e.g. `eth1`) |
 
-The DNS tab supports either **AdGuard Home** or **NextDNS** (mutually exclusive; AdGuard takes priority if both are configured). The WiFi tab is only shown when UniFi is configured.
+The DNS tab supports either **AdGuard Home** or **NextDNS** (mutually exclusive; AdGuard takes priority if both are configured). The WiFi tab is only shown when UniFi is configured. The NAT tab appears automatically when the `nf_conntrack` kernel module is loaded and the process has `CAP_NET_ADMIN`.
+
+### Conntrack (NAT) Configuration
+
+The NAT tab works out of the box on any Linux system with `nf_conntrack` loaded — no configuration needed. To enable per-flow byte/packet counters:
+
+```bash
+# Enable conntrack accounting (required for per-flow bytes/packets)
+sysctl -w net.netfilter.nf_conntrack_acct=1
+
+# Make persistent
+echo 'net.netfilter.nf_conntrack_acct=1' >> /etc/sysctl.conf
+```
+
+The binary needs `CAP_NET_ADMIN` (or root) for netlink access. The included systemd service already grants this via `AmbientCapabilities`.
 
 The UniFi integration auto-detects both legacy controllers (port 8443) and UniFi OS devices (UDM/UDR/CloudKey Gen2+, port 443).
 
@@ -280,6 +307,7 @@ The plugin tries each server in order with a 1-second timeout. The preferred int
 ```
 main.go                   → entry point, env config, wires all components
 collector/                → reads /proc/net/dev, computes rates, 24h history, VPN routing
+conntrack/                → netlink-based conntrack (NAT) table reader via ti-mo/conntrack
 talkers/                  → pcap packet capture, per-IP tracking, 1-min bucket aggregation
 handler/                  → HTTP REST API + WebSocket handler
 dns/                      → common DNS provider interface
@@ -318,6 +346,7 @@ Makefile                  → build, install, GeoIP download targets
 | `/api/talkers/volume` | GET | Top 10 by 24h volume |
 | `/api/dns` | GET | DNS summary (AdGuard Home or NextDNS) |
 | `/api/wifi` | GET | UniFi WiFi summary |
+| `/api/conntrack` | GET | NAT / conntrack summary (connections, states, NAT types, entries) |
 | `/api/summary` | GET | Compact summary for menu bar clients |
 | `/api/ws` | WS | WebSocket — pushes all data every second |
 
@@ -352,5 +381,6 @@ Makefile                  → build, install, GeoIP download targets
 - **Top talkers** require `root` or `CAP_NET_RAW` for packet capture
 - If running without root, the UI works but top-talker tables show "No data"
 - **GeoIP** is optional — without MMDB files, country/ASN columns are simply hidden
+- **NAT tab** requires `CAP_NET_ADMIN` (or root) for netlink access to the conntrack table; enable `nf_conntrack_acct=1` for per-flow byte counters
 - **DNS and WiFi** tabs only appear when their respective integrations are configured
 - All assets are embedded in the binary — single-file deployment, no runtime dependencies

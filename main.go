@@ -16,6 +16,7 @@ import (
 
 	"bandwidth-monitor/adguard"
 	"bandwidth-monitor/collector"
+	"bandwidth-monitor/conntrack"
 	"bandwidth-monitor/dns"
 	"bandwidth-monitor/geoip"
 	"bandwidth-monitor/handler"
@@ -166,6 +167,10 @@ func main() {
 		log.Printf("UniFi controller integration enabled: %s", unifiURL)
 	}
 
+	conntrackTracker := conntrack.New(localNets)
+	go conntrackTracker.Run()
+	log.Println("Conntrack (NAT) tracking enabled")
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/interfaces", handler.InterfaceStats(statsCollector))
 	mux.HandleFunc("/api/interfaces/history", handler.InterfaceHistory(statsCollector))
@@ -173,8 +178,9 @@ func main() {
 	mux.HandleFunc("/api/talkers/volume", handler.TopTalkersVolume(talkerTracker))
 	mux.HandleFunc("/api/dns", handler.DNSSummary(dnsProvider))
 	mux.HandleFunc("/api/wifi", handler.WiFiSummary(unifiClient))
-	mux.HandleFunc("/api/summary", handler.MenuBarSummary(statsCollector, talkerTracker, dnsProvider, unifiClient))
-	mux.HandleFunc("/api/ws", handler.WebSocket(statsCollector, talkerTracker, dnsProvider, unifiClient))
+	mux.HandleFunc("/api/conntrack", handler.ConntrackSummary(conntrackTracker))
+	mux.HandleFunc("/api/summary", handler.MenuBarSummary(statsCollector, talkerTracker, dnsProvider, unifiClient, conntrackTracker))
+	mux.HandleFunc("/api/ws", handler.WebSocket(statsCollector, talkerTracker, dnsProvider, unifiClient, conntrackTracker))
 	staticSub, err := fs.Sub(staticFiles, "static")
 	if err != nil {
 		log.Fatalf("Failed to create sub filesystem: %v", err)
@@ -194,6 +200,7 @@ func main() {
 		if unifiClient != nil {
 			unifiClient.Stop()
 		}
+		conntrackTracker.Stop()
 		os.Exit(0)
 	}()
 

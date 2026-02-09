@@ -30,7 +30,7 @@
 
     // ── Tab navigation ──
     window._switchTab = function(tab) {
-        var panels = { traffic: 'tabTraffic', dns: 'tabDns', wifi: 'tabWifi' };
+        var panels = { traffic: 'tabTraffic', nat: 'tabNat', dns: 'tabDns', wifi: 'tabWifi' };
         for (var k in panels) {
             var p = document.getElementById(panels[k]);
             if (p) p.classList.toggle('active', k === tab);
@@ -173,6 +173,10 @@
     var dnsClientsChart = makeDoughnut('dnsClientsChart');
     var dnsDomainsChart = makeDoughnut('dnsDomainsChart');
     var dnsBlockedDomainsChart = makeDoughnut('dnsBlockedDomainsChart');
+    var natProtoChart = makeDoughnut('natProtoChart');
+    var natStateChart = makeDoughnut('natStateChart');
+    var natTypeChart = makeDoughnut('natTypeChart');
+    var natIPvChart = makeDoughnut('natIPvChart');
 
     // ── Chart theme sync ──
     window._updateChartsForTheme = function() {
@@ -195,7 +199,7 @@
         trafficChart.options.plugins.tooltip.bodyColor = t1;
         trafficChart.options.plugins.tooltip.borderColor = bdr;
         trafficChart.update('none');
-        [protoChart, countryChart, asnChart, ipvChart, ssidChart, apClientsChart, apTrafficChart, ssidTrafficChart, dnsClientsChart, dnsDomainsChart, dnsBlockedDomainsChart].forEach(function(ch) {
+        [protoChart, countryChart, asnChart, ipvChart, ssidChart, apClientsChart, apTrafficChart, ssidTrafficChart, dnsClientsChart, dnsDomainsChart, dnsBlockedDomainsChart, natProtoChart, natStateChart, natTypeChart, natIPvChart].forEach(function(ch) {
             ch.options.plugins.tooltip.backgroundColor = bg2;
             ch.options.plugins.tooltip.titleColor = t0;
             ch.options.plugins.tooltip.bodyColor = t1;
@@ -794,6 +798,193 @@
         tb.innerHTML = h;
     }
 
+    // ── NAT / Conntrack ──
+    var _currentNatVersion = 'v4';
+    var _lastConntrack = null;
+
+    window._switchNatVersion = function(ver) {
+        _currentNatVersion = ver;
+        document.querySelectorAll('.nat-version-tab').forEach(function(t) {
+            t.classList.toggle('active', t.getAttribute('data-ver') === ver);
+        });
+        var title = document.getElementById('natTableTitle');
+        var sub = document.getElementById('natTableSubtitle');
+        if (ver === 'v4') {
+            title.textContent = 'IPv4 NAT Translations';
+            sub.textContent = 'Active conntrack entries (top 200 by TTL)';
+        } else {
+            title.textContent = 'IPv6 NAT Translations';
+            sub.textContent = 'Active conntrack entries (top 200 by TTL)';
+        }
+        if (_lastConntrack) renderNATEntries(_lastConntrack);
+    };
+
+    var natProtoColors = { 'TCP': '#3b82f6', 'UDP': '#22d3ee', 'ICMP': '#f59e0b', 'SCTP': '#34d399', 'Other': '#71717a' };
+    var natStateColors = {
+        'ESTABLISHED': '#22c55e', 'TIME_WAIT': '#eab308', 'SYN_SENT': '#3b82f6',
+        'SYN_RECV': '#60a5fa', 'FIN_WAIT': '#f59e0b', 'CLOSE_WAIT': '#ef4444',
+        'CLOSE': '#f87171', 'LAST_ACK': '#fb923c', 'NONE': '#71717a'
+    };
+    var natTypeColors = { 'snat': '#22d3ee', 'dnat': '#a78bfa', 'both': '#fb923c', 'none': '#71717a' };
+
+    function updateNAT(ct) {
+        if (!ct) return;
+        _lastConntrack = ct;
+        document.getElementById('natNoData').style.display = 'none';
+        document.getElementById('natHasData').style.display = '';
+
+        document.getElementById('natTotal').textContent = (ct.total || 0).toLocaleString();
+        document.getElementById('natMax').textContent = (ct.max || 0).toLocaleString();
+        document.getElementById('natUsagePct').textContent = (ct.usage_pct || 0).toFixed(1) + '%';
+        document.getElementById('natIPv4').textContent = (ct.ipv4 || 0).toLocaleString();
+        document.getElementById('natIPv6').textContent = (ct.ipv6 || 0).toLocaleString();
+
+        // Protocol doughnut
+        var protocols = ct.protocols || {};
+        var pLabels = [], pValues = [], pColors = [];
+        var pOrder = ['TCP', 'UDP', 'ICMP'];
+        for (var i = 0; i < pOrder.length; i++) {
+            if (protocols[pOrder[i]]) { pLabels.push(pOrder[i]); pValues.push(protocols[pOrder[i]]); pColors.push(natProtoColors[pOrder[i]] || '#71717a'); }
+        }
+        for (var k in protocols) { if (pOrder.indexOf(k) === -1) { pLabels.push(k); pValues.push(protocols[k]); pColors.push(natProtoColors['Other']); } }
+        updateSimpleDoughnut(natProtoChart, document.getElementById('natProtoLegend'), pLabels, pValues, pColors);
+
+        // State doughnut
+        var states = ct.states || {};
+        var sLabels = [], sValues = [], sColors = [];
+        var sOrder = ['ESTABLISHED', 'TIME_WAIT', 'SYN_SENT', 'SYN_RECV', 'FIN_WAIT', 'CLOSE_WAIT', 'CLOSE', 'LAST_ACK'];
+        for (var i = 0; i < sOrder.length; i++) {
+            if (states[sOrder[i]]) { sLabels.push(sOrder[i]); sValues.push(states[sOrder[i]]); sColors.push(natStateColors[sOrder[i]] || '#71717a'); }
+        }
+        for (var k in states) { if (sOrder.indexOf(k) === -1) { sLabels.push(k); sValues.push(states[k]); sColors.push('#71717a'); } }
+        updateSimpleDoughnut(natStateChart, document.getElementById('natStateLegend'), sLabels, sValues, sColors);
+
+        // NAT type doughnut
+        var natTypes = ct.nat_types || {};
+        var nLabels = [], nValues = [], nColors = [];
+        var nOrder = ['snat', 'dnat', 'both', 'none'];
+        var nDisplayNames = { 'snat': 'SNAT', 'dnat': 'DNAT', 'both': 'Both', 'none': 'No NAT' };
+        for (var i = 0; i < nOrder.length; i++) {
+            if (natTypes[nOrder[i]]) { nLabels.push(nDisplayNames[nOrder[i]]); nValues.push(natTypes[nOrder[i]]); nColors.push(natTypeColors[nOrder[i]]); }
+        }
+        updateSimpleDoughnut(natTypeChart, document.getElementById('natTypeLegend'), nLabels, nValues, nColors);
+
+        // IP version doughnut
+        var vLabels = [], vValues = [], vColors = [];
+        if (ct.ipv4) { vLabels.push('IPv4'); vValues.push(ct.ipv4); vColors.push('#60a5fa'); }
+        if (ct.ipv6) { vLabels.push('IPv6'); vValues.push(ct.ipv6); vColors.push('#a855f7'); }
+        updateSimpleDoughnut(natIPvChart, document.getElementById('natIPvLegend'), vLabels, vValues, vColors);
+
+        // Top LAN clients / remote destinations tables
+        renderHostTable('natSrcTable', ct.top_lan_clients || []);
+        renderHostTable('natDstTable', ct.top_remote_destinations || []);
+
+        // Entry table
+        renderNATEntries(ct);
+    }
+
+    function updateSimpleDoughnut(chart, legendEl, labels, values, colors) {
+        chart.data.labels = labels;
+        chart.data.datasets[0].data = values;
+        chart.data.datasets[0].backgroundColor = colors;
+        chart.update('none');
+        var total = 0;
+        for (var i = 0; i < values.length; i++) total += values[i];
+        var h = '';
+        for (var i = 0; i < labels.length; i++) {
+            var pct = total > 0 ? ((values[i] / total) * 100).toFixed(1) : '0.0';
+            h += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">';
+            h += '<div style="width:10px;height:10px;border-radius:2px;background:' + colors[i] + ';flex-shrink:0"></div>';
+            h += '<div><div style="font-size:13px;font-weight:600;color:var(--text-0)">' + labels[i] + '</div>';
+            h += '<div style="font-size:11px;color:var(--text-2)">' + values[i].toLocaleString() + ' &middot; ' + pct + '%</div></div></div>';
+        }
+        legendEl.innerHTML = h || '<div style="text-align:center;color:var(--text-2);font-size:12px;padding:8px">No data</div>';
+    }
+
+    function renderHostTable(tbId, hosts) {
+        var tb = document.getElementById(tbId);
+        if (!hosts || !hosts.length) { tb.innerHTML = '<tr><td colspan="4" class="empty-state">No data</td></tr>'; return; }
+        var mx = hosts[0].connections || 1, h = '';
+        for (var i = 0; i < hosts.length; i++) {
+            var host = hosts[i];
+            var pct = ((host.connections / mx) * 100).toFixed(1);
+            h += '<tr><td><span class="' + rankClass(i) + '">' + (i + 1) + '</span></td>';
+            h += '<td><span class="ip-cell">' + host.ip + '</span></td>';
+            h += '<td style="font-variant-numeric:tabular-nums">' + host.connections.toLocaleString() + '</td>';
+            h += '<td class="bar-cell"><div class="bar-bg"></div><div class="bar-fill bw" style="width:' + pct + '%"></div></td></tr>';
+        }
+        tb.innerHTML = h;
+    }
+
+    function renderNATEntries(ct) {
+        var entries = _currentNatVersion === 'v4' ? (ct.ipv4_entries || []) : (ct.ipv6_entries || []);
+        var filter = ((document.getElementById('natFilter') || {}).value || 'all');
+        var search = ((document.getElementById('natSearch') || {}).value || '').toLowerCase();
+
+        if (filter !== 'all') {
+            entries = entries.filter(function(e) { return e.nat_type === filter; });
+        }
+        if (search) {
+            entries = entries.filter(function(e) {
+                return (e.orig_src || '').indexOf(search) !== -1 ||
+                       (e.orig_dst || '').indexOf(search) !== -1 ||
+                       (e.repl_src || '').indexOf(search) !== -1 ||
+                       (e.repl_dst || '').indexOf(search) !== -1 ||
+                       (e.protocol || '').toLowerCase().indexOf(search) !== -1 ||
+                       (e.state || '').toLowerCase().indexOf(search) !== -1 ||
+                       (e.orig_sport || '').indexOf(search) !== -1 ||
+                       (e.orig_dport || '').indexOf(search) !== -1;
+            });
+        }
+
+        var tb = document.getElementById('natEntryTable');
+        if (!entries.length) {
+            tb.innerHTML = '<tr><td colspan="10" class="empty-state">' + (search || filter !== 'all' ? 'No matching entries' : 'No ' + (_currentNatVersion === 'v4' ? 'IPv4' : 'IPv6') + ' entries') + '</td></tr>';
+            return;
+        }
+
+        var h = '';
+        for (var i = 0; i < entries.length; i++) {
+            var e = entries[i];
+            var stateClass = 'other';
+            if (e.state === 'ESTABLISHED') stateClass = 'established';
+            else if (e.state === 'TIME_WAIT') stateClass = 'time-wait';
+            else if (e.state === 'SYN_SENT' || e.state === 'SYN_RECV') stateClass = 'syn-sent';
+            else if (e.state === 'CLOSE_WAIT' || e.state === 'CLOSE' || e.state === 'LAST_ACK') stateClass = 'close-wait';
+
+            var origSrc = e.orig_src + (e.orig_sport ? ':' + e.orig_sport : '');
+            var origDst = e.orig_dst + (e.orig_dport ? ':' + e.orig_dport : '');
+            var replSrc = e.repl_src + (e.repl_sport ? ':' + e.repl_sport : '');
+            var replDst = e.repl_dst + (e.repl_dport ? ':' + e.repl_dport : '');
+
+            // Highlight translated addresses
+            var replSrcHL = (e.repl_src !== e.orig_dst) ? ' style="color:var(--tx);font-weight:600"' : '';
+            var replDstHL = (e.repl_dst !== e.orig_src) ? ' style="color:var(--rx);font-weight:600"' : '';
+
+            h += '<tr>';
+            h += '<td style="font-size:12px;font-weight:500">' + (e.protocol || '').toUpperCase() + '</td>';
+            h += '<td>' + (e.state ? '<span class="nat-state-badge ' + stateClass + '">' + e.state + '</span>' : '<span style="color:var(--text-2)">—</span>') + '</td>';
+            h += '<td style="font-family:JetBrains Mono,monospace;font-size:11px;white-space:nowrap">' + origSrc + '</td>';
+            h += '<td style="font-family:JetBrains Mono,monospace;font-size:11px;white-space:nowrap">' + origDst + '</td>';
+            h += '<td style="font-family:JetBrains Mono,monospace;font-size:11px;white-space:nowrap"' + replSrcHL + '>' + replSrc + '</td>';
+            h += '<td style="font-family:JetBrains Mono,monospace;font-size:11px;white-space:nowrap"' + replDstHL + '>' + replDst + '</td>';
+            h += '<td><span class="nat-badge ' + e.nat_type + '">' + (e.nat_type || 'none').toUpperCase() + '</span></td>';
+            h += '<td style="font-variant-numeric:tabular-nums;font-size:11px;white-space:nowrap">' + (e.bytes ? formatBytes(e.bytes) : '<span style="color:var(--text-2)">—</span>') + '</td>';
+            h += '<td style="font-variant-numeric:tabular-nums;font-size:11px;white-space:nowrap">' + (e.packets ? e.packets.toLocaleString() : '<span style="color:var(--text-2)">—</span>') + '</td>';
+            h += '<td style="font-variant-numeric:tabular-nums;font-size:12px;color:var(--text-2)">' + e.ttl + 's</td>';
+            h += '</tr>';
+        }
+        tb.innerHTML = h;
+    }
+
+    // Wire search/filter on NAT entry table to re-render
+    ['natSearch', 'natFilter'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.addEventListener(id === 'natSearch' ? 'input' : 'change', function() {
+            if (_lastConntrack) renderNATEntries(_lastConntrack);
+        });
+    });
+
     // ── WiFi (UniFi) ──
     function updateWiFi(wifi) {
         if (!wifi) return;
@@ -1023,6 +1214,7 @@
         renderTalkers('volTable', vol, 'total_bytes', formatBytes, 'vol');
         updateDNS(d.dns || null);
         updateWiFi(d.wifi || null);
+        updateNAT(d.conntrack || null);
     }
 
     function tick() { document.getElementById('clock').textContent = new Date().toLocaleTimeString(); }

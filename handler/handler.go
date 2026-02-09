@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"bandwidth-monitor/collector"
+	"bandwidth-monitor/conntrack"
 	"bandwidth-monitor/dns"
 	"bandwidth-monitor/talkers"
 	"bandwidth-monitor/unifi"
@@ -68,8 +69,19 @@ func WiFiSummary(uf *unifi.Client) http.HandlerFunc {
 	}
 }
 
+func ConntrackSummary(ct *conntrack.Tracker) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if ct == nil {
+			w.Write([]byte("null"))
+			return
+		}
+		json.NewEncoder(w).Encode(ct.GetSummary())
+	}
+}
+
 // MenuBarSummary returns a compact JSON snapshot for menu-bar widgets.
-func MenuBarSummary(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.Client) http.HandlerFunc {
+func MenuBarSummary(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.Client, ctr *conntrack.Tracker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		type ifaceBrief struct {
@@ -89,12 +101,22 @@ func MenuBarSummary(c *collector.Collector, t *talkers.Tracker, dp dns.Provider,
 			APs     int `json:"aps"`
 			Clients int `json:"clients"`
 		}
+		type natBrief struct {
+			Total    int     `json:"total"`
+			Max      int     `json:"max"`
+			UsagePct float64 `json:"usage_pct"`
+			IPv4     int     `json:"ipv4"`
+			IPv6     int     `json:"ipv6"`
+			SNAT     int     `json:"snat"`
+			DNAT     int     `json:"dnat"`
+		}
 		type summary struct {
 			Interfaces []ifaceBrief `json:"interfaces"`
 			VPN        bool         `json:"vpn"`
 			VPNIface   string       `json:"vpn_iface,omitempty"`
 			DNS        *dnsBrief    `json:"dns,omitempty"`
 			WiFi       *wifiBrief   `json:"wifi,omitempty"`
+			NAT        *natBrief    `json:"nat,omitempty"`
 			Timestamp  int64        `json:"timestamp"`
 		}
 
@@ -136,12 +158,25 @@ func MenuBarSummary(c *collector.Collector, t *talkers.Tracker, dp dns.Provider,
 				}
 			}
 		}
+		if ctr != nil {
+			if ns := ctr.GetSummary(); ns != nil {
+				out.NAT = &natBrief{
+					Total:    ns.Total,
+					Max:      ns.Max,
+					UsagePct: ns.UsagePct,
+					IPv4:     ns.IPv4,
+					IPv6:     ns.IPv6,
+					SNAT:     ns.NATTypes["snat"] + ns.NATTypes["both"],
+					DNAT:     ns.NATTypes["dnat"] + ns.NATTypes["both"],
+				}
+			}
+		}
 
 		json.NewEncoder(w).Encode(out)
 	}
 }
 
-func WebSocket(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.Client) http.HandlerFunc {
+func WebSocket(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.Client, ct *conntrack.Tracker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -199,6 +234,9 @@ func WebSocket(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *
 				}
 				if uf != nil {
 					payload["wifi"] = uf.GetSummary()
+				}
+				if ct != nil {
+					payload["conntrack"] = ct.GetSummary()
 				}
 				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 				if err := conn.WriteJSON(payload); err != nil {
