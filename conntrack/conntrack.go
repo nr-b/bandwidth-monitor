@@ -102,20 +102,29 @@ type Summary struct {
 
 // Tracker periodically queries conntrack via netlink and provides a summary.
 type Tracker struct {
-	mu        sync.RWMutex
-	summary   *Summary
-	localNets []*net.IPNet
-	available bool
-	stopCh    chan struct{}
+	mu          sync.RWMutex
+	summary     *Summary
+	localNets   []*net.IPNet
+	available   bool
+	sockBufSize int // netlink socket receive buffer size
+	errCount    int // consecutive dump errors (for log rate-limiting)
+	stopCh      chan struct{}
 }
+
+// Default and maximum netlink socket buffer sizes.
+const (
+	defaultSockBuf = 2 * 1024 * 1024  // 2 MB — enough for ~10k flows
+	maxSockBuf     = 16 * 1024 * 1024 // 16 MB — for very large tables
+)
 
 // New creates a new conntrack Tracker.
 // localNets defines which IPs are considered local/LAN (used to split
 // top sources vs top destinations into LAN clients vs remote hosts).
 func New(localNets []*net.IPNet) *Tracker {
 	return &Tracker{
-		localNets: localNets,
-		stopCh:    make(chan struct{}),
+		localNets:   localNets,
+		sockBufSize: defaultSockBuf,
+		stopCh:      make(chan struct{}),
 	}
 }
 
@@ -127,10 +136,25 @@ func (t *Tracker) Run() {
 	c, err := ct.Dial(nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "conntrack: netlink dial failed: %v\n", err)
-		fmt.Fprintln(os.Stderr, "conntrack: NAT tracking disabled — ensure nf_conntrack module is loaded and process has CAP_NET_ADMIN")
+		fmt.Fprintln(os.Stderr, "conntrack: NAT tracking disabled — ensure nf_conntrack and nf_conntrack_netlink modules are loaded and process has CAP_NET_ADMIN")
+		fmt.Fprintln(os.Stderr, "conntrack: on OpenWrt: apk add kmod-nf-conntrack-netlink  (or opkg install kmod-nf-conntrack-netlink)")
 		return
 	}
+
+	// Probe dump to verify the conntrack netlink subsystem actually works.
+	// The socket can open even without kmod-nf-conntrack-netlink, but dump
+	// will fail with EINVAL.
+	if err := c.SetReadBuffer(t.sockBufSize); err != nil {
+		fmt.Fprintf(os.Stderr, "conntrack: SetReadBuffer: %v\n", err)
+	}
+	_, err = c.Dump(nil)
 	c.Close()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "conntrack: probe dump failed: %v\n", err)
+		fmt.Fprintln(os.Stderr, "conntrack: NAT tracking disabled — the nf_conntrack_netlink kernel module is likely not loaded")
+		fmt.Fprintln(os.Stderr, "conntrack: on OpenWrt: apk add kmod-nf-conntrack-netlink  (or opkg install kmod-nf-conntrack-netlink)")
+		return
+	}
 
 	t.available = true
 	fmt.Fprintln(os.Stderr, "conntrack: netlink connection established")
@@ -167,16 +191,35 @@ func (t *Tracker) poll() {
 
 	c, err := ct.Dial(nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "conntrack: netlink dial: %v\n", err)
+		if t.errCount == 0 || t.errCount%60 == 0 {
+			fmt.Fprintf(os.Stderr, "conntrack: netlink dial: %v\n", err)
+		}
+		t.errCount++
 		return
 	}
 	defer c.Close()
 
+	// Set a large receive buffer — conntrack dumps can be huge on routers.
+	if err := c.SetReadBuffer(t.sockBufSize); err != nil {
+		fmt.Fprintf(os.Stderr, "conntrack: SetReadBuffer(%d): %v\n", t.sockBufSize, err)
+	}
+
 	flows, err := c.Dump(nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "conntrack: dump: %v\n", err)
+		// On EINVAL / buffer-related failures, try increasing the buffer size
+		if t.sockBufSize < maxSockBuf {
+			t.sockBufSize *= 2
+			if t.sockBufSize > maxSockBuf {
+				t.sockBufSize = maxSockBuf
+			}
+			fmt.Fprintf(os.Stderr, "conntrack: dump failed (%v), increasing buffer to %d MB\n", err, t.sockBufSize/(1024*1024))
+		} else if t.errCount == 0 || t.errCount%60 == 0 {
+			fmt.Fprintf(os.Stderr, "conntrack: dump: %v (buffer=%d MB)\n", err, t.sockBufSize/(1024*1024))
+		}
+		t.errCount++
 		return
 	}
+	t.errCount = 0
 
 	max := readIntFile(procConntrackMax)
 	count := readIntFile(procConntrackCnt)

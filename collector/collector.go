@@ -1,15 +1,14 @@
 package collector
 
 import (
-	"bufio"
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	vnl "github.com/vishvananda/netlink"
 )
 
 type InterfaceStat struct {
@@ -87,7 +86,7 @@ func New(vpnStatusFiles map[string]string) *Collector {
 
 // EnableSPAN activates pcap-based direction detection on a SPAN/mirror port.
 // When enabled, the RX/TX rates and cumulative bytes for the named device are
-// derived from packet inspection against localNets instead of /proc/net/dev.
+// derived from packet inspection against localNets instead of kernel counters.
 func (c *Collector) EnableSPAN(device string, promiscuous bool, localNets []*net.IPNet) {
 	c.span = newSpanOverlay(device, promiscuous, localNets)
 }
@@ -184,36 +183,101 @@ func (c *Collector) GetSparklines(duration time.Duration, maxPoints int) map[str
 	return result
 }
 
+// linkInfo holds everything we extract from a single RTM_GETLINK response.
+type linkInfo struct {
+	name      string
+	operState string
+	ifType    string // classified type: physical, vpn, vlan, ppp, loopback, span
+	encapType string // ARPHRD text form: "ether", "loopback", "none", "ppp", etc.
+	linkKind  string // IFLA_INFO_KIND: wireguard, vlan, bridge, bond, gre, ...
+	stats     *rawStat
+	addrs     []string
+}
+
 func (c *Collector) poll() {
-	// Auto-discovers all interfaces by reading /proc/net/dev
-	stats, err := readProcNetDev()
+	links, err := vnl.LinkList()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "collector: %v\n", err)
+		fmt.Fprintf(os.Stderr, "collector: netlink LinkList: %v\n", err)
 		return
+	}
+
+	// Gather all addresses in one netlink call
+	allAddrs, err := vnl.AddrList(nil, vnl.FAMILY_ALL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "collector: netlink AddrList: %v\n", err)
+		// non-fatal: continue without addresses
+		allAddrs = nil
+	}
+
+	// Index addresses by interface index
+	addrsByIndex := make(map[int][]string)
+	for _, a := range allAddrs {
+		addrsByIndex[a.LinkIndex] = append(addrsByIndex[a.LinkIndex], a.IPNet.String())
+	}
+
+	// Build linkInfo map from netlink data
+	infos := make(map[string]*linkInfo, len(links))
+	for _, link := range links {
+		attrs := link.Attrs()
+		if attrs == nil {
+			continue
+		}
+		name := attrs.Name
+
+		li := &linkInfo{
+			name:      name,
+			operState: operStateStr(attrs.OperState),
+			encapType: attrs.EncapType,
+			addrs:     addrsByIndex[attrs.Index],
+		}
+
+		// Extract IFLA_INFO_KIND via link type name
+		li.linkKind = link.Type()
+
+		// Get stats from IFLA_STATS64 (vishvananda populates attrs.Statistics)
+		if s := attrs.Statistics; s != nil {
+			li.stats = &rawStat{
+				rxBytes:   s.RxBytes,
+				txBytes:   s.TxBytes,
+				rxPackets: s.RxPackets,
+				txPackets: s.TxPackets,
+				rxErrors:  s.RxErrors,
+				txErrors:  s.TxErrors,
+				rxDropped: s.RxDropped,
+				txDropped: s.TxDropped,
+			}
+		} else {
+			li.stats = &rawStat{}
+		}
+
+		// Classify interface type
+		li.ifType = c.classifyLink(li)
+
+		infos[name] = li
 	}
 
 	now := time.Now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Remove interfaces that no longer exist in /proc/net/dev
+	// Remove interfaces that no longer exist
 	for name := range c.current {
-		if _, exists := stats[name]; !exists {
+		if _, exists := infos[name]; !exists {
 			delete(c.current, name)
 			delete(c.previous, name)
 		}
 	}
 
-	for name, cur := range stats {
+	for name, li := range infos {
+		cur := li.stats
 		prev, hasPrev := c.previous[name]
-		ifType := c.getIfaceType(name)
 		vpnRouting, vpnSince := c.checkVPNRouting(name)
 		_, vpnTracked := c.vpnStatusFiles[name]
 		iface := &InterfaceStat{
 			Name:            name,
-			IfaceType:       ifType,
-			OperState:       readOperState(name),
-			Addrs:           getIfaceAddrs(name),
+			IfaceType:       li.ifType,
+			OperState:       li.operState,
+			Addrs:           li.addrs,
 			VPNRouting:      vpnRouting,
 			VPNRoutingSince: vpnSince,
 			VPNTracked:      vpnTracked,
@@ -278,87 +342,85 @@ func (c *Collector) poll() {
 	}
 }
 
-// readProcNetDev parses /proc/net/dev and returns stats for every interface.
-func readProcNetDev() (map[string]*rawStat, error) {
-	f, err := os.Open("/proc/net/dev")
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	result := make(map[string]*rawStat)
-	scanner := bufio.NewScanner(f)
-	lineNum := 0
-	for scanner.Scan() {
-		lineNum++
-		if lineNum <= 2 {
-			continue // skip header lines
-		}
-		line := scanner.Text()
-		colonIdx := strings.Index(line, ":")
-		if colonIdx < 0 {
-			continue
-		}
-		name := strings.TrimSpace(line[:colonIdx])
-		fields := strings.Fields(line[colonIdx+1:])
-		if len(fields) < 16 {
-			continue
-		}
-
-		stat := &rawStat{
-			rxBytes:   parseUint(fields[0]),
-			rxPackets: parseUint(fields[1]),
-			rxErrors:  parseUint(fields[2]),
-			rxDropped: parseUint(fields[3]),
-			txBytes:   parseUint(fields[8]),
-			txPackets: parseUint(fields[9]),
-			txErrors:  parseUint(fields[10]),
-			txDropped: parseUint(fields[11]),
-		}
-		result[name] = stat
-	}
-	return result, scanner.Err()
-}
-
-func parseUint(s string) uint64 {
-	v, _ := strconv.ParseUint(strings.TrimSpace(s), 10, 64)
-	return v
-}
-
-// getIfaceType returns a cached interface type, detecting on first call.
-func (c *Collector) getIfaceType(name string) string {
-	if t, ok := c.ifaceTypeCache[name]; ok {
+// classifyLink determines the interface category from netlink data.
+// Uses IFLA_INFO_KIND (linkKind), ARPHRD type (arphrd), and name-based
+// heuristics as fallback. Returns one of:
+// "physical", "vlan", "ppp", "vpn", "loopback".
+func (c *Collector) classifyLink(li *linkInfo) string {
+	// Check cache first
+	if t, ok := c.ifaceTypeCache[li.name]; ok {
 		return t
 	}
-	t := detectIfaceType(name)
-	c.ifaceTypeCache[name] = t
+
+	t := classifyLinkUncached(li)
+	c.ifaceTypeCache[li.name] = t
 	return t
 }
 
-// readOperState reads the operational state from sysfs.
-func readOperState(name string) string {
-	data, err := os.ReadFile("/sys/class/net/" + name + "/operstate")
-	if err != nil {
-		return "unknown"
+func classifyLinkUncached(li *linkInfo) string {
+	// 1. IFLA_INFO_KIND — the most reliable classifier
+	switch li.linkKind {
+	case "wireguard":
+		return "vpn"
+	case "vlan":
+		return "vlan"
+	case "bridge":
+		return "physical" // group bridges with physical
+	case "bond":
+		return "physical" // group bonds with physical
+	case "ppp", "pppoe":
+		return "ppp"
+	case "gre", "gretap", "ip6gre", "ip6gretap", "ip6tnl", "ipip", "sit", "vti", "vti6":
+		return "vpn"
+	case "tun", "tap":
+		return "vpn"
+	case "vxlan", "geneve":
+		return "vpn"
 	}
-	return strings.TrimSpace(string(data))
+
+	// 2. ARPHRD encap type (string form from netlink)
+	switch li.encapType {
+	case "loopback":
+		return "loopback"
+	case "none": // ARPHRD_NONE — common for WireGuard and tunnels
+		return "vpn"
+	case "ppp":
+		return "ppp"
+	}
+
+	// 3. Name-based fallback
+	n := strings.ToLower(li.name)
+	if strings.HasPrefix(n, "tun") || strings.HasPrefix(n, "tap") {
+		return "vpn"
+	}
+	if strings.HasPrefix(n, "ppp") || strings.HasPrefix(n, "wwan") || strings.HasPrefix(n, "lte") {
+		return "ppp"
+	}
+	if strings.Contains(n, ".") {
+		return "vlan"
+	}
+
+	return "physical"
 }
 
-// getIfaceAddrs returns the IP addresses (with CIDR prefix) assigned to an interface.
-func getIfaceAddrs(name string) []string {
-	iface, err := net.InterfaceByName(name)
-	if err != nil {
-		return nil
+// operStateStr converts a netlink OperState to a human-readable string.
+func operStateStr(state vnl.LinkOperState) string {
+	switch state {
+	case vnl.OperUp:
+		return "up"
+	case vnl.OperDown:
+		return "down"
+	case vnl.OperLowerLayerDown:
+		return "lowerlayerdown"
+	case vnl.OperTesting:
+		return "testing"
+	case vnl.OperDormant:
+		return "dormant"
+	case vnl.OperNotPresent:
+		return "notpresent"
+	default:
+		return "unknown"
 	}
-	addrs, err := iface.Addrs()
-	if err != nil {
-		return nil
-	}
-	var result []string
-	for _, a := range addrs {
-		result = append(result, a.String())
-	}
-	return result
 }
 
 // checkVPNRouting checks whether traffic is actively routed through a VPN interface
@@ -373,67 +435,4 @@ func (c *Collector) checkVPNRouting(name string) (bool, string) {
 		return false, ""
 	}
 	return true, strings.TrimSpace(string(data))
-}
-
-// detectIfaceType determines the interface category by inspecting sysfs and
-// falling back to name-based heuristics. Returns one of:
-// "physical", "vlan", "ppp", "vpn", "bridge", "bond", "loopback".
-func detectIfaceType(name string) string {
-	base := "/sys/class/net/" + name
-
-	// 1. Check if WireGuard by looking for the wireguard sysfs directory
-	if _, err := os.Stat(filepath.Join(base, "wireguard")); err == nil {
-		return "vpn"
-	}
-
-	// 2. Read uevent for DEVTYPE
-	if data, err := os.ReadFile(filepath.Join(base, "uevent")); err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
-			if strings.HasPrefix(line, "DEVTYPE=") {
-				dt := strings.TrimPrefix(line, "DEVTYPE=")
-				switch dt {
-				case "vlan":
-					return "vlan"
-				case "bridge":
-					return "physical" // group bridges with physical
-				case "bond":
-					return "physical" // group bonds with physical
-				case "ppp":
-					return "ppp"
-				case "wireguard":
-					return "vpn"
-				case "gre", "gretap", "ip6gre", "ip6tnl", "ipip", "sit", "vti":
-					return "vpn"
-				}
-			}
-		}
-	}
-
-	// 3. Check /sys/class/net/<name>/type (ARPHRD_* constants)
-	if data, err := os.ReadFile(filepath.Join(base, "type")); err == nil {
-		ifType := strings.TrimSpace(string(data))
-		switch ifType {
-		case "772": // ARPHRD_LOOPBACK
-			return "loopback"
-		case "65534": // ARPHRD_NONE — common for WireGuard and tunnels
-			// Already checked for WireGuard above; remaining NONE types are tunnels
-			return "vpn"
-		case "512": // ARPHRD_PPP
-			return "ppp"
-		}
-	}
-
-	// 4. Name-based fallback
-	n := strings.ToLower(name)
-	if strings.HasPrefix(n, "tun") || strings.HasPrefix(n, "tap") {
-		return "vpn"
-	}
-	if strings.HasPrefix(n, "ppp") || strings.HasPrefix(n, "wwan") || strings.HasPrefix(n, "lte") {
-		return "ppp"
-	}
-	if strings.Contains(n, ".") {
-		return "vlan"
-	}
-
-	return "physical"
 }
