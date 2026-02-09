@@ -100,6 +100,7 @@ chmod 0600 /opt/bandwidth-monitor/.env
 | `UNIFI_SITE` | `default` | UniFi site name |
 | `VPN_STATUS_FILES` | *(none)* | Comma-separated `iface=path` pairs for VPN routing detection (e.g. `wg0=/run/wg0-active`) |
 | `LOCAL_NETS` | *(auto-detect)* | Comma-separated CIDRs for RX/TX direction detection (e.g. `192.0.2.0/24,2001:db8::/48`). Auto-discovered from local interfaces if not set. |
+| `SPAN_DEVICE` | *(disabled)* | SPAN/mirror port interface for direction-aware RX/TX (requires `LOCAL_NETS`; e.g. `eth1`) |
 
 The DNS tab supports either **AdGuard Home** or **NextDNS** (mutually exclusive; AdGuard takes priority if both are configured). The WiFi tab is only shown when UniFi is configured.
 
@@ -114,6 +115,22 @@ For SPAN/mirror port setups or if auto-discovery doesn't cover all your addresse
 ```bash
 LOCAL_NETS=192.0.2.0/24,2001:db8::/48
 ```
+
+### SPAN / Mirror Port Mode
+
+On a SPAN or mirror port, the kernel sees all mirrored traffic as RX in `/proc/net/dev`, making the normal RX/TX split meaningless. Setting `SPAN_DEVICE` activates a pcap-based overlay that inspects IP headers and classifies direction using `LOCAL_NETS`:
+
+- **src in LOCAL_NETS → remote** = upload (TX)
+- **remote → dst in LOCAL_NETS** = download (RX)
+- **both local** = counted as both (intra-LAN)
+
+```bash
+# In your .env
+SPAN_DEVICE=eth1
+LOCAL_NETS=192.0.2.0/24,2001:db8::/48
+```
+
+All other interfaces keep their normal `/proc/net/dev` stats, VPN routing detection, interface grouping, etc. Only the SPAN device gets its RX/TX overridden. Requires root or `CAP_NET_RAW`.
 
 ### VPN Routing Detection (OpenWrt)
 

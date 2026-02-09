@@ -129,6 +129,17 @@ func main() {
 	}
 
 	statsCollector := collector.New(vpnStatusFiles)
+
+	// SPAN/mirror port mode: override RX/TX direction on a specific interface
+	// using pcap-based packet inspection against LOCAL_NETS.
+	spanDevice := env("SPAN_DEVICE", "")
+	if spanDevice != "" && len(localNets) > 0 {
+		statsCollector.EnableSPAN(spanDevice, promiscuousBool, localNets)
+		log.Printf("SPAN mode enabled on %s (%d local nets)", spanDevice, len(localNets))
+	} else if spanDevice != "" && len(localNets) == 0 {
+		log.Printf("SPAN_DEVICE=%s set but LOCAL_NETS is empty — SPAN mode disabled", spanDevice)
+	}
+
 	go statsCollector.Run()
 
 	talkerTracker := talkers.New(captureDevice, promiscuousBool, localNets, geoDB)

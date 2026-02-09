@@ -52,6 +52,10 @@ type Collector struct {
 	history        map[string][]HistoryPoint
 	ifaceTypeCache map[string]string
 	vpnStatusFiles map[string]string // iface name → sentinel file path
+	span           *spanOverlay      // nil when SPAN mode is disabled
+	spanPrevRx     uint64
+	spanPrevTx     uint64
+	spanHasPrev    bool
 	stopCh         chan struct{}
 }
 
@@ -81,7 +85,17 @@ func New(vpnStatusFiles map[string]string) *Collector {
 	}
 }
 
+// EnableSPAN activates pcap-based direction detection on a SPAN/mirror port.
+// When enabled, the RX/TX rates and cumulative bytes for the named device are
+// derived from packet inspection against localNets instead of /proc/net/dev.
+func (c *Collector) EnableSPAN(device string, promiscuous bool, localNets []*net.IPNet) {
+	c.span = newSpanOverlay(device, promiscuous, localNets)
+}
+
 func (c *Collector) Run() {
+	if c.span != nil {
+		go c.span.run()
+	}
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 	c.poll()
@@ -96,6 +110,9 @@ func (c *Collector) Run() {
 }
 
 func (c *Collector) Stop() {
+	if c.span != nil {
+		c.span.stop()
+	}
 	close(c.stopCh)
 }
 
@@ -217,6 +234,26 @@ func (c *Collector) poll() {
 				iface.RxRate = float64(cur.rxBytes-prev.rxBytes) / dt
 				iface.TxRate = float64(cur.txBytes-prev.txBytes) / dt
 			}
+		}
+
+		// SPAN overlay: override RX/TX with direction-aware pcap data
+		if c.span != nil && name == c.span.device {
+			rxB, txB, rxP, txP := c.span.snapshot()
+			iface.RxBytes = rxB
+			iface.TxBytes = txB
+			iface.RxPackets = rxP
+			iface.TxPackets = txP
+			iface.IfaceType = "span"
+			if c.spanHasPrev {
+				dt := now.Sub(prev.ts).Seconds()
+				if dt > 0 {
+					iface.RxRate = float64(rxB-c.spanPrevRx) / dt
+					iface.TxRate = float64(txB-c.spanPrevTx) / dt
+				}
+			}
+			c.spanPrevRx = rxB
+			c.spanPrevTx = txB
+			c.spanHasPrev = true
 		}
 
 		c.current[name] = iface
