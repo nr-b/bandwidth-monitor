@@ -7,8 +7,8 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 ## Features
 
 ### Traffic Tab
-- **Live interface stats** — reads `/proc/net/dev` every second; shows RX/TX rates, totals, packets, errors, and drops per interface
-- **Interface grouping** — auto-classifies interfaces as Physical, VLAN, PPP/WAN, VPN, or Loopback
+- **Live interface stats** — queries the kernel via netlink (`RTM_GETLINK`) every second; shows RX/TX rates, totals, packets, errors, and drops per interface
+- **Interface grouping** — auto-classifies interfaces using netlink `IFLA_INFO_KIND` as Physical, VLAN, PPP/WAN, VPN, or Loopback
 - **VPN routing detection** — configurable sentinel files to show whether a VPN interface is actively routing traffic
 - **Real-time line chart** — Chart.js with per-interface filtering and 1-hour sliding window
 - **Per-interface sparklines** — mini inline charts on each interface card
@@ -53,7 +53,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 
 ## Requirements
 
-- **Linux** — reads `/proc/net/dev` and `/sys/class/net/`
+- **Linux** — uses netlink (`RTM_GETLINK`, `RTM_GETADDR`) for interface stats and addresses
 - **libpcap-dev** — for packet capture (top talkers)
 - **nf_conntrack kernel module** — for the NAT tab (loaded automatically on most routers)
 - **Go 1.24+** — to build
@@ -78,7 +78,7 @@ make build
 # Download GeoIP databases (optional, free)
 make geoip
 
-# Run (needs root or CAP_NET_RAW for packet capture)
+# Run (needs root or CAP_NET_RAW + CAP_NET_ADMIN for packet capture and netlink)
 sudo ./bandwidth-monitor
 ```
 
@@ -145,7 +145,7 @@ LOCAL_NETS=192.0.2.0/24,2001:db8::/48
 
 ### SPAN / Mirror Port Mode
 
-On a SPAN or mirror port, the kernel sees all mirrored traffic as RX in `/proc/net/dev`, making the normal RX/TX split meaningless. Setting `SPAN_DEVICE` activates a pcap-based overlay that inspects IP headers and classifies direction using `LOCAL_NETS`:
+On a SPAN or mirror port, the kernel reports all mirrored traffic as RX on the interface, making the normal RX/TX split meaningless. Setting `SPAN_DEVICE` activates a pcap-based overlay that inspects IP headers and classifies direction using `LOCAL_NETS`:
 
 - **src in LOCAL_NETS → remote** = upload (TX)
 - **remote → dst in LOCAL_NETS** = download (RX)
@@ -157,7 +157,7 @@ SPAN_DEVICE=eth1
 LOCAL_NETS=192.0.2.0/24,2001:db8::/48
 ```
 
-All other interfaces keep their normal `/proc/net/dev` stats, VPN routing detection, interface grouping, etc. Only the SPAN device gets its RX/TX overridden. Requires root or `CAP_NET_RAW`.
+All other interfaces keep their normal netlink-based stats, VPN routing detection, interface grouping, etc. Only the SPAN device gets its RX/TX overridden. Requires root or `CAP_NET_RAW`.
 
 ### VPN Routing Detection (OpenWrt)
 
@@ -270,7 +270,7 @@ sudo systemctl enable --now bandwidth-monitor
 ### Systemd Service
 
 The included `bandwidth-monitor.service` runs the binary with:
-- `CAP_NET_RAW` for packet capture (no full root needed)
+- `CAP_NET_RAW` and `CAP_NET_ADMIN` for packet capture and netlink access (no full root needed)
 - `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes` hardening
 - Environment loaded from `/opt/bandwidth-monitor/.env`
 
@@ -306,7 +306,7 @@ The plugin tries each server in order with a 1-second timeout. The preferred int
 
 ```
 main.go                   → entry point, env config, wires all components
-collector/                → reads /proc/net/dev, computes rates, 24h history, VPN routing
+collector/                → netlink-based interface stats (RTM_GETLINK/RTM_GETADDR), rates, 24h history, VPN routing
 conntrack/                → netlink-based conntrack (NAT) table reader via ti-mo/conntrack
 talkers/                  → pcap packet capture, per-IP tracking, 1-min bucket aggregation
 handler/                  → HTTP REST API + WebSocket handler
@@ -377,9 +377,9 @@ Makefile                  → build, install, GeoIP download targets
 
 ## Notes
 
-- **Interface stats** work without root — they just read `/proc/net/dev`
+- **Interface stats** and **NAT tab** use netlink — require `CAP_NET_ADMIN` (or root)
 - **Top talkers** require `root` or `CAP_NET_RAW` for packet capture
-- If running without root, the UI works but top-talker tables show "No data"
+- If running without root, grant `CAP_NET_RAW` + `CAP_NET_ADMIN` for full functionality
 - **GeoIP** is optional — without MMDB files, country/ASN columns are simply hidden
 - **NAT tab** requires `CAP_NET_ADMIN` (or root) for netlink access to the conntrack table; enable `nf_conntrack_acct=1` for per-flow byte counters
 - **DNS and WiFi** tabs only appear when their respective integrations are configured
