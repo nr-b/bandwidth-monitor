@@ -26,7 +26,8 @@ start_service() {
         UNIFI_USER="${UNIFI_USER:-}" \
         UNIFI_PASS="${UNIFI_PASS:-}" \
         UNIFI_SITE="${UNIFI_SITE:-default}" \
-        VPN_STATUS_FILES="${VPN_STATUS_FILES:-}"
+        VPN_STATUS_FILES="${VPN_STATUS_FILES:-}" \
+        SPAN_DEVICE="${SPAN_DEVICE:-}"
     procd_set_param respawn 3600 5 5
     procd_set_param stdout 1
     procd_set_param stderr 1
