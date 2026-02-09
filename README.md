@@ -117,6 +117,8 @@ chmod 0600 /opt/bandwidth-monitor/.env
 
 The DNS tab supports either **AdGuard Home** or **NextDNS** (mutually exclusive; AdGuard takes priority if both are configured). The WiFi tab is only shown when UniFi is configured. The NAT tab appears automatically when the `nf_conntrack` kernel module is loaded and the process has `CAP_NET_ADMIN`.
 
+The UniFi integration auto-detects both legacy controllers (port 8443) and UniFi OS devices (UDM/UDR/CloudKey Gen2+, port 443).
+
 ### Conntrack (NAT) Configuration
 
 The NAT tab works out of the box on any Linux system with `nf_conntrack` loaded — no configuration needed. To enable per-flow byte/packet counters:
@@ -130,8 +132,6 @@ echo 'net.netfilter.nf_conntrack_acct=1' >> /etc/sysctl.conf
 ```
 
 The binary needs `CAP_NET_ADMIN` (or root) for netlink access. The included systemd service already grants this via `AmbientCapabilities`.
-
-The UniFi integration auto-detects both legacy controllers (port 8443) and UniFi OS devices (UDM/UDR/CloudKey Gen2+, port 443).
 
 ### RX/TX Direction Detection
 
