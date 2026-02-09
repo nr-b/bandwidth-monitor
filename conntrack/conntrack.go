@@ -136,10 +136,25 @@ func (t *Tracker) Run() {
 	c, err := ct.Dial(nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "conntrack: netlink dial failed: %v\n", err)
-		fmt.Fprintln(os.Stderr, "conntrack: NAT tracking disabled — ensure nf_conntrack module is loaded and process has CAP_NET_ADMIN")
+		fmt.Fprintln(os.Stderr, "conntrack: NAT tracking disabled — ensure nf_conntrack and nf_conntrack_netlink modules are loaded and process has CAP_NET_ADMIN")
+		fmt.Fprintln(os.Stderr, "conntrack: on OpenWrt: apk add kmod-nf-conntrack-netlink  (or opkg install kmod-nf-conntrack-netlink)")
 		return
 	}
+
+	// Probe dump to verify the conntrack netlink subsystem actually works.
+	// The socket can open even without kmod-nf-conntrack-netlink, but dump
+	// will fail with EINVAL.
+	if err := c.SetReadBuffer(t.sockBufSize); err != nil {
+		fmt.Fprintf(os.Stderr, "conntrack: SetReadBuffer: %v\n", err)
+	}
+	_, err = c.Dump(nil)
 	c.Close()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "conntrack: probe dump failed: %v\n", err)
+		fmt.Fprintln(os.Stderr, "conntrack: NAT tracking disabled — the nf_conntrack_netlink kernel module is likely not loaded")
+		fmt.Fprintln(os.Stderr, "conntrack: on OpenWrt: apk add kmod-nf-conntrack-netlink  (or opkg install kmod-nf-conntrack-netlink)")
+		return
+	}
 
 	t.available = true
 	fmt.Fprintln(os.Stderr, "conntrack: netlink connection established")

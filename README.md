@@ -204,7 +204,7 @@ sudo systemctl enable --now bandwidth-monitor
 #### OpenWrt (stable, opkg)
 
 ```bash
-opkg update && opkg install libpcap
+opkg update && opkg install libpcap kmod-nf-conntrack-netlink
 opkg install /tmp/bandwidth-monitor_*.ipk
 vi /etc/bandwidth-monitor/env
 /etc/init.d/bandwidth-monitor enable
@@ -220,7 +220,7 @@ scp GeoLite2-Country.mmdb GeoLite2-ASN.mmdb root@router:/etc/bandwidth-monitor/
 #### OpenWrt (snapshot, apk)
 
 ```bash
-apk update && apk add libpcap
+apk update && apk add libpcap kmod-nf-conntrack-netlink
 apk add --allow-untrusted /tmp/bandwidth-monitor-*.apk
 vi /etc/bandwidth-monitor/env
 /etc/init.d/bandwidth-monitor enable
