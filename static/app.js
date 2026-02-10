@@ -1162,7 +1162,12 @@
         };
         ws.onerror = function() { ws.close(); };
         ws.onmessage = function(e) {
-            try { process(JSON.parse(e.data)); } catch(ex) { console.error(ex); }
+            try {
+                var d = JSON.parse(e.data);
+                // Discard stale messages (e.g. buffered during hibernate)
+                if (d.timestamp && (Date.now() - d.timestamp) > 5000) return;
+                process(d);
+            } catch(ex) { console.error(ex); }
         };
     }
 
