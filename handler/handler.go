@@ -208,13 +208,29 @@ func WebSocket(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *
 		pingTicker := time.NewTicker(30 * time.Second)
 		defer pingTicker.Stop()
 
-		// Track whether the previous write completed to detect backpressure
-		// (e.g. client hibernating). Skip messages while backed up.
-		writeBusy := make(chan struct{}, 1)
+		// Non-blocking write channel: the ticker produces payloads and a
+		// dedicated writer goroutine drains them.  If the client is backed
+		// up (e.g. hibernating), only the most recent payload is kept.
+		sendCh := make(chan map[string]interface{}, 1)
+
+		// Writer goroutine — serialises all writes to the connection.
+		writerDone := make(chan struct{})
+		go func() {
+			defer close(writerDone)
+			for msg := range sendCh {
+				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+				if err := conn.WriteJSON(msg); err != nil {
+					return
+				}
+			}
+		}()
 
 		for {
 			select {
 			case <-doneCh:
+				close(sendCh)
+				return
+			case <-writerDone:
 				return
 			case <-pingTicker.C:
 				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
@@ -222,14 +238,6 @@ func WebSocket(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *
 					return
 				}
 			case <-ticker.C:
-				// Skip this tick if the previous write is still in progress
-				select {
-				case writeBusy <- struct{}{}:
-					// acquired slot — proceed with write
-				default:
-					// previous write still pending — client is backed up, skip
-					continue
-				}
 				payload := map[string]interface{}{
 					"interfaces":    c.GetAll(),
 					"sparklines":    c.GetSparklines(5*time.Minute, 50),
@@ -250,12 +258,17 @@ func WebSocket(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *
 				if ct != nil {
 					payload["conntrack"] = ct.GetSummary()
 				}
-				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-				if err := conn.WriteJSON(payload); err != nil {
-					<-writeBusy
-					return
+				// Non-blocking send: drop the old message if backed up
+				select {
+				case sendCh <- payload:
+				default:
+					// Channel full — drain stale message, enqueue fresh one
+					select {
+					case <-sendCh:
+					default:
+					}
+					sendCh <- payload
 				}
-				<-writeBusy
 			}
 		}
 	}
