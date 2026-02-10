@@ -51,6 +51,9 @@ type Collector struct {
 	history        map[string][]HistoryPoint
 	ifaceTypeCache map[string]string
 	vpnStatusFiles map[string]string // iface name → sentinel file path
+	nlHandle       *vnl.Handle       // persistent netlink handle
+	addrCache      map[int][]string  // cached addresses by link index
+	addrCacheTime  time.Time         // last address refresh
 	span           *spanOverlay      // nil when SPAN mode is disabled
 	spanPrevRx     uint64
 	spanPrevTx     uint64
@@ -74,12 +77,20 @@ func New(vpnStatusFiles map[string]string) *Collector {
 	if vpnStatusFiles == nil {
 		vpnStatusFiles = make(map[string]string)
 	}
+	// Create a persistent netlink handle to avoid per-poll socket creation.
+	// Falls back to package-level functions if handle creation fails.
+	nlh, err := vnl.NewHandle(vnl.FAMILY_ALL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "collector: failed to create persistent netlink handle: %v (will use per-call sockets)\n", err)
+	}
 	return &Collector{
 		current:        make(map[string]*InterfaceStat),
 		previous:       make(map[string]*rawStat),
 		history:        make(map[string][]HistoryPoint),
 		ifaceTypeCache: make(map[string]string),
 		vpnStatusFiles: vpnStatusFiles,
+		nlHandle:       nlh,
+		addrCache:      make(map[int][]string),
 		stopCh:         make(chan struct{}),
 	}
 }
@@ -111,6 +122,9 @@ func (c *Collector) Run() {
 func (c *Collector) Stop() {
 	if c.span != nil {
 		c.span.stop()
+	}
+	if c.nlHandle != nil {
+		c.nlHandle.Close()
 	}
 	close(c.stopCh)
 }
@@ -194,25 +208,39 @@ type linkInfo struct {
 	addrs     []string
 }
 
+const addrCacheTTL = 10 * time.Second
+
 func (c *Collector) poll() {
-	links, err := vnl.LinkList()
+	var links []vnl.Link
+	var err error
+	if c.nlHandle != nil {
+		links, err = c.nlHandle.LinkList()
+	} else {
+		links, err = vnl.LinkList()
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "collector: netlink LinkList: %v\n", err)
 		return
 	}
 
-	// Gather all addresses in one netlink call
-	allAddrs, err := vnl.AddrList(nil, vnl.FAMILY_ALL)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "collector: netlink AddrList: %v\n", err)
-		// non-fatal: continue without addresses
-		allAddrs = nil
-	}
-
-	// Index addresses by interface index
-	addrsByIndex := make(map[int][]string)
-	for _, a := range allAddrs {
-		addrsByIndex[a.LinkIndex] = append(addrsByIndex[a.LinkIndex], a.IPNet.String())
+	// Refresh address cache every 10 seconds (addresses rarely change)
+	if time.Since(c.addrCacheTime) >= addrCacheTTL {
+		var allAddrs []vnl.Addr
+		if c.nlHandle != nil {
+			allAddrs, err = c.nlHandle.AddrList(nil, vnl.FAMILY_ALL)
+		} else {
+			allAddrs, err = vnl.AddrList(nil, vnl.FAMILY_ALL)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "collector: netlink AddrList: %v\n", err)
+		} else {
+			addrsByIndex := make(map[int][]string)
+			for _, a := range allAddrs {
+				addrsByIndex[a.LinkIndex] = append(addrsByIndex[a.LinkIndex], a.IPNet.String())
+			}
+			c.addrCache = addrsByIndex
+			c.addrCacheTime = time.Now()
+		}
 	}
 
 	// Build linkInfo map from netlink data
@@ -228,7 +256,7 @@ func (c *Collector) poll() {
 			name:      name,
 			operState: operStateStr(attrs.OperState),
 			encapType: attrs.EncapType,
-			addrs:     addrsByIndex[attrs.Index],
+			addrs:     c.addrCache[attrs.Index],
 		}
 
 		// Extract IFLA_INFO_KIND via link type name
@@ -256,6 +284,19 @@ func (c *Collector) poll() {
 		infos[name] = li
 	}
 
+	// Read VPN status files outside the lock (file I/O)
+	vpnState := make(map[string]struct {
+		routing bool
+		since   string
+	})
+	for name := range infos {
+		routing, since := c.checkVPNRouting(name)
+		vpnState[name] = struct {
+			routing bool
+			since   string
+		}{routing, since}
+	}
+
 	now := time.Now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -271,15 +312,15 @@ func (c *Collector) poll() {
 	for name, li := range infos {
 		cur := li.stats
 		prev, hasPrev := c.previous[name]
-		vpnRouting, vpnSince := c.checkVPNRouting(name)
+		vs := vpnState[name]
 		_, vpnTracked := c.vpnStatusFiles[name]
 		iface := &InterfaceStat{
 			Name:            name,
 			IfaceType:       li.ifType,
 			OperState:       li.operState,
 			Addrs:           li.addrs,
-			VPNRouting:      vpnRouting,
-			VPNRoutingSince: vpnSince,
+			VPNRouting:      vs.routing,
+			VPNRoutingSince: vs.since,
 			VPNTracked:      vpnTracked,
 			RxBytes:         cur.rxBytes,
 			TxBytes:         cur.txBytes,
