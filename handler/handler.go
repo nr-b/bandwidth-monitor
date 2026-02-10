@@ -208,6 +208,10 @@ func WebSocket(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *
 		pingTicker := time.NewTicker(30 * time.Second)
 		defer pingTicker.Stop()
 
+		// Track whether the previous write completed to detect backpressure
+		// (e.g. client hibernating). Skip messages while backed up.
+		writeBusy := make(chan struct{}, 1)
+
 		for {
 			select {
 			case <-doneCh:
@@ -218,6 +222,14 @@ func WebSocket(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *
 					return
 				}
 			case <-ticker.C:
+				// Skip this tick if the previous write is still in progress
+				select {
+				case writeBusy <- struct{}{}:
+					// acquired slot — proceed with write
+				default:
+					// previous write still pending — client is backed up, skip
+					continue
+				}
 				payload := map[string]interface{}{
 					"interfaces":    c.GetAll(),
 					"sparklines":    c.GetSparklines(5*time.Minute, 50),
@@ -240,8 +252,10 @@ func WebSocket(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *
 				}
 				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 				if err := conn.WriteJSON(payload); err != nil {
+					<-writeBusy
 					return
 				}
+				<-writeBusy
 			}
 		}
 	}
