@@ -963,3 +963,137 @@ canvas { outline: none; }
 @media (max-width: 700px) {
     .nat-stats-row { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ── Speed Test Section ── */
+.speedtest-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 20px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    color: #fff;
+    background: var(--accent);
+    border: none;
+    transition: all 0.15s;
+    font-family: 'Inter', sans-serif;
+}
+.speedtest-btn:hover { opacity: 0.9; }
+.speedtest-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.speedtest-status {
+    font-size: 12px;
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+}
+
+.speedtest-gauges {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.speedtest-gauge-card {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 16px 16px;
+    text-align: center;
+}
+
+.speedtest-gauge-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-2);
+    margin-bottom: 8px;
+}
+
+.speedtest-gauge-wrap {
+    width: 100%;
+    max-width: 160px;
+    height: 80px;
+    margin: 0 auto 8px;
+}
+
+.speedtest-gauge-wrap canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.speedtest-gauge-value {
+    font-size: 28px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+    color: var(--text-0);
+    line-height: 1;
+}
+
+.speedtest-gauge-unit {
+    font-size: 11px;
+    color: var(--text-2);
+    margin-top: 2px;
+}
+
+.speedtest-progress-wrap {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    margin-bottom: 16px;
+}
+
+.speedtest-progress-phase {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-0);
+    margin-bottom: 10px;
+}
+
+.speedtest-progress-bar-bg {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--bg-3);
+    overflow: hidden;
+}
+
+.speedtest-progress-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.4s ease;
+    background: var(--accent);
+}
+
+.speedtest-progress-bar-fill.ping { background: #22d3ee; }
+.speedtest-progress-bar-fill.download { background: #3b82f6; }
+.speedtest-progress-bar-fill.upload { background: #a78bfa; }
+.speedtest-progress-bar-fill.done { background: var(--success); }
+.speedtest-progress-bar-fill.error { background: var(--danger); }
+
+.speedtest-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: st-spin 0.6s linear infinite;
+}
+
+@keyframes st-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (max-width: 900px) {
+    .speedtest-gauges { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 500px) {
+    .speedtest-gauges { grid-template-columns: 1fr; }
+}

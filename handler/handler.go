@@ -9,6 +9,7 @@ import (
 	"bandwidth-monitor/collector"
 	"bandwidth-monitor/conntrack"
 	"bandwidth-monitor/dns"
+	"bandwidth-monitor/speedtest"
 	"bandwidth-monitor/talkers"
 	"bandwidth-monitor/unifi"
 
@@ -182,6 +183,56 @@ func MenuBarSummary(c *collector.Collector, t *talkers.Tracker, dp dns.Provider,
 		}
 
 		json.NewEncoder(w).Encode(out)
+	}
+}
+
+// SpeedTestRun triggers a new speed test and streams progress as SSE.
+func SpeedTestRun(st *speedtest.Tester) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			http.Error(w, "POST required", http.StatusMethodNotAllowed)
+			return
+		}
+
+		ch := st.Run()
+		if ch == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]string{"error": "test already running"})
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+
+		for p := range ch {
+			data, _ := json.Marshal(p)
+			w.Write([]byte("data: "))
+			w.Write(data)
+			w.Write([]byte("\n\n"))
+			flusher.Flush()
+		}
+	}
+}
+
+// SpeedTestResults returns the history of speed test results.
+func SpeedTestResults(st *speedtest.Tester) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		results := st.GetResults()
+		response := map[string]interface{}{
+			"running": st.IsRunning(),
+			"results": results,
+		}
+		json.NewEncoder(w).Encode(response)
 	}
 }
 

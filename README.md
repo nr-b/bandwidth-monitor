@@ -45,6 +45,14 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 - **Full entry table** — original and reply tuples with translated addresses highlighted, searchable and filterable by NAT type
 - **macOS menu bar** — SwiftBar plugin shows connection count, table usage, IPv4/IPv6 split, and SNAT/DNAT counts
 
+### Speed Test Tab
+- **Server-side speed test** — runs download/upload/ping tests from the router against [speed.ffmuc.net](https://speed.ffmuc.net) (OpenSpeedTest)
+- **Live progress** — real-time gauges and progress bar streamed via SSE during the test
+- **Ping & jitter** — measures latency with outlier-resistant median filtering
+- **Parallel download/upload** — 6 concurrent HTTP streams for 10 seconds each for accurate throughput measurement
+- **Test history** — stores the last 50 results in memory with timestamps
+- **Configurable server** — change the target via `SPEEDTEST_SERVER` environment variable
+
 ### General
 - **WebSocket live updates** — 1-second refresh with automatic reconnection
 - **Dark/light/auto theme** — saved to localStorage
@@ -114,6 +122,7 @@ chmod 0600 /opt/bandwidth-monitor/.env
 | `VPN_STATUS_FILES` | *(none)* | Comma-separated `iface=path` pairs for VPN routing detection (e.g. `wg0=/run/wg0-active`) |
 | `LOCAL_NETS` | *(auto-detect)* | Comma-separated CIDRs for RX/TX direction detection (e.g. `192.0.2.0/24,2001:db8::/48`). Auto-discovered from local interfaces if not set. |
 | `SPAN_DEVICE` | *(disabled)* | SPAN/mirror port interface for direction-aware RX/TX (requires `LOCAL_NETS`; e.g. `eth1`) |
+| `SPEEDTEST_SERVER` | `https://speed.ffmuc.net` | Target server URL for the speed test tab |
 
 The DNS tab supports either **AdGuard Home** or **NextDNS** (mutually exclusive; AdGuard takes priority if both are configured). The WiFi tab is only shown when UniFi is configured. The NAT tab appears automatically when the `nf_conntrack` kernel module is loaded and the process has `CAP_NET_ADMIN`.
 
@@ -310,6 +319,7 @@ main.go                   → entry point, env config, wires all components
 collector/                → netlink-based interface stats (RTM_GETLINK/RTM_GETADDR), rates, 24h history, VPN routing
 conntrack/                → netlink-based conntrack (NAT) table reader via ti-mo/conntrack
 talkers/                  → pcap packet capture, per-IP tracking, 1-min bucket aggregation
+speedtest/                → HTTP-based speed test client (download/upload/ping against OpenSpeedTest servers)
 handler/                  → HTTP REST API + WebSocket handler
 dns/                      → common DNS provider interface
 adguard/                  → AdGuard Home API client (stats, top clients/domains)
@@ -348,6 +358,8 @@ Makefile                  → build, install, GeoIP download targets
 | `/api/dns` | GET | DNS summary (AdGuard Home or NextDNS) |
 | `/api/wifi` | GET | UniFi WiFi summary |
 | `/api/conntrack` | GET | NAT / conntrack summary (connections, states, NAT types, entries) |
+| `/api/speedtest/run` | POST | Start a speed test; streams progress as SSE (Server-Sent Events) |
+| `/api/speedtest/results` | GET | Speed test history (last 50 results) and running status |
 | `/api/summary` | GET | Compact summary for menu bar clients |
 | `/api/ws` | WS | WebSocket — pushes all data every second |
 
