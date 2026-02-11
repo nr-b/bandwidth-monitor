@@ -379,24 +379,32 @@ Makefile                  → build, install, GeoIP download targets
     <th>NAT (Light)</th>
     <th>DNS (Light)</th>
     <th>WiFi (Light)</th>
+    <th>Speed Test (Light)</th>
+    <th>Debug (Light)</th>
   </tr>
   <tr>
     <td><img src="docs/traffic-light.png" width="300" alt="Traffic (light)" /></td>
     <td><img src="docs/nat-light.png" width="300" alt="NAT (light)" /></td>
     <td><img src="docs/dns-light.png" width="300" alt="DNS (light)" /></td>
     <td><img src="docs/wifi-light.png" width="300" alt="WiFi (light)" /></td>
+    <td><img src="docs/speedtest-light.png" width="300" alt="Speed Test (light)" /></td>
+    <td><img src="docs/debug-light.png" width="300" alt="Debug (light)" /></td>
   </tr>
   <tr>
     <th>Traffic (Dark)</th>
     <th>NAT (Dark)</th>
     <th>DNS (Dark)</th>
     <th>WiFi (Dark)</th>
+    <th>Speed Test (Dark)</th>
+    <th>Debug (Dark)</th>
   </tr>
   <tr>
     <td><img src="docs/traffic-dark.png" width="300" alt="Traffic (dark)" /></td>
     <td><img src="docs/nat-dark.png" width="300" alt="NAT (dark)" /></td>
     <td><img src="docs/dns-dark.png" width="300" alt="DNS (dark)" /></td>
     <td><img src="docs/wifi-dark.png" width="300" alt="WiFi (dark)" /></td>
+    <td><img src="docs/speedtest-dark.png" width="300" alt="Speed Test (dark)" /></td>
+    <td><img src="docs/debug-dark.png" width="300" alt="Debug (dark)" /></td>
   </tr>
 </table>
 
