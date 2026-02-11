@@ -30,7 +30,7 @@
 
     // ── Tab navigation ──
     window._switchTab = function(tab) {
-        var panels = { traffic: 'tabTraffic', nat: 'tabNat', dns: 'tabDns', wifi: 'tabWifi', speedtest: 'tabSpeedtest' };
+        var panels = { traffic: 'tabTraffic', nat: 'tabNat', dns: 'tabDns', wifi: 'tabWifi', speedtest: 'tabSpeedtest', debug: 'tabDebug' };
         for (var k in panels) {
             var p = document.getElementById(panels[k]);
             if (p) p.classList.toggle('active', k === tab);
@@ -1437,6 +1437,278 @@
             }, 3000);
         }
     };
+
+    // ── Debug: Traceroute ──
+    var _trRunning = false;
+
+    window._runTraceroute = function() {
+        if (_trRunning) return;
+        var target = (document.getElementById('trTarget').value || '').trim();
+        if (!target) { alert('Enter an IP or hostname'); return; }
+        var count = parseInt(document.getElementById('trCount').value) || 20;
+
+        _trRunning = true;
+        var btn = document.getElementById('trBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="speedtest-spinner"></span> Running...';
+
+        var wrap = document.getElementById('trProgressWrap');
+        wrap.style.display = '';
+        var bar = document.getElementById('trProgressBar');
+        var phase = document.getElementById('trPhase');
+        bar.style.width = '0%';
+        bar.className = 'speedtest-progress-bar-fill ping';
+        phase.textContent = 'Running traceroute...';
+
+        document.getElementById('trResults').style.display = 'none';
+
+        fetch('/api/debug/traceroute?target=' + encodeURIComponent(target) + '&count=' + count, { method: 'POST' })
+        .then(function(resp) {
+            var reader = resp.body.getReader();
+            var decoder = new TextDecoder();
+            var buffer = '';
+
+            function processChunk() {
+                return reader.read().then(function(result) {
+                    if (result.done) return;
+                    buffer += decoder.decode(result.value, { stream: true });
+                    var lines = buffer.split('\n');
+                    buffer = lines.pop();
+                    for (var i = 0; i < lines.length; i++) {
+                        var line = lines[i].trim();
+                        if (!line.startsWith('data: ')) continue;
+                        try {
+                            var p = JSON.parse(line.substring(6));
+                            handleTrProgress(p);
+                        } catch(e) {}
+                    }
+                    return processChunk();
+                });
+            }
+
+            function handleTrProgress(p) {
+                if (p.phase === 'running') {
+                    phase.textContent = p.message;
+                    if (p.ttl > 0) {
+                        bar.style.width = Math.min((p.ttl / 30) * 100, 99) + '%';
+                    }
+                } else if (p.phase === 'done' && p.result) {
+                    phase.textContent = p.message;
+                    bar.style.width = '100%';
+                    bar.className = 'speedtest-progress-bar-fill done';
+                    renderTrResults(p.result);
+                    finishTraceroute();
+                } else if (p.phase === 'error') {
+                    phase.textContent = p.message;
+                    bar.className = 'speedtest-progress-bar-fill error';
+                    finishTraceroute();
+                }
+            }
+
+            return processChunk();
+        }).catch(function() {
+            phase.textContent = 'Connection error';
+            finishTraceroute();
+        });
+
+        function finishTraceroute() {
+            _trRunning = false;
+            btn.disabled = false;
+            btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run';
+            setTimeout(function() { wrap.style.display = 'none'; }, 2000);
+        }
+    };
+
+    function renderTrResults(result) {
+        document.getElementById('trResults').style.display = '';
+        document.getElementById('trResultTitle').textContent = 'Traceroute to ' + result.target + ' (' + result.resolved_ip + ')';
+        document.getElementById('trResultSub').textContent = result.probes_per_ttl + ' probes/hop — ' + result.hops.length + ' hops' + (result.reached_dest ? ' — destination reached' : '') + (result.error ? ' — ' + result.error : '');
+
+        var tb = document.getElementById('trTable');
+        if (!result.hops || !result.hops.length) {
+            tb.innerHTML = '<tr><td colspan="5" class="empty-state">No hops received</td></tr>';
+            return;
+        }
+
+        var h = '';
+        for (var i = 0; i < result.hops.length; i++) {
+            var hop = result.hops[i];
+            var lossClass = hop.loss_pct > 0 ? (hop.loss_pct > 10 ? ' style="color:var(--danger);font-weight:600"' : ' style="color:var(--warning)"') : '';
+            var rttStr = hop.received > 0 ? hop.avg_rtt_ms.toFixed(2) + ' ms' : '—';
+            if (hop.received > 1) rttStr += ' <span style="color:var(--text-2);font-size:11px">(min ' + hop.min_rtt_ms.toFixed(2) + ' / max ' + hop.max_rtt_ms.toFixed(2) + ')</span>';
+            var ipStr = hop.ip || '<span style="color:var(--text-2)">*</span>';
+            var hostStr = hop.hostname || '—';
+
+            h += '<tr>';
+            h += '<td>' + hop.ttl + '</td>';
+            h += '<td style="font-family:JetBrains Mono,monospace;font-size:12px">' + ipStr + '</td>';
+            h += '<td style="font-size:12px;color:var(--text-2)">' + hostStr + '</td>';
+            h += '<td style="font-variant-numeric:tabular-nums;font-size:12px">' + rttStr + '</td>';
+            h += '<td' + lossClass + '>' + hop.loss_pct.toFixed(1) + '%</td>';
+            h += '</tr>';
+        }
+        tb.innerHTML = h;
+    }
+
+    // ── Debug: DNS Check ──
+    window._runDNSCheck = function() {
+        var domain = (document.getElementById('dnsCheckDomain').value || '').trim();
+        if (!domain) { alert('Enter a domain'); return; }
+        var qtype = document.getElementById('dnsCheckType').value;
+
+        var btn = document.getElementById('dnsCheckBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="speedtest-spinner"></span> Querying...';
+
+        fetch('/api/debug/dns?domain=' + encodeURIComponent(domain) + '&type=' + qtype)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            renderDNSCheckResults(data);
+            btn.disabled = false;
+            btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> Query';
+        }).catch(function() {
+            btn.disabled = false;
+            btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> Query';
+        });
+    };
+
+    function renderDNSCheckResults(data) {
+        var wrap = document.getElementById('dnsCheckResults');
+        wrap.style.display = '';
+        document.getElementById('dnsCheckTitle').textContent = data.domain + ' (' + data.type + ')';
+        document.getElementById('dnsCheckSub').textContent = data.servers.length + ' DNS servers queried';
+
+        var body = document.getElementById('dnsCheckBody');
+        var h = '';
+
+        // Resolver leak check info
+        if (data.resolver_info) {
+            var ri = data.resolver_info;
+            h += '<div style="border-bottom:1px solid var(--border);padding:14px 20px;background:var(--bg-2)">';
+            h += '<div style="font-size:12px;font-weight:600;color:var(--text-0);margin-bottom:8px">Resolver Chain</div>';
+
+            // Show the configured local resolver
+            if (ri.configured_resolver) {
+                h += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">';
+                h += '<span style="font-size:11px;color:var(--text-2);min-width:110px">Local resolver:</span>';
+                h += '<span style="font-family:JetBrains Mono,monospace;font-size:12px;padding:3px 8px;border-radius:4px;background:var(--bg-3);color:var(--accent)">' + ri.configured_resolver + '</span>';
+                h += '<span style="font-size:11px;color:var(--text-2)">(from /etc/resolv.conf)</span>';
+                h += '</div>';
+            }
+
+            // Show upstream resolver IPs as seen by authoritative servers
+            h += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px">';
+            h += '<span style="font-size:11px;color:var(--text-2);min-width:110px">Upstream egress:</span>';
+            h += '<div style="display:flex;flex-wrap:wrap;gap:4px">';
+            if (ri.resolver_ips && ri.resolver_ips.length) {
+                for (var i = 0; i < ri.resolver_ips.length; i++) {
+                    h += '<span style="font-family:JetBrains Mono,monospace;font-size:12px;padding:3px 8px;border-radius:4px;background:var(--bg-3);color:var(--text-0)">' + ri.resolver_ips[i] + '</span>';
+                }
+            } else {
+                h += '<span style="font-size:12px;color:var(--warning)">' + (ri.error || 'No resolver IPs detected') + '</span>';
+            }
+            h += '</div></div>';
+            h += '<div style="font-size:10px;color:var(--text-2);margin-top:4px;margin-bottom:6px;padding-left:118px">IPs seen by authoritative DNS servers (o-o.myaddr.l.google.com, dnscheck.tools)</div>';
+
+            if (ri.ecs && ri.ecs.length) {
+                h += '<div style="display:flex;align-items:baseline;gap:8px;margin-top:6px">';
+                h += '<span style="font-size:11px;color:var(--text-2);min-width:110px">ECS:</span>';
+                h += '<div style="display:flex;flex-wrap:wrap;gap:4px">';
+                for (var ei = 0; ei < ri.ecs.length; ei++) {
+                    h += '<span style="font-family:JetBrains Mono,monospace;font-size:11px;padding:2px 6px;border-radius:3px;background:var(--bg-3);color:var(--text-2)">' + ri.ecs[ei] + '</span>';
+                }
+                h += '</div></div>';
+            }
+            if (ri.dnscheck_info) {
+                var dc = ri.dnscheck_info;
+                h += '<div style="margin-top:10px;display:grid;grid-template-columns:110px 1fr;gap:3px 8px;font-size:12px">';
+                var dcFields = [['resolverOrg', 'Upstream org:'], ['resolverGeo', 'Upstream geo:'], ['proto', 'Protocol:'], ['edns0', 'EDNS0:']];
+                for (var di = 0; di < dcFields.length; di++) {
+                    var key = dcFields[di][0], label = dcFields[di][1];
+                    if (dc[key]) {
+                        h += '<span style="color:var(--text-2);font-size:11px">' + label + '</span>';
+                        h += '<span style="font-family:JetBrains Mono,monospace;font-size:11px;color:var(--text-0)">' + dc[key] + '</span>';
+                    }
+                }
+                h += '</div>';
+            }
+            h += '</div>';
+        }
+
+        // Sort servers: System Resolver first, then by latency
+        var servers = (data.servers || []).slice();
+        servers.sort(function(a, b) {
+            if (a.server === 'System Resolver') return -1;
+            if (b.server === 'System Resolver') return 1;
+            return (a.latency || 9999) - (b.latency || 9999);
+        });
+
+        // Find fastest latency for highlighting
+        var fastestLatency = Infinity;
+        for (var fi = 0; fi < servers.length; fi++) {
+            if (servers[fi].latency > 0 && servers[fi].latency < fastestLatency) fastestLatency = servers[fi].latency;
+        }
+
+        // Collect all unique record values across servers to highlight differences
+        var allValues = {};
+        for (var ai = 0; ai < servers.length; ai++) {
+            if (servers[ai].records) {
+                for (var ari = 0; ari < servers[ai].records.length; ari++) {
+                    var v = servers[ai].records[ari].value;
+                    allValues[v] = (allValues[v] || 0) + 1;
+                }
+            }
+        }
+
+        for (var si = 0; si < servers.length; si++) {
+            var srv = servers[si];
+            var srvName = srv.server;
+            var latencyStr = srv.latency > 0 ? srv.latency.toFixed(1) + ' ms' : '—';
+            var isFastest = srv.latency > 0 && Math.abs(srv.latency - fastestLatency) < 0.1;
+            var rcodeColor = srv.rcode === 'NOERROR' ? 'var(--success)' : (srv.rcode === 'NXDOMAIN' ? 'var(--danger)' : 'var(--warning)');
+            var latencyColor = isFastest ? 'var(--success)' : (srv.latency > 100 ? 'var(--warning)' : 'var(--text-2)');
+
+            h += '<div class="dns-check-server">';
+
+            // Server header bar
+            h += '<div class="dns-check-server-header">';
+            h += '<div style="display:flex;align-items:center;gap:8px">';
+            h += '<span class="dns-check-server-dot" style="background:' + rcodeColor + '"></span>';
+            h += '<span style="font-size:13px;font-weight:600;color:var(--text-0)">' + srvName + '</span>';
+            if (srv.ad) h += '<span class="dns-check-badge dnssec">DNSSEC</span>';
+            if (srv.truncated) h += '<span class="dns-check-badge truncated">TRUNCATED</span>';
+            h += '</div>';
+            h += '<div style="display:flex;align-items:center;gap:16px">';
+            h += '<span class="dns-check-rcode" style="color:' + rcodeColor + '">' + (srv.rcode || 'ERROR') + '</span>';
+            h += '<span class="dns-check-latency" style="color:' + latencyColor + '">' + latencyStr + (isFastest ? ' ⚡' : '') + '</span>';
+            h += '</div>';
+            h += '</div>';
+
+            if (srv.error) {
+                h += '<div class="dns-check-error">' + srv.error + '</div>';
+            }
+
+            if (srv.records && srv.records.length) {
+                h += '<div class="dns-check-records">';
+                for (var ri = 0; ri < srv.records.length; ri++) {
+                    var rec = srv.records[ri];
+                    // Highlight values that differ from majority
+                    var isUnique = allValues[rec.value] === 1 && Object.keys(allValues).length > 1;
+                    h += '<div class="dns-check-record' + (isUnique ? ' unique' : '') + '">';
+                    h += '<span class="dns-check-rec-type">' + rec.type + '</span>';
+                    h += '<span class="dns-check-rec-value">' + rec.value + '</span>';
+                    h += '<span class="dns-check-rec-ttl">' + (rec.ttl > 0 ? rec.ttl + 's' : '—') + '</span>';
+                    h += '</div>';
+                }
+                h += '</div>';
+            } else if (!srv.error) {
+                h += '<div style="padding:8px 16px;font-size:12px;color:var(--text-2)">No records returned</div>';
+            }
+
+            h += '</div>';
+        }
+        body.innerHTML = h;
+    }
 
     connect();
 })();

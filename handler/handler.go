@@ -4,10 +4,13 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
+	"sync"
 	"time"
 
 	"bandwidth-monitor/collector"
 	"bandwidth-monitor/conntrack"
+	"bandwidth-monitor/debug"
 	"bandwidth-monitor/dns"
 	"bandwidth-monitor/speedtest"
 	"bandwidth-monitor/talkers"
@@ -233,6 +236,122 @@ func SpeedTestResults(st *speedtest.Tester) http.HandlerFunc {
 			"results": results,
 		}
 		json.NewEncoder(w).Encode(response)
+	}
+}
+
+// DebugTraceroute runs a native ICMP traceroute and streams progress as SSE.
+func DebugTraceroute() http.HandlerFunc {
+	var mu sync.Mutex
+	running := false
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			http.Error(w, "POST required", http.StatusMethodNotAllowed)
+			return
+		}
+
+		target := r.URL.Query().Get("target")
+		if target == "" {
+			http.Error(w, "target parameter required", http.StatusBadRequest)
+			return
+		}
+
+		// Validate target: only allow hostnames and IPs, max length
+		if len(target) > 253 {
+			http.Error(w, "target too long", http.StatusBadRequest)
+			return
+		}
+
+		// Rate limit: only one traceroute at a time
+		mu.Lock()
+		if running {
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]string{"error": "traceroute already running"})
+			return
+		}
+		running = true
+		mu.Unlock()
+		defer func() { mu.Lock(); running = false; mu.Unlock() }()
+
+		countStr := r.URL.Query().Get("count")
+		count := 20
+		if countStr != "" {
+			if c, err := strconv.Atoi(countStr); err == nil && c > 0 && c <= 100 {
+				count = c
+			}
+		}
+
+		maxTTLStr := r.URL.Query().Get("maxttl")
+		maxTTL := 30
+		if maxTTLStr != "" {
+			if m, err := strconv.Atoi(maxTTLStr); err == nil && m > 0 && m <= 64 {
+				maxTTL = m
+			}
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+
+		ch := debug.RunTraceroute(target, count, maxTTL)
+		for p := range ch {
+			data, _ := json.Marshal(p)
+			w.Write([]byte("data: "))
+			w.Write(data)
+			w.Write([]byte("\n\n"))
+			flusher.Flush()
+		}
+	}
+}
+
+// DebugDNS runs DNS checks against multiple servers.
+func DebugDNS() http.HandlerFunc {
+	var mu sync.Mutex
+	lastRun := time.Time{}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		domain := r.URL.Query().Get("domain")
+		if domain == "" {
+			http.Error(w, "domain parameter required", http.StatusBadRequest)
+			return
+		}
+
+		// Validate domain: max length, no spaces/special chars
+		if len(domain) > 253 {
+			http.Error(w, "domain too long", http.StatusBadRequest)
+			return
+		}
+
+		// Rate limit: 1 query per 2 seconds
+		mu.Lock()
+		if time.Since(lastRun) < 2*time.Second {
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]string{"error": "rate limited, try again shortly"})
+			return
+		}
+		lastRun = time.Now()
+		mu.Unlock()
+
+		qtype := r.URL.Query().Get("type")
+		if qtype == "" {
+			qtype = "A"
+		}
+
+		result := debug.RunDNSCheck(domain, qtype)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
 	}
 }
 

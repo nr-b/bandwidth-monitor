@@ -53,6 +53,11 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 - **Test history** — stores the last 50 results in memory with timestamps
 - **Configurable server** — change the target via `SPEEDTEST_SERVER` environment variable
 
+### Debug Tab
+- **Traceroute** — native Go ICMP traceroute with configurable probes per hop (default 20), using raw sockets with proper TTL manipulation and ICMP ID matching; shows per-hop IP, reverse DNS hostname, avg/min/max RTT, and packet loss percentage; supports IPv4 and IPv6; streams progress via SSE
+- **DNS Check** — queries a domain (A, AAAA, MX, TXT, NS, CNAME, SOA, PTR) against 14 DNS servers in parallel: System Resolver, FFMUC Anycast01/02 (IPv4+IPv6), Cloudflare (IPv4+IPv6), Google (IPv4+IPv6), Quad9 (IPv4+IPv6), and OpenDNS (IPv4+IPv6); shows RCode, latency, TTL, DNSSEC AD flag per server; highlights the fastest server and flags records unique to a single server
+- **Resolver leak check** — automatically detects which public IPs your system resolver uses when talking to authoritative servers, via `o-o.myaddr.l.google.com` TXT and `dnscheck.tools` TXT (including IPv4-only and IPv6-only variants); shows the configured local resolver from `/etc/resolv.conf`, upstream egress IPs, EDNS Client Subnet info, and resolver org/geo from dnscheck.tools
+
 ### General
 - **WebSocket live updates** — 1-second refresh with automatic reconnection
 - **Dark/light/auto theme** — saved to localStorage
@@ -320,6 +325,7 @@ collector/                → netlink-based interface stats (RTM_GETLINK/RTM_GET
 conntrack/                → netlink-based conntrack (NAT) table reader via ti-mo/conntrack
 talkers/                  → pcap packet capture, per-IP tracking, 1-min bucket aggregation
 speedtest/                → HTTP-based speed test client (download/upload/ping against OpenSpeedTest servers)
+debug/                    → traceroute (native ICMP), DNS checker (multi-server), resolver leak detection
 handler/                  → HTTP REST API + WebSocket handler
 dns/                      → common DNS provider interface
 adguard/                  → AdGuard Home API client (stats, top clients/domains)
@@ -327,9 +333,9 @@ nextdns/                  → NextDNS API client (stats, top clients/domains)
 unifi/                    → UniFi controller API client (APs, SSIDs, clients, live rates)
 geoip/                    → MaxMind MMDB GeoIP lookups (country, ASN)
 static/
-  index.html              → HTML shell with three tabs
+  index.html              → HTML shell with six tabs (Traffic, NAT, DNS, WiFi, Speed Test, Debug)
   app.js                  → all frontend JavaScript (charts, tables, WebSocket)
-  style.css               → full stylesheet (dark/light themes, glassmorphism)
+  style.css               → full stylesheet (dark/light themes)
 swiftbar/                 → macOS menu bar plugin
 packaging/
   openwrt-Makefile        → OpenWrt package definition
@@ -338,8 +344,6 @@ packaging/
     99-vpn-status         → OpenWrt hotplug script for VPN sentinel files
   postinstall.sh          → deb/rpm post-install script
   preremove.sh            → deb/rpm pre-remove script
-nfpm.yaml                 → deb/rpm packaging config (nfpm)
-.github/workflows/        → CI: builds deb, rpm, ipk, apk on push & tag
 nfpm.yaml                 → deb/rpm packaging config (nfpm)
 .github/workflows/        → CI: builds deb, rpm, ipk, apk on push & tag
 env.example               → example environment configuration
@@ -360,6 +364,8 @@ Makefile                  → build, install, GeoIP download targets
 | `/api/conntrack` | GET | NAT / conntrack summary (connections, states, NAT types, entries) |
 | `/api/speedtest/run` | POST | Start a speed test; streams progress as SSE (Server-Sent Events) |
 | `/api/speedtest/results` | GET | Speed test history (last 50 results) and running status |
+| `/api/debug/traceroute` | POST | ICMP traceroute with SSE progress; params: `target`, `count` (probes/hop), `maxttl` |
+| `/api/debug/dns` | GET | DNS check against 14 servers + resolver leak test; params: `domain`, `type` |
 | `/api/summary` | GET | Compact summary for menu bar clients |
 | `/api/ws` | WS | WebSocket — pushes all data every second |
 
@@ -371,24 +377,32 @@ Makefile                  → build, install, GeoIP download targets
     <th>NAT (Light)</th>
     <th>DNS (Light)</th>
     <th>WiFi (Light)</th>
+    <th>Speed Test (Light)</th>
+    <th>Debug (Light)</th>
   </tr>
   <tr>
     <td><img src="docs/traffic-light.png" width="300" alt="Traffic (light)" /></td>
     <td><img src="docs/nat-light.png" width="300" alt="NAT (light)" /></td>
     <td><img src="docs/dns-light.png" width="300" alt="DNS (light)" /></td>
     <td><img src="docs/wifi-light.png" width="300" alt="WiFi (light)" /></td>
+    <td><img src="docs/speedtest-light.png" width="300" alt="Speed Test (light)" /></td>
+    <td><img src="docs/debug-light.png" width="300" alt="Debug (light)" /></td>
   </tr>
   <tr>
     <th>Traffic (Dark)</th>
     <th>NAT (Dark)</th>
     <th>DNS (Dark)</th>
     <th>WiFi (Dark)</th>
+    <th>Speed Test (Dark)</th>
+    <th>Debug (Dark)</th>
   </tr>
   <tr>
     <td><img src="docs/traffic-dark.png" width="300" alt="Traffic (dark)" /></td>
     <td><img src="docs/nat-dark.png" width="300" alt="NAT (dark)" /></td>
     <td><img src="docs/dns-dark.png" width="300" alt="DNS (dark)" /></td>
     <td><img src="docs/wifi-dark.png" width="300" alt="WiFi (dark)" /></td>
+    <td><img src="docs/speedtest-dark.png" width="300" alt="Speed Test (dark)" /></td>
+    <td><img src="docs/debug-dark.png" width="300" alt="Debug (dark)" /></td>
   </tr>
 </table>
 
@@ -400,4 +414,6 @@ Makefile                  → build, install, GeoIP download targets
 - **GeoIP** is optional — without MMDB files, country/ASN columns are simply hidden
 - **NAT tab** requires `CAP_NET_ADMIN` (or root) for netlink access to the conntrack table; enable `nf_conntrack_acct=1` for per-flow byte counters
 - **DNS and WiFi** tabs only appear when their respective integrations are configured
+- **Speed test** runs from the router, not the client — useful for testing WAN throughput independent of local WiFi
+- **Traceroute** (Debug tab) requires `CAP_NET_RAW` for raw ICMP sockets; the DNS check and resolver leak test work without special permissions
 - All assets are embedded in the binary — single-file deployment, no runtime dependencies

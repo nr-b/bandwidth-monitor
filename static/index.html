@@ -35,6 +35,7 @@
             <button class="main-nav-tab" data-tab="dns" onclick="window._switchTab('dns')">DNS</button>
             <button class="main-nav-tab" data-tab="wifi" onclick="window._switchTab('wifi')">WiFi</button>
             <button class="main-nav-tab" data-tab="speedtest" onclick="window._switchTab('speedtest')">Speed Test</button>
+            <button class="main-nav-tab" data-tab="debug" onclick="window._switchTab('debug')">Debug</button>
         </div>
 
         <div class="tab-panel active" id="tabTraffic">
@@ -724,6 +725,102 @@
             </table>
         </div>
         </div><!-- /tabSpeedtest -->
+
+        <div class="tab-panel" id="tabDebug">
+
+        <!-- Traceroute Section -->
+        <div class="card" style="margin-bottom:16px">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">Traceroute</div>
+                    <div class="card-subtitle">ICMP traceroute with multiple probes per hop from the router</div>
+                </div>
+            </div>
+            <div style="padding:12px 20px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--border)">
+                <input type="text" id="trTarget" placeholder="IP or hostname (e.g. 1.1.1.1)" style="padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg-2);color:var(--text-0);font-size:13px;width:220px;outline:none;font-family:'JetBrains Mono',monospace">
+                <input type="number" id="trCount" value="20" min="1" max="100" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-2);color:var(--text-0);font-size:13px;width:70px;outline:none" title="Probes per hop">
+                <span style="font-size:11px;color:var(--text-2)">probes/hop</span>
+                <button class="speedtest-btn" id="trBtn" onclick="window._runTraceroute()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    Run
+                </button>
+            </div>
+        </div>
+
+        <div id="trProgressWrap" style="display:none">
+            <div class="speedtest-progress-wrap" style="margin-bottom:16px">
+                <div class="speedtest-progress-phase" id="trPhase">Waiting...</div>
+                <div class="speedtest-progress-bar-bg">
+                    <div class="speedtest-progress-bar-fill" id="trProgressBar" style="width:0%"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="trResults" style="display:none">
+            <div class="card" style="margin-bottom:16px">
+                <div class="card-header">
+                    <div>
+                        <div class="card-title" id="trResultTitle">Traceroute Results</div>
+                        <div class="card-subtitle" id="trResultSub"></div>
+                    </div>
+                </div>
+                <div style="max-height:600px;overflow-y:auto">
+                <table>
+                    <thead><tr>
+                        <th>TTL</th>
+                        <th>IP</th>
+                        <th>Hostname</th>
+                        <th>RTT (ms)</th>
+                        <th>Loss</th>
+                    </tr></thead>
+                    <tbody id="trTable">
+                        <tr><td colspan="5" class="empty-state">No data</td></tr>
+                    </tbody>
+                </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- DNS Section -->
+        <div class="card" style="margin-bottom:16px">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">DNS Check</div>
+                    <div class="card-subtitle">Query a domain against multiple DNS servers and compare results</div>
+                </div>
+            </div>
+            <div style="padding:12px 20px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--border)">
+                <input type="text" id="dnsCheckDomain" placeholder="Domain (e.g. example.com)" style="padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg-2);color:var(--text-0);font-size:13px;width:220px;outline:none;font-family:'JetBrains Mono',monospace">
+                <select id="dnsCheckType" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-2);color:var(--text-0);font-size:13px;outline:none">
+                    <option value="A">A</option>
+                    <option value="AAAA">AAAA</option>
+                    <option value="MX">MX</option>
+                    <option value="TXT">TXT</option>
+                    <option value="NS">NS</option>
+                    <option value="CNAME">CNAME</option>
+                    <option value="SOA">SOA</option>
+                    <option value="PTR">PTR</option>
+                </select>
+                <button class="speedtest-btn" id="dnsCheckBtn" onclick="window._runDNSCheck()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    Query
+                </button>
+            </div>
+        </div>
+
+        <div id="dnsCheckResults" style="display:none">
+            <div class="card">
+                <div class="card-header">
+                    <div>
+                        <div class="card-title" id="dnsCheckTitle">DNS Results</div>
+                        <div class="card-subtitle" id="dnsCheckSub"></div>
+                    </div>
+                </div>
+                <div id="dnsCheckBody"></div>
+            </div>
+        </div>
+
+        </div><!-- /tabDebug -->
 
         <div class="footer"><span id="clock"></span></div>
     </div>
