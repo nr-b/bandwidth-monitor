@@ -308,6 +308,7 @@ A [SwiftBar](https://github.com/swiftbar/SwiftBar) / [xbar](https://xbarapp.com/
 | `BW_PORT` | `8080` | Port used when auto-detecting the server from the macOS default gateway |
 | `BW_PREFER_IFACE` | *(auto)* | Default preferred interface for menu bar title (e.g. `ppp0`) |
 | `BW_PREFER_IFACE_MAP` | *(none)* | Per-server interface override: `url=iface,url=iface` |
+| `BW_SHOW_EXTERNAL_IP` | `true` | Show public IPs in menu bar by querying `ip.ffmuc.net`; set to `false` to disable |
 
 **Multi-server example** (edit the defaults in the script):
 ```bash
@@ -405,6 +406,31 @@ Makefile                  → build, install, GeoIP download targets
     <td><img src="docs/debug-dark.png" width="300" alt="Debug (dark)" /></td>
   </tr>
 </table>
+
+## External Services Transparency
+
+Every hardcoded external service that bandwidth-monitor or its components contact:
+
+| Service | URL / IP | Component | Trigger | Data sent | Data received |
+|---------|---------|-----------|---------|-----------|---------------|
+| **FFMUC Speed Test** | `speed.ffmuc.net` | Speed Test tab | User clicks "Start Test" | HTTP GET `/downloading`, POST `/upload` (random payload) | Download payload, upload ack |
+| **FFMUC IP Check** | `ip.ffmuc.net` | SwiftBar plugin | Every ~5 min (cached), **on by default** (`BW_SHOW_EXTERNAL_IP=false` to disable) | HTTPS GET (IPv4 + IPv6) | Router's public IPv4 and IPv6 address |
+| **FFMUC Anycast01** | `5.1.66.255`, `2001:678:e68:f000::` | DNS Check | User clicks "Query" | DNS query for user-entered domain | DNS records |
+| **FFMUC Anycast02** | `185.150.99.255`, `2001:678:ed0:f000::` | DNS Check | User clicks "Query" | DNS query for user-entered domain | DNS records |
+| **Cloudflare DNS** | `1.1.1.1`, `2606:4700:4700::1111` | DNS Check | User clicks "Query" | DNS query for user-entered domain | DNS records |
+| **Google DNS** | `8.8.8.8`, `2001:4860:4860::8888` | DNS Check | User clicks "Query" | DNS query for user-entered domain | DNS records |
+| **Quad9 DNS** | `9.9.9.9`, `2620:fe::fe` | DNS Check | User clicks "Query" | DNS query for user-entered domain | DNS records |
+| **OpenDNS** | `208.67.222.222`, `2620:119:35::35` | DNS Check | User clicks "Query" | DNS query for user-entered domain | DNS records |
+| **Google Authoritative** | `o-o.myaddr.l.google.com` | Resolver leak check | Piggybacks on DNS Check | TXT query via system resolver | Resolver's public IP, ECS info |
+| **dnscheck.tools** | `test.dnscheck.tools`, `test-ipv4.*`, `test-ipv6.*` | Resolver leak check | Piggybacks on DNS Check | TXT query via system resolver | Resolver IP, org, geo, protocol |
+
+All JavaScript libraries (Chart.js, Luxon) and fonts (Inter, JetBrains Mono) are **bundled in the binary** — no CDN requests are made at runtime. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for their licenses.
+
+User-configured services (AdGuard Home, NextDNS, UniFi Controller) are **not** listed here — they are optional and only contacted when explicitly configured via environment variables.
+
+FFMUC services (`speed.ffmuc.net`, `ip.ffmuc.net`, Anycast DNS) are operated by [Freie Netze München e.V.](https://ffmuc.net/) — see their [privacy policy](https://ffmuc.net/privacy/).
+
+**No telemetry, no analytics, no crash reporting, no update checks.** The binary phones home to nothing.
 
 ## Notes
 
