@@ -47,12 +47,9 @@ SORTED_SERVERS+=("${REMAINING_SERVERS[@]}")
 # Try each server in subnet-priority order
 SERVER=""
 DATA=""
-HDRS=""
 for s in "${SORTED_SERVERS[@]}"; do
-    RESP=$(curl -sf --max-time 1 -D- "${s}/api/summary" 2>/dev/null)
-    if [ -n "$RESP" ]; then
-        HDRS=$(echo "$RESP" | sed '/^\r\{0,1\}$/q')
-        DATA=$(echo "$RESP" | sed '1,/^\r\{0,1\}$/d')
+    DATA=$(curl -sf --max-time 1 -w '' "${s}/api/summary" 2>/dev/null)
+    if [ -n "$DATA" ]; then
         SERVER="$s"
         break
     fi
@@ -82,8 +79,8 @@ if [ -z "$DATA" ]; then
     exit 0
 fi
 
-# Verify we're talking to bandwidth-monitor (check signature header)
-if ! echo "$HDRS" | grep -qi 'X-Bandwidth-Monitor'; then
+# Verify we're talking to bandwidth-monitor (check signature field in JSON)
+if ! echo "$DATA" | jq -e '.app == "bandwidth-monitor"' >/dev/null 2>&1; then
     echo "⚡ ??"
     echo "---"
     echo "Not a bandwidth-monitor instance | color=red"

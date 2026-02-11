@@ -111,6 +111,7 @@ func MenuBarSummary(c *collector.Collector, t *talkers.Tracker, dp dns.Provider,
 			DNAT     int     `json:"dnat"`
 		}
 		type summary struct {
+			App        string       `json:"app"`
 			Interfaces []ifaceBrief `json:"interfaces"`
 			VPN        bool         `json:"vpn"`
 			VPNIface   string       `json:"vpn_iface,omitempty"`
@@ -121,6 +122,7 @@ func MenuBarSummary(c *collector.Collector, t *talkers.Tracker, dp dns.Provider,
 		}
 
 		var out summary
+		out.App = "bandwidth-monitor"
 		out.Timestamp = time.Now().UnixMilli()
 
 		for _, iface := range c.GetAll() {
