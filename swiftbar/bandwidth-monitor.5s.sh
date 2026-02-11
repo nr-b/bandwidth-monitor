@@ -10,7 +10,10 @@
 
 # ── Configuration ──
 # Comma-separated list of servers to try in order (first reachable wins)
-SERVERS="${BW_SERVERS:-${BW_SERVER:-http://localhost:8080}}"
+# If not set, auto-detects from the macOS default gateway.
+SERVERS="${BW_SERVERS:-${BW_SERVER:-}}"
+# Port to use when auto-detecting from the default gateway (default: 8080)
+PORT="${BW_PORT:-8080}"
 # Default preferred interface (used if no per-server override matches)
 PREFER_IFACE="${BW_PREFER_IFACE:-}"
 # Per-server preferred interface overrides: "url=iface,url=iface"
@@ -19,6 +22,16 @@ PREFER_IFACE_MAP="${BW_PREFER_IFACE_MAP:-}"
 # ────────────────────
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+# Auto-detect default gateway as a server candidate if none configured
+if [ -z "$SERVERS" ]; then
+    GW=$(route -n get default 2>/dev/null | awk '/gateway:/{print $2}')
+    if [ -n "$GW" ]; then
+        SERVERS="http://${GW}:${PORT},http://localhost:${PORT}"
+    else
+        SERVERS="http://localhost:${PORT}"
+    fi
+fi
 
 # Get local IP addresses to determine which subnet we're on
 LOCAL_IPS=$(ifconfig 2>/dev/null | grep 'inet ' | awk '{print $2}' | grep -v '^127\.')
@@ -79,6 +92,17 @@ if [ -z "$DATA" ]; then
     exit 0
 fi
 
+# Verify we're talking to bandwidth-monitor (check signature field in JSON)
+if ! echo "$DATA" | jq -e '.app == "bandwidth-monitor"' >/dev/null 2>&1; then
+    echo "⚡ ??"
+    echo "---"
+    echo "Not a bandwidth-monitor instance | color=red"
+    echo "Server: $SERVER | color=#888888 size=11"
+    echo "---"
+    echo "Open Dashboard | href=$SERVER"
+    exit 0
+fi
+
 # Single jq call produces the entire SwiftBar output
 echo "$DATA" | jq -r --arg server "$SERVER" --arg prefer "$PREFER_IFACE" '
 def fmt_rate:
@@ -93,11 +117,21 @@ def fmt_rate:
 ([.interfaces[] | select(.state == "up" or .state == "unknown")] | sort_by(-(.rx_rate + .tx_rate))) as $active |
 ([.interfaces[] | select(.state != "up" and .state != "unknown")]) as $down |
 
-# Menu bar title: prefer $prefer iface if active, otherwise highest combined rate
+# Menu bar title: prefer $prefer iface if set, otherwise auto-detect WAN (ppp),
+# then fall back to highest combined rate.
 ([$active[] | select(.name == $prefer)] | .[0]) as $pref |
-(if ($prefer != "") and $pref then $pref else ($active[0] // {rx_rate: 0, tx_rate: 0}) end) as $pri |
+([$active[] | select(.type == "ppp")] | .[0]) as $wan |
+(if ($prefer != "") and $pref then $pref
+ elif $wan then $wan
+ else ($active[0] // {rx_rate: 0, tx_rate: 0})
+ end) as $pri |
 (if .vpn then "🔒" else "" end) as $vpn |
 "\($vpn)↓\($pri.rx_rate | fmt_rate)  ↑\($pri.tx_rate | fmt_rate) | size=12 font=JetBrainsMono-Regular",
+"---",
+(if ($prefer != "") and $pref then "WAN: \($pref.name) (preferred) | color=#888888 size=10"
+ elif $wan then "WAN: \($wan.name) (auto-detected PPP) | color=#888888 size=10"
+ else "WAN: \($pri.name // "none") (highest rate) | color=#888888 size=10"
+ end),
 "---",
 "Traffic | size=11 color=#888888",
 
