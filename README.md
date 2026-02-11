@@ -333,9 +333,9 @@ nextdns/                  → NextDNS API client (stats, top clients/domains)
 unifi/                    → UniFi controller API client (APs, SSIDs, clients, live rates)
 geoip/                    → MaxMind MMDB GeoIP lookups (country, ASN)
 static/
-  index.html              → HTML shell with three tabs
+  index.html              → HTML shell with six tabs (Traffic, NAT, DNS, WiFi, Speed Test, Debug)
   app.js                  → all frontend JavaScript (charts, tables, WebSocket)
-  style.css               → full stylesheet (dark/light themes, glassmorphism)
+  style.css               → full stylesheet (dark/light themes)
 swiftbar/                 → macOS menu bar plugin
 packaging/
   openwrt-Makefile        → OpenWrt package definition
@@ -344,8 +344,6 @@ packaging/
     99-vpn-status         → OpenWrt hotplug script for VPN sentinel files
   postinstall.sh          → deb/rpm post-install script
   preremove.sh            → deb/rpm pre-remove script
-nfpm.yaml                 → deb/rpm packaging config (nfpm)
-.github/workflows/        → CI: builds deb, rpm, ipk, apk on push & tag
 nfpm.yaml                 → deb/rpm packaging config (nfpm)
 .github/workflows/        → CI: builds deb, rpm, ipk, apk on push & tag
 env.example               → example environment configuration
@@ -416,4 +414,6 @@ Makefile                  → build, install, GeoIP download targets
 - **GeoIP** is optional — without MMDB files, country/ASN columns are simply hidden
 - **NAT tab** requires `CAP_NET_ADMIN` (or root) for netlink access to the conntrack table; enable `nf_conntrack_acct=1` for per-flow byte counters
 - **DNS and WiFi** tabs only appear when their respective integrations are configured
+- **Speed test** runs from the router, not the client — useful for testing WAN throughput independent of local WiFi
+- **Traceroute** (Debug tab) requires `CAP_NET_RAW` for raw ICMP sockets; the DNS check and resolver leak test work without special permissions
 - All assets are embedded in the binary — single-file deployment, no runtime dependencies
