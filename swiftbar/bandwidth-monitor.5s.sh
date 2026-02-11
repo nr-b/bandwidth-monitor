@@ -103,8 +103,16 @@ if ! echo "$DATA" | jq -e '.app == "bandwidth-monitor"' >/dev/null 2>&1; then
     exit 0
 fi
 
+# Query external IPs in parallel (short timeout so we don't block the menu bar)
+TMP4=$(mktemp) TMP6=$(mktemp)
+curl -q -4 -sf --max-time 1 https://ip.ffmuc.net >"$TMP4" 2>/dev/null &
+curl -q -6 -sf --max-time 1 https://ip.ffmuc.net >"$TMP6" 2>/dev/null &
+wait
+EXT_IP4=$(cat "$TMP4"); EXT_IP6=$(cat "$TMP6")
+rm -f "$TMP4" "$TMP6"
+
 # Single jq call produces the entire SwiftBar output
-echo "$DATA" | jq -r --arg server "$SERVER" --arg prefer "$PREFER_IFACE" '
+echo "$DATA" | jq -r --arg server "$SERVER" --arg prefer "$PREFER_IFACE" --arg ip4 "$EXT_IP4" --arg ip6 "$EXT_IP6" '
 def fmt_rate:
     (. * 8 / 1000000) as $mbps |
     if ($mbps | fabs) >= 1 then
@@ -132,6 +140,13 @@ def fmt_rate:
  elif $wan then "WAN: \($wan.name) | color=#888888 size=10"
  else "WAN: \($pri.name // "none") (highest rate) | color=#888888 size=10"
  end),
+
+# External IPs (queried from ip.ffmuc.net)
+(if ($ip4 != "") or ($ip6 != "") then
+   (if $ip4 != "" then "  IPv4: \($ip4) | font=JetBrainsMono-Regular size=12" else empty end),
+   (if $ip6 != "" then "  IPv6: \($ip6) | font=JetBrainsMono-Regular size=12" else empty end)
+ else empty end),
+
 "---",
 "Traffic | size=11 color=#888888",
 
