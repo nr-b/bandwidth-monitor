@@ -308,7 +308,7 @@ A [SwiftBar](https://github.com/swiftbar/SwiftBar) / [xbar](https://xbarapp.com/
 | `BW_PORT` | `8080` | Port used when auto-detecting the server from the macOS default gateway |
 | `BW_PREFER_IFACE` | *(auto)* | Default preferred interface for menu bar title (e.g. `ppp0`) |
 | `BW_PREFER_IFACE_MAP` | *(none)* | Per-server interface override: `url=iface,url=iface` |
-| `BW_SHOW_EXTERNAL_IP` | `true` | Show public IPs in menu bar by querying `ip.ffmuc.net`; set to `false` to disable |
+| `BW_SHOW_EXTERNAL_IP` | `true` | Show public IPs in menu bar by querying [`ip.ffmuc.net`](https://ip.ffmuc.net); set to `false` to disable |
 
 **Multi-server example** (edit the defaults in the script):
 ```bash
@@ -413,8 +413,8 @@ Every hardcoded external service that bandwidth-monitor or its components contac
 
 | Service | URL / IP | Component | Trigger | Data sent | Data received |
 |---------|---------|-----------|---------|-----------|---------------|
-| **FFMUC Speed Test** | `speed.ffmuc.net` | Speed Test tab | User clicks "Start Test" | HTTP GET `/downloading`, POST `/upload` (random payload) | Download payload, upload ack |
-| **FFMUC IP Check** | `ip.ffmuc.net` | SwiftBar plugin | Every ~5 min (cached), **on by default** (`BW_SHOW_EXTERNAL_IP=false` to disable) | HTTPS GET (IPv4 + IPv6) | Router's public IPv4 and IPv6 address |
+| **FFMUC Speed Test** | [`speed.ffmuc.net`](https://speed.ffmuc.net) | Speed Test tab | User clicks "Start Test" | HTTP GET `/downloading`, POST `/upload` (random payload) | Download payload, upload ack |
+| **FFMUC IP Check** | [`ip.ffmuc.net`](https://ip.ffmuc.net) | SwiftBar plugin | Every ~5 min (cached), **on by default** (`BW_SHOW_EXTERNAL_IP=false` to disable) | HTTPS GET (IPv4 + IPv6) | Router's public IPv4 and IPv6 address |
 | **FFMUC Anycast01** | `5.1.66.255`, `2001:678:e68:f000::` | DNS Check | User clicks "Query" | DNS query for user-entered domain | DNS records |
 | **FFMUC Anycast02** | `185.150.99.255`, `2001:678:ed0:f000::` | DNS Check | User clicks "Query" | DNS query for user-entered domain | DNS records |
 | **Cloudflare DNS** | `1.1.1.1`, `2606:4700:4700::1111` | DNS Check | User clicks "Query" | DNS query for user-entered domain | DNS records |
@@ -428,7 +428,7 @@ All JavaScript libraries (Chart.js, Luxon) and fonts (Inter, JetBrains Mono) are
 
 User-configured services (AdGuard Home, NextDNS, UniFi Controller) are **not** listed here — they are optional and only contacted when explicitly configured via environment variables.
 
-FFMUC services (`speed.ffmuc.net`, `ip.ffmuc.net`, Anycast DNS) are operated by [Freie Netze München e.V.](https://ffmuc.net/) — see their [privacy policy](https://ffmuc.net/privacy/).
+FFMUC services ([`speed.ffmuc.net`](https://speed.ffmuc.net), [`ip.ffmuc.net`](https://ip.ffmuc.net), Anycast DNS) are operated by [Freie Netze München e.V.](https://ffmuc.net/) — see their [privacy policy](https://ffmuc.net/privacy/).
 
 **No telemetry, no analytics, no crash reporting, no update checks.** The binary phones home to nothing.
 
