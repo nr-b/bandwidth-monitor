@@ -447,26 +447,27 @@ func classifyLinkUncached(li *linkInfo) string {
 }
 
 // IsWAN reports whether the given interface looks like a WAN uplink.
-// It checks (in order): PPP type, then whether any assigned address is a
-// publicly-routable IP (i.e. not RFC1918, not link-local, not loopback).
+// It checks (in order): PPP type, then whether any assigned IPv4 address is
+// publicly-routable (not RFC1918, not link-local, not loopback).
+// IPv6 is intentionally ignored: with prefix delegation, LAN interfaces
+// commonly carry globally-routable IPv6 addresses.
 func IsWAN(iface *InterfaceStat) bool {
 	if iface.IfaceType == "ppp" {
 		return true
 	}
 	for _, a := range iface.Addrs {
-		if isPublicAddr(a) {
+		if isPublicIPv4(a) {
 			return true
 		}
 	}
 	return false
 }
 
-// isPublicAddr returns true when the CIDR string contains a globally-routable
-// (public) IP address — i.e. not private (RFC1918), not link-local, not
-// loopback, and not unspecified.
-func isPublicAddr(cidr string) bool {
+// isPublicIPv4 returns true when the CIDR string contains a public IPv4
+// address — i.e. not RFC1918, not link-local, not loopback, not unspecified.
+// IPv6 addresses always return false.
+func isPublicIPv4(cidr string) bool {
 	ipStr := cidr
-	// Strip CIDR prefix length if present (e.g. "203.0.113.1/24" → "203.0.113.1")
 	if idx := strings.IndexByte(cidr, '/'); idx != -1 {
 		ipStr = cidr[:idx]
 	}
@@ -474,7 +475,10 @@ func isPublicAddr(cidr string) bool {
 	if ip == nil {
 		return false
 	}
-	// Reject loopback, link-local, private, and unspecified addresses.
+	// Only consider IPv4
+	if ip.To4() == nil {
+		return false
+	}
 	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
 		ip.IsPrivate() || ip.IsUnspecified() {
 		return false
