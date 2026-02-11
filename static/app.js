@@ -249,12 +249,13 @@
 
     window._si = function(n) { selectedIface = n; renderIfaceTabs(); updateChart(); };
 
-    // Use the backend-provided iface_type; fall back to name heuristics
+    // Use the backend-provided iface_type; fall back to name heuristics.
+    // Interfaces tagged as WAN by the server are grouped under 'wan'.
     function classifyIface(f) {
+        if (f.wan) return 'wan';
         if (f.iface_type) return f.iface_type;
         var n = (f.name || '').toLowerCase();
         if (/^(tun|tap|wg|ipsec|gre|vti|ovpn)/.test(n)) return 'vpn';
-        if (/^(ppp|wwan|wwp|lte|qmi|mbim)/.test(n)) return 'ppp';
         if (/\.\d+$/.test(n) || /^vlan/.test(n)) return 'vlan';
         return 'physical';
     }
@@ -263,7 +264,7 @@
         physical: { label: 'Physical', order: 0 },
         loopback: { label: 'Loopback', order: 1 },
         vlan:     { label: 'VLAN', order: 2 },
-        ppp:      { label: 'PPP / WAN', order: 3 },
+        wan:      { label: 'WAN', order: 3 },
         vpn:      { label: 'VPN', order: 4 }
     };
 

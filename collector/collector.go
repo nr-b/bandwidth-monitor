@@ -16,6 +16,7 @@ type InterfaceStat struct {
 	IfaceType       string   `json:"iface_type"`
 	OperState       string   `json:"oper_state"`
 	Addrs           []string `json:"addrs,omitempty"`
+	WAN             bool     `json:"wan,omitempty"`
 	VPNRouting      bool     `json:"vpn_routing"`
 	VPNRoutingSince string   `json:"vpn_routing_since,omitempty"`
 	VPNTracked      bool     `json:"vpn_tracked"`
@@ -332,6 +333,7 @@ func (c *Collector) poll() {
 			TxDropped:       cur.txDropped,
 			Timestamp:       now.UnixMilli(),
 		}
+		iface.WAN = IsWAN(iface)
 
 		if hasPrev {
 			dt := now.Sub(prev.ts).Seconds()
