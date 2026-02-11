@@ -85,11 +85,13 @@ func MenuBarSummary(c *collector.Collector, t *talkers.Tracker, dp dns.Provider,
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		type ifaceBrief struct {
-			Name   string  `json:"name"`
-			Type   string  `json:"type"`
-			RxRate float64 `json:"rx_rate"`
-			TxRate float64 `json:"tx_rate"`
-			State  string  `json:"state"`
+			Name   string   `json:"name"`
+			Type   string   `json:"type"`
+			Addrs  []string `json:"addrs,omitempty"`
+			WAN    bool     `json:"wan,omitempty"`
+			RxRate float64  `json:"rx_rate"`
+			TxRate float64  `json:"tx_rate"`
+			State  string   `json:"state"`
 		}
 		type dnsBrief struct {
 			Provider     string  `json:"provider_name"`
@@ -127,13 +129,16 @@ func MenuBarSummary(c *collector.Collector, t *talkers.Tracker, dp dns.Provider,
 		out.Timestamp = time.Now().UnixMilli()
 
 		for _, iface := range c.GetAll() {
-			out.Interfaces = append(out.Interfaces, ifaceBrief{
+			ib := ifaceBrief{
 				Name:   iface.Name,
 				Type:   iface.IfaceType,
+				Addrs:  iface.Addrs,
+				WAN:    collector.IsWAN(&iface),
 				RxRate: iface.RxRate,
 				TxRate: iface.TxRate,
 				State:  iface.OperState,
-			})
+			}
+			out.Interfaces = append(out.Interfaces, ib)
 			if iface.VPNRouting {
 				out.VPN = true
 				out.VPNIface = iface.Name
