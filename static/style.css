@@ -1097,3 +1097,114 @@ canvas { outline: none; }
 @media (max-width: 500px) {
     .speedtest-gauges { grid-template-columns: 1fr; }
 }
+
+/* ── DNS Check Results ── */
+.dns-check-server {
+    border-top: 1px solid var(--border);
+}
+
+.dns-check-server-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    transition: background 0.15s;
+}
+
+.dns-check-server-header:hover {
+    background: var(--bg-2);
+}
+
+.dns-check-server-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.dns-check-badge {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+
+.dns-check-badge.dnssec {
+    background: rgba(34, 197, 94, 0.12);
+    color: var(--success);
+}
+
+.dns-check-badge.truncated {
+    background: rgba(234, 179, 8, 0.12);
+    color: var(--warning);
+}
+
+.dns-check-rcode {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.dns-check-latency {
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    font-family: 'JetBrains Mono', monospace;
+    min-width: 70px;
+    text-align: right;
+}
+
+.dns-check-error {
+    padding: 4px 20px 8px;
+    font-size: 12px;
+    color: var(--danger);
+}
+
+.dns-check-records {
+    padding: 0 20px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.dns-check-record {
+    display: grid;
+    grid-template-columns: 52px 1fr 50px;
+    gap: 8px;
+    align-items: baseline;
+    padding: 4px 10px;
+    border-radius: 4px;
+    background: var(--bg-2);
+    font-size: 12px;
+}
+
+.dns-check-record.unique {
+    background: rgba(234, 179, 8, 0.08);
+    border: 1px solid rgba(234, 179, 8, 0.2);
+}
+
+.dns-check-rec-type {
+    font-weight: 600;
+    color: var(--accent);
+    font-size: 11px;
+    text-transform: uppercase;
+}
+
+.dns-check-rec-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-0);
+    word-break: break-all;
+    line-height: 1.4;
+}
+
+.dns-check-rec-ttl {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-2);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}

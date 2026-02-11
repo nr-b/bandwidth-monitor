@@ -53,6 +53,11 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 - **Test history** — stores the last 50 results in memory with timestamps
 - **Configurable server** — change the target via `SPEEDTEST_SERVER` environment variable
 
+### Debug Tab
+- **Traceroute** — native Go ICMP traceroute with configurable probes per hop (default 20), using raw sockets with proper TTL manipulation and ICMP ID matching; shows per-hop IP, reverse DNS hostname, avg/min/max RTT, and packet loss percentage; supports IPv4 and IPv6; streams progress via SSE
+- **DNS Check** — queries a domain (A, AAAA, MX, TXT, NS, CNAME, SOA, PTR) against 14 DNS servers in parallel: System Resolver, FFMUC Anycast01/02 (IPv4+IPv6), Cloudflare (IPv4+IPv6), Google (IPv4+IPv6), Quad9 (IPv4+IPv6), and OpenDNS (IPv4+IPv6); shows RCode, latency, TTL, DNSSEC AD flag per server; highlights the fastest server and flags records unique to a single server
+- **Resolver leak check** — automatically detects which public IPs your system resolver uses when talking to authoritative servers, via `o-o.myaddr.l.google.com` TXT and `dnscheck.tools` TXT (including IPv4-only and IPv6-only variants); shows the configured local resolver from `/etc/resolv.conf`, upstream egress IPs, EDNS Client Subnet info, and resolver org/geo from dnscheck.tools
+
 ### General
 - **WebSocket live updates** — 1-second refresh with automatic reconnection
 - **Dark/light/auto theme** — saved to localStorage
@@ -320,6 +325,7 @@ collector/                → netlink-based interface stats (RTM_GETLINK/RTM_GET
 conntrack/                → netlink-based conntrack (NAT) table reader via ti-mo/conntrack
 talkers/                  → pcap packet capture, per-IP tracking, 1-min bucket aggregation
 speedtest/                → HTTP-based speed test client (download/upload/ping against OpenSpeedTest servers)
+debug/                    → traceroute (native ICMP), DNS checker (multi-server), resolver leak detection
 handler/                  → HTTP REST API + WebSocket handler
 dns/                      → common DNS provider interface
 adguard/                  → AdGuard Home API client (stats, top clients/domains)
@@ -360,6 +366,8 @@ Makefile                  → build, install, GeoIP download targets
 | `/api/conntrack` | GET | NAT / conntrack summary (connections, states, NAT types, entries) |
 | `/api/speedtest/run` | POST | Start a speed test; streams progress as SSE (Server-Sent Events) |
 | `/api/speedtest/results` | GET | Speed test history (last 50 results) and running status |
+| `/api/debug/traceroute` | POST | ICMP traceroute with SSE progress; params: `target`, `count` (probes/hop), `maxttl` |
+| `/api/debug/dns` | GET | DNS check against 14 servers + resolver leak test; params: `domain`, `type` |
 | `/api/summary` | GET | Compact summary for menu bar clients |
 | `/api/ws` | WS | WebSocket — pushes all data every second |
 
