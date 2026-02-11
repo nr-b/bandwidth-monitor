@@ -16,6 +16,7 @@ type InterfaceStat struct {
 	IfaceType       string   `json:"iface_type"`
 	OperState       string   `json:"oper_state"`
 	Addrs           []string `json:"addrs,omitempty"`
+	WAN             bool     `json:"wan,omitempty"`
 	VPNRouting      bool     `json:"vpn_routing"`
 	VPNRoutingSince string   `json:"vpn_routing_since,omitempty"`
 	VPNTracked      bool     `json:"vpn_tracked"`
@@ -332,6 +333,7 @@ func (c *Collector) poll() {
 			TxDropped:       cur.txDropped,
 			Timestamp:       now.UnixMilli(),
 		}
+		iface.WAN = IsWAN(iface)
 
 		if hasPrev {
 			dt := now.Sub(prev.ts).Seconds()
@@ -442,6 +444,42 @@ func classifyLinkUncached(li *linkInfo) string {
 	}
 
 	return "physical"
+}
+
+// IsWAN reports whether the given interface looks like a WAN uplink.
+// It checks (in order): PPP type, then whether any assigned address is a
+// publicly-routable IP (i.e. not RFC1918, not link-local, not loopback).
+func IsWAN(iface *InterfaceStat) bool {
+	if iface.IfaceType == "ppp" {
+		return true
+	}
+	for _, a := range iface.Addrs {
+		if isPublicAddr(a) {
+			return true
+		}
+	}
+	return false
+}
+
+// isPublicAddr returns true when the CIDR string contains a globally-routable
+// (public) IP address — i.e. not private (RFC1918), not link-local, not
+// loopback, and not unspecified.
+func isPublicAddr(cidr string) bool {
+	ipStr := cidr
+	// Strip CIDR prefix length if present (e.g. "203.0.113.1/24" → "203.0.113.1")
+	if idx := strings.IndexByte(cidr, '/'); idx != -1 {
+		ipStr = cidr[:idx]
+	}
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+	// Reject loopback, link-local, private, and unspecified addresses.
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsPrivate() || ip.IsUnspecified() {
+		return false
+	}
+	return true
 }
 
 // operStateStr converts a netlink OperState to a human-readable string.

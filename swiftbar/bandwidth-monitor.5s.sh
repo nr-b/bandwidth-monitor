@@ -117,10 +117,10 @@ def fmt_rate:
 ([.interfaces[] | select(.state == "up" or .state == "unknown")] | sort_by(-(.rx_rate + .tx_rate))) as $active |
 ([.interfaces[] | select(.state != "up" and .state != "unknown")]) as $down |
 
-# Menu bar title: prefer $prefer iface if set, otherwise auto-detect WAN (ppp),
-# then fall back to highest combined rate.
+# Menu bar title: prefer $prefer iface if set, otherwise use the interface
+# tagged as WAN by the server, then fall back to highest combined rate.
 ([$active[] | select(.name == $prefer)] | .[0]) as $pref |
-([$active[] | select(.type == "ppp")] | .[0]) as $wan |
+([$active[] | select(.wan == true)] | .[0]) as $wan |
 (if ($prefer != "") and $pref then $pref
  elif $wan then $wan
  else ($active[0] // {rx_rate: 0, tx_rate: 0})
@@ -129,7 +129,7 @@ def fmt_rate:
 "\($vpn)↓\($pri.rx_rate | fmt_rate)  ↑\($pri.tx_rate | fmt_rate) | size=12 font=JetBrainsMono-Regular",
 "---",
 (if ($prefer != "") and $pref then "WAN: \($pref.name) (preferred) | color=#888888 size=10"
- elif $wan then "WAN: \($wan.name) (auto-detected PPP) | color=#888888 size=10"
+ elif $wan then "WAN: \($wan.name) | color=#888888 size=10"
  else "WAN: \($pri.name // "none") (highest rate) | color=#888888 size=10"
  end),
 "---",

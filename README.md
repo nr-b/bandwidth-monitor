@@ -291,6 +291,7 @@ A [SwiftBar](https://github.com/swiftbar/SwiftBar) / [xbar](https://xbarapp.com/
 |----------|---------|-------------|
 | `BW_SERVERS` | `http://localhost:8080` | Comma-separated list of servers to try in order (first reachable wins) |
 | `BW_SERVER` | `http://localhost:8080` | Single server URL (used if `BW_SERVERS` is not set) |
+| `BW_PORT` | `8080` | Port used when auto-detecting the server from the macOS default gateway |
 | `BW_PREFER_IFACE` | *(auto)* | Default preferred interface for menu bar title (e.g. `ppp0`) |
 | `BW_PREFER_IFACE_MAP` | *(none)* | Per-server interface override: `url=iface,url=iface` |
 
