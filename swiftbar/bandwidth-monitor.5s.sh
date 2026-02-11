@@ -103,9 +103,9 @@ if ! echo "$DATA" | jq -e '.app == "bandwidth-monitor"' >/dev/null 2>&1; then
     exit 0
 fi
 
-# Query external IPs — cached for 5 minutes to avoid hammering the lookup server
+# Query external IPs — cached with jitter (270–330s) to spread load
 EXT_IP_CACHE="${TMPDIR:-/tmp}/bw-monitor-extip"
-EXT_IP_TTL=300  # seconds
+EXT_IP_TTL=$(( 270 + RANDOM % 61 ))  # 270–330 seconds
 if [ -f "$EXT_IP_CACHE" ] && [ "$(( $(date +%s) - $(stat -f %m "$EXT_IP_CACHE") ))" -lt "$EXT_IP_TTL" ]; then
     EXT_IP4=$(sed -n '1p' "$EXT_IP_CACHE")
     EXT_IP6=$(sed -n '2p' "$EXT_IP_CACHE")
