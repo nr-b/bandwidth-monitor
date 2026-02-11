@@ -103,13 +103,21 @@ if ! echo "$DATA" | jq -e '.app == "bandwidth-monitor"' >/dev/null 2>&1; then
     exit 0
 fi
 
-# Query external IPs in parallel (short timeout so we don't block the menu bar)
-TMP4=$(mktemp) TMP6=$(mktemp)
-curl -q -4 -sf --max-time 1 https://ip.ffmuc.net >"$TMP4" 2>/dev/null &
-curl -q -6 -sf --max-time 1 https://ip.ffmuc.net >"$TMP6" 2>/dev/null &
-wait
-EXT_IP4=$(cat "$TMP4"); EXT_IP6=$(cat "$TMP6")
-rm -f "$TMP4" "$TMP6"
+# Query external IPs — cached for 5 minutes to avoid hammering the lookup server
+EXT_IP_CACHE="${TMPDIR:-/tmp}/bw-monitor-extip"
+EXT_IP_TTL=300  # seconds
+if [ -f "$EXT_IP_CACHE" ] && [ "$(( $(date +%s) - $(stat -f %m "$EXT_IP_CACHE") ))" -lt "$EXT_IP_TTL" ]; then
+    EXT_IP4=$(sed -n '1p' "$EXT_IP_CACHE")
+    EXT_IP6=$(sed -n '2p' "$EXT_IP_CACHE")
+else
+    TMP4=$(mktemp) TMP6=$(mktemp)
+    curl -q -4 -sf --max-time 1 https://ip.ffmuc.net >"$TMP4" 2>/dev/null &
+    curl -q -6 -sf --max-time 1 https://ip.ffmuc.net >"$TMP6" 2>/dev/null &
+    wait
+    EXT_IP4=$(cat "$TMP4"); EXT_IP6=$(cat "$TMP6")
+    rm -f "$TMP4" "$TMP6"
+    printf '%s\n%s\n' "$EXT_IP4" "$EXT_IP6" > "$EXT_IP_CACHE"
+fi
 
 # Single jq call produces the entire SwiftBar output
 echo "$DATA" | jq -r --arg server "$SERVER" --arg prefer "$PREFER_IFACE" --arg ip4 "$EXT_IP4" --arg ip6 "$EXT_IP6" '
