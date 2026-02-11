@@ -208,9 +208,9 @@ func WebSocket(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *
 		pingTicker := time.NewTicker(30 * time.Second)
 		defer pingTicker.Stop()
 
-		// Non-blocking write channel: the ticker produces payloads and a
-		// dedicated writer goroutine drains them.  If the client is backed
-		// up (e.g. hibernating), only the most recent payload is kept.
+		// All writes go through sendCh to avoid concurrent writes on the
+		// websocket connection (gorilla/websocket is not safe for concurrent writers).
+		// A nil payload signals a ping; a non-nil payload is a JSON message.
 		sendCh := make(chan map[string]interface{}, 1)
 
 		// Writer goroutine — serialises all writes to the connection.
@@ -218,9 +218,17 @@ func WebSocket(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *
 		go func() {
 			defer close(writerDone)
 			for msg := range sendCh {
-				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-				if err := conn.WriteJSON(msg); err != nil {
-					return
+				if msg == nil {
+					// Ping
+					conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+					if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+						return
+					}
+				} else {
+					conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+					if err := conn.WriteJSON(msg); err != nil {
+						return
+					}
 				}
 			}
 		}()
@@ -233,9 +241,11 @@ func WebSocket(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *
 			case <-writerDone:
 				return
 			case <-pingTicker.C:
-				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-					return
+				// Route ping through writer goroutine to avoid concurrent writes
+				select {
+				case sendCh <- nil:
+				default:
+					// Writer is backed up — skip ping, the write timeout will catch dead connections
 				}
 			case <-ticker.C:
 				payload := map[string]interface{}{
@@ -256,7 +266,9 @@ func WebSocket(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *
 					payload["wifi"] = uf.GetSummary()
 				}
 				if ct != nil {
-					payload["conntrack"] = ct.GetSummary()
+					if s := ct.GetSummary(); s != nil {
+						payload["conntrack"] = s
+					}
 				}
 				// Non-blocking send: drop the old message if backed up
 				select {
