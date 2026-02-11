@@ -34,6 +34,7 @@
             <button class="main-nav-tab" data-tab="nat" onclick="window._switchTab('nat')">NAT</button>
             <button class="main-nav-tab" data-tab="dns" onclick="window._switchTab('dns')">DNS</button>
             <button class="main-nav-tab" data-tab="wifi" onclick="window._switchTab('wifi')">WiFi</button>
+            <button class="main-nav-tab" data-tab="speedtest" onclick="window._switchTab('speedtest')">Speed Test</button>
         </div>
 
         <div class="tab-panel active" id="tabTraffic">
@@ -644,6 +645,85 @@
             </div>
         </div>
         </div><!-- /tabWifi -->
+
+        <div class="tab-panel" id="tabSpeedtest">
+        <div class="card" style="margin-bottom:16px">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">Speed Test</div>
+                    <div class="card-subtitle">Runs from your router against <a href="https://speed.ffmuc.net" target="_blank" style="color:var(--accent)">speed.ffmuc.net</a> &mdash; to test from your client, open the link directly</div>
+                </div>
+                <button class="speedtest-btn" id="speedtestBtn" onclick="window._runSpeedTest()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    Start Test
+                </button>
+            </div>
+        </div>
+
+        <div class="speedtest-gauges" id="speedtestGauges">
+            <div class="speedtest-gauge-card">
+                <div class="speedtest-gauge-label">PING</div>
+                <div class="speedtest-gauge-wrap">
+                    <canvas id="stPingGauge" width="160" height="100"></canvas>
+                </div>
+                <div class="speedtest-gauge-value" id="stPingValue">--</div>
+                <div class="speedtest-gauge-unit">ms</div>
+            </div>
+            <div class="speedtest-gauge-card">
+                <div class="speedtest-gauge-label">DOWNLOAD</div>
+                <div class="speedtest-gauge-wrap">
+                    <canvas id="stDownGauge" width="160" height="100"></canvas>
+                </div>
+                <div class="speedtest-gauge-value" id="stDownValue">--</div>
+                <div class="speedtest-gauge-unit">Mbps</div>
+            </div>
+            <div class="speedtest-gauge-card">
+                <div class="speedtest-gauge-label">UPLOAD</div>
+                <div class="speedtest-gauge-wrap">
+                    <canvas id="stUpGauge" width="160" height="100"></canvas>
+                </div>
+                <div class="speedtest-gauge-value" id="stUpValue">--</div>
+                <div class="speedtest-gauge-unit">Mbps</div>
+            </div>
+            <div class="speedtest-gauge-card">
+                <div class="speedtest-gauge-label">JITTER</div>
+                <div class="speedtest-gauge-wrap">
+                    <canvas id="stJitterGauge" width="160" height="100"></canvas>
+                </div>
+                <div class="speedtest-gauge-value" id="stJitterValue">--</div>
+                <div class="speedtest-gauge-unit">ms</div>
+            </div>
+        </div>
+
+        <div class="speedtest-progress-wrap" id="speedtestProgressWrap" style="display:none">
+            <div class="speedtest-progress-phase" id="speedtestPhase">Initializing...</div>
+            <div class="speedtest-progress-bar-bg">
+                <div class="speedtest-progress-bar-fill" id="speedtestProgressBar" style="width:0%"></div>
+            </div>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">Test History</div>
+                    <div class="card-subtitle">Previous speed test results</div>
+                </div>
+            </div>
+            <table>
+                <thead><tr>
+                    <th>#</th>
+                    <th>Date</th>
+                    <th>Download</th>
+                    <th>Upload</th>
+                    <th>Ping</th>
+                    <th>Jitter</th>
+                </tr></thead>
+                <tbody id="speedtestHistory">
+                    <tr><td colspan="6" class="empty-state">No tests yet &mdash; click Start Test</td></tr>
+                </tbody>
+            </table>
+        </div>
+        </div><!-- /tabSpeedtest -->
 
         <div class="footer"><span id="clock"></span></div>
     </div>

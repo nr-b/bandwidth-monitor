@@ -21,6 +21,7 @@ import (
 	"bandwidth-monitor/geoip"
 	"bandwidth-monitor/handler"
 	"bandwidth-monitor/nextdns"
+	"bandwidth-monitor/speedtest"
 	"bandwidth-monitor/talkers"
 	"bandwidth-monitor/unifi"
 )
@@ -171,6 +172,10 @@ func main() {
 	go conntrackTracker.Run()
 	log.Println("Conntrack (NAT) tracking enabled")
 
+	speedtestServer := env("SPEEDTEST_SERVER", "https://speed.ffmuc.net")
+	speedTester := speedtest.New(speedtestServer)
+	log.Printf("Speed test server: %s", speedtestServer)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/interfaces", handler.InterfaceStats(statsCollector))
 	mux.HandleFunc("/api/interfaces/history", handler.InterfaceHistory(statsCollector))
@@ -179,6 +184,8 @@ func main() {
 	mux.HandleFunc("/api/dns", handler.DNSSummary(dnsProvider))
 	mux.HandleFunc("/api/wifi", handler.WiFiSummary(unifiClient))
 	mux.HandleFunc("/api/conntrack", handler.ConntrackSummary(conntrackTracker))
+	mux.HandleFunc("/api/speedtest/run", handler.SpeedTestRun(speedTester))
+	mux.HandleFunc("/api/speedtest/results", handler.SpeedTestResults(speedTester))
 	mux.HandleFunc("/api/summary", handler.MenuBarSummary(statsCollector, talkerTracker, dnsProvider, unifiClient, conntrackTracker))
 	mux.HandleFunc("/api/ws", handler.WebSocket(statsCollector, talkerTracker, dnsProvider, unifiClient, conntrackTracker))
 	staticSub, err := fs.Sub(staticFiles, "static")
