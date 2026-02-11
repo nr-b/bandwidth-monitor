@@ -206,7 +206,16 @@ func main() {
 
 	log.Printf("Bandwidth Monitor starting on %s", listenAddr)
 	log.Printf("Open http://localhost%s in your browser", listenAddr)
-	if err := http.ListenAndServe(listenAddr, mux); err != nil {
+	if err := http.ListenAndServe(listenAddr, withSignature(mux)); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
+}
+
+// withSignature wraps an http.Handler to inject a X-Bandwidth-Monitor header
+// on every response, allowing clients to verify they're talking to the right service.
+func withSignature(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Bandwidth-Monitor", "1")
+		h.ServeHTTP(w, r)
+	})
 }

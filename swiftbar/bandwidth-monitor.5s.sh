@@ -47,9 +47,12 @@ SORTED_SERVERS+=("${REMAINING_SERVERS[@]}")
 # Try each server in subnet-priority order
 SERVER=""
 DATA=""
+HDRS=""
 for s in "${SORTED_SERVERS[@]}"; do
-    DATA=$(curl -sf --max-time 1 -w '' "${s}/api/summary" 2>/dev/null)
-    if [ -n "$DATA" ]; then
+    RESP=$(curl -sf --max-time 1 -D- "${s}/api/summary" 2>/dev/null)
+    if [ -n "$RESP" ]; then
+        HDRS=$(echo "$RESP" | sed '/^\r\{0,1\}$/q')
+        DATA=$(echo "$RESP" | sed '1,/^\r\{0,1\}$/d')
         SERVER="$s"
         break
     fi
@@ -76,6 +79,17 @@ if [ -z "$DATA" ]; then
     for s in "${SERVER_LIST[@]}"; do echo "  $(echo "$s" | xargs) | color=#888888 size=11"; done
     echo "---"
     echo "Open Dashboard | href=${SERVER_LIST[0]}"
+    exit 0
+fi
+
+# Verify we're talking to bandwidth-monitor (check signature header)
+if ! echo "$HDRS" | grep -qi 'X-Bandwidth-Monitor'; then
+    echo "⚡ ??"
+    echo "---"
+    echo "Not a bandwidth-monitor instance | color=red"
+    echo "Server: $SERVER | color=#888888 size=11"
+    echo "---"
+    echo "Open Dashboard | href=$SERVER"
     exit 0
 fi
 
