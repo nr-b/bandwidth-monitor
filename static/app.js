@@ -1438,30 +1438,29 @@
         }
     };
 
-    // ── Debug: ETR ──
-    var _etrRunning = false;
+    // ── Debug: Traceroute ──
+    var _trRunning = false;
 
-    window._runETR = function() {
-        if (_etrRunning) return;
-        var target = (document.getElementById('etrTarget').value || '').trim();
+    window._runTraceroute = function() {
+        if (_trRunning) return;
+        var target = (document.getElementById('trTarget').value || '').trim();
         if (!target) { alert('Enter an IP or hostname'); return; }
-        var count = parseInt(document.getElementById('etrCount').value) || 20;
+        var count = parseInt(document.getElementById('trCount').value) || 20;
 
-        _etrRunning = true;
-        var btn = document.getElementById('etrBtn');
+        _trRunning = true;
+        var btn = document.getElementById('trBtn');
         btn.disabled = true;
         btn.innerHTML = '<span class="speedtest-spinner"></span> Running...';
 
-        var wrap = document.getElementById('etrProgressWrap');
+        var wrap = document.getElementById('trProgressWrap');
         wrap.style.display = '';
-        var bar = document.getElementById('etrProgressBar');
-        var phase = document.getElementById('etrPhase');
+        var bar = document.getElementById('trProgressBar');
+        var phase = document.getElementById('trPhase');
         bar.style.width = '0%';
         bar.className = 'speedtest-progress-bar-fill ping';
-        phase.textContent = 'Starting etr...';
+        phase.textContent = 'Running traceroute...';
 
-        document.getElementById('etrResults').style.display = 'none';
-        var received = 0;
+        document.getElementById('trResults').style.display = 'none';
 
         fetch('/api/debug/traceroute?target=' + encodeURIComponent(target) + '&count=' + count, { method: 'POST' })
         .then(function(resp) {
@@ -1480,54 +1479,52 @@
                         if (!line.startsWith('data: ')) continue;
                         try {
                             var p = JSON.parse(line.substring(6));
-                            handleEtrProgress(p);
+                            handleTrProgress(p);
                         } catch(e) {}
                     }
                     return processChunk();
                 });
             }
 
-            function handleEtrProgress(p) {
+            function handleTrProgress(p) {
                 if (p.phase === 'running') {
                     phase.textContent = p.message;
-                    if (p.probe_run) {
-                        received++;
-                        var pct = (received / count) * 100;
-                        bar.style.width = Math.min(pct, 99) + '%';
+                    if (p.ttl > 0) {
+                        bar.style.width = Math.min((p.ttl / 30) * 100, 99) + '%';
                     }
                 } else if (p.phase === 'done' && p.result) {
                     phase.textContent = p.message;
                     bar.style.width = '100%';
                     bar.className = 'speedtest-progress-bar-fill done';
-                    renderEtrResults(p.result);
-                    finishEtr();
+                    renderTrResults(p.result);
+                    finishTraceroute();
                 } else if (p.phase === 'error') {
                     phase.textContent = p.message;
                     bar.className = 'speedtest-progress-bar-fill error';
-                    finishEtr();
+                    finishTraceroute();
                 }
             }
 
             return processChunk();
         }).catch(function() {
             phase.textContent = 'Connection error';
-            finishEtr();
+            finishTraceroute();
         });
 
-        function finishEtr() {
-            _etrRunning = false;
+        function finishTraceroute() {
+            _trRunning = false;
             btn.disabled = false;
             btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run';
             setTimeout(function() { wrap.style.display = 'none'; }, 2000);
         }
     };
 
-    function renderEtrResults(result) {
-        document.getElementById('etrResults').style.display = '';
-        document.getElementById('etrResultTitle').textContent = 'Traceroute to ' + result.target + ' (' + result.resolved_ip + ')';
-        document.getElementById('etrResultSub').textContent = result.probes_per_ttl + ' probes/hop — ' + result.hops.length + ' hops' + (result.reached_dest ? ' — destination reached' : '') + (result.error ? ' — ' + result.error : '');
+    function renderTrResults(result) {
+        document.getElementById('trResults').style.display = '';
+        document.getElementById('trResultTitle').textContent = 'Traceroute to ' + result.target + ' (' + result.resolved_ip + ')';
+        document.getElementById('trResultSub').textContent = result.probes_per_ttl + ' probes/hop — ' + result.hops.length + ' hops' + (result.reached_dest ? ' — destination reached' : '') + (result.error ? ' — ' + result.error : '');
 
-        var tb = document.getElementById('etrTable');
+        var tb = document.getElementById('trTable');
         if (!result.hops || !result.hops.length) {
             tb.innerHTML = '<tr><td colspan="5" class="empty-state">No hops received</td></tr>';
             return;

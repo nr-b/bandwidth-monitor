@@ -737,31 +737,31 @@
                 </div>
             </div>
             <div style="padding:12px 20px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--border)">
-                <input type="text" id="etrTarget" placeholder="IP or hostname (e.g. 1.1.1.1)" style="padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg-2);color:var(--text-0);font-size:13px;width:220px;outline:none;font-family:'JetBrains Mono',monospace">
-                <input type="number" id="etrCount" value="20" min="1" max="100" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-2);color:var(--text-0);font-size:13px;width:70px;outline:none" title="Probes per hop">
+                <input type="text" id="trTarget" placeholder="IP or hostname (e.g. 1.1.1.1)" style="padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg-2);color:var(--text-0);font-size:13px;width:220px;outline:none;font-family:'JetBrains Mono',monospace">
+                <input type="number" id="trCount" value="20" min="1" max="100" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-2);color:var(--text-0);font-size:13px;width:70px;outline:none" title="Probes per hop">
                 <span style="font-size:11px;color:var(--text-2)">probes/hop</span>
-                <button class="speedtest-btn" id="etrBtn" onclick="window._runETR()">
+                <button class="speedtest-btn" id="trBtn" onclick="window._runTraceroute()">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                     Run
                 </button>
             </div>
         </div>
 
-        <div id="etrProgressWrap" style="display:none">
+        <div id="trProgressWrap" style="display:none">
             <div class="speedtest-progress-wrap" style="margin-bottom:16px">
-                <div class="speedtest-progress-phase" id="etrPhase">Waiting...</div>
+                <div class="speedtest-progress-phase" id="trPhase">Waiting...</div>
                 <div class="speedtest-progress-bar-bg">
-                    <div class="speedtest-progress-bar-fill" id="etrProgressBar" style="width:0%"></div>
+                    <div class="speedtest-progress-bar-fill" id="trProgressBar" style="width:0%"></div>
                 </div>
             </div>
         </div>
 
-        <div id="etrResults" style="display:none">
+        <div id="trResults" style="display:none">
             <div class="card" style="margin-bottom:16px">
                 <div class="card-header">
                     <div>
-                        <div class="card-title" id="etrResultTitle">Traceroute Results</div>
-                        <div class="card-subtitle" id="etrResultSub"></div>
+                        <div class="card-title" id="trResultTitle">Traceroute Results</div>
+                        <div class="card-subtitle" id="trResultSub"></div>
                     </div>
                 </div>
                 <div style="max-height:600px;overflow-y:auto">
@@ -773,7 +773,7 @@
                         <th>RTT (ms)</th>
                         <th>Loss</th>
                     </tr></thead>
-                    <tbody id="etrTable">
+                    <tbody id="trTable">
                         <tr><td colspan="5" class="empty-state">No data</td></tr>
                     </tbody>
                 </table>

@@ -226,7 +226,7 @@ func sendProbeV4(dest net.IP, ttl int, seq int) (string, float64, error) {
 	if err := raw.SetControlMessage(ipv4.FlagTTL, true); err != nil {
 		// not critical, continue
 	}
-	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	conn.SetDeadline(time.Now().Add(1 * time.Second))
 
 	// Encode TTL and seq in the ICMP ID/Seq so we can match responses
 	id := uint16(ttl)<<8 | uint16(seq&0xFF)
@@ -321,7 +321,7 @@ func sendProbeV6(dest net.IP, ttl int, seq int) (string, float64, error) {
 	if err := raw.SetHopLimit(ttl); err != nil {
 		return "", 0, fmt.Errorf("set hop limit: %w", err)
 	}
-	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	conn.SetDeadline(time.Now().Add(1 * time.Second))
 
 	id := uint16(ttl)<<8 | uint16(seq&0xFF)
 	msg := icmp.Message{
