@@ -86,6 +86,7 @@ func MenuBarSummary(c *collector.Collector, t *talkers.Tracker, dp dns.Provider,
 		w.Header().Set("Content-Type", "application/json")
 		type ifaceBrief struct {
 			Name   string  `json:"name"`
+			Type   string  `json:"type"`
 			RxRate float64 `json:"rx_rate"`
 			TxRate float64 `json:"tx_rate"`
 			State  string  `json:"state"`
@@ -128,6 +129,7 @@ func MenuBarSummary(c *collector.Collector, t *talkers.Tracker, dp dns.Provider,
 		for _, iface := range c.GetAll() {
 			out.Interfaces = append(out.Interfaces, ifaceBrief{
 				Name:   iface.Name,
+				Type:   iface.IfaceType,
 				RxRate: iface.RxRate,
 				TxRate: iface.TxRate,
 				State:  iface.OperState,
