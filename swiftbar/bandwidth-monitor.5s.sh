@@ -19,6 +19,9 @@ PREFER_IFACE="${BW_PREFER_IFACE:-}"
 # Per-server preferred interface overrides: "url=iface,url=iface"
 # Example: BW_PREFER_IFACE_MAP="http://198.51.100.1:8080=eth0,http://203.0.113.1:8080=ppp0"
 PREFER_IFACE_MAP="${BW_PREFER_IFACE_MAP:-}"
+# Show external (public) IPs by querying ip.ffmuc.net (default: true)
+# Set to "false" to disable — this contacts an external service every ~5 minutes.
+SHOW_EXTERNAL_IP="${BW_SHOW_EXTERNAL_IP:-true}"
 # ────────────────────
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
@@ -106,10 +109,12 @@ fi
 # Query external IPs — cached with jitter (270–330s) to spread load
 EXT_IP_CACHE="${TMPDIR:-/tmp}/bw-monitor-extip"
 EXT_IP_TTL=$(( 270 + RANDOM % 61 ))  # 270–330 seconds
-if [ -f "$EXT_IP_CACHE" ] && [ "$(( $(date +%s) - $(stat -f %m "$EXT_IP_CACHE") ))" -lt "$EXT_IP_TTL" ]; then
+EXT_IP4="" EXT_IP6=""
+if [ "$SHOW_EXTERNAL_IP" = "true" ]; then
+  if [ -f "$EXT_IP_CACHE" ] && [ "$(( $(date +%s) - $(stat -f %m "$EXT_IP_CACHE") ))" -lt "$EXT_IP_TTL" ]; then
     EXT_IP4=$(sed -n '1p' "$EXT_IP_CACHE")
     EXT_IP6=$(sed -n '2p' "$EXT_IP_CACHE")
-else
+  else
     TMP4=$(mktemp) TMP6=$(mktemp)
     curl -q -4 -sf --max-time 1 https://ip.ffmuc.net >"$TMP4" 2>/dev/null &
     curl -q -6 -sf --max-time 1 https://ip.ffmuc.net >"$TMP6" 2>/dev/null &
@@ -117,6 +122,7 @@ else
     EXT_IP4=$(cat "$TMP4"); EXT_IP6=$(cat "$TMP6")
     rm -f "$TMP4" "$TMP6"
     printf '%s\n%s\n' "$EXT_IP4" "$EXT_IP6" > "$EXT_IP_CACHE"
+  fi
 fi
 
 # Single jq call produces the entire SwiftBar output
