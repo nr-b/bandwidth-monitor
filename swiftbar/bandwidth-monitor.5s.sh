@@ -26,6 +26,10 @@ SHOW_EXTERNAL_IP="${BW_SHOW_EXTERNAL_IP:-true}"
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
+# Build a User-Agent string: bandwidth-monitor + curl version
+CURL_VER=$(curl --version 2>/dev/null | head -1 | awk '{print $1"/"$2}')
+UA="bandwidth-monitor ${CURL_VER}"
+
 # Auto-detect default gateway as a server candidate if none configured
 if [ -z "$SERVERS" ]; then
     GW=$(route -n get default 2>/dev/null | awk '/gateway:/{print $2}')
@@ -64,7 +68,7 @@ SORTED_SERVERS+=("${REMAINING_SERVERS[@]}")
 SERVER=""
 DATA=""
 for s in "${SORTED_SERVERS[@]}"; do
-    DATA=$(curl -sf --max-time 1 -w '' "${s}/api/summary" 2>/dev/null)
+    DATA=$(curl -sf --max-time 1 -A "$UA" -w '' "${s}/api/summary" 2>/dev/null)
     if [ -n "$DATA" ]; then
         SERVER="$s"
         break
@@ -116,8 +120,8 @@ if [ "$SHOW_EXTERNAL_IP" = "true" ]; then
     EXT_IP6=$(sed -n '2p' "$EXT_IP_CACHE")
   else
     TMP4=$(mktemp) TMP6=$(mktemp)
-    curl -q -4 -sf --max-time 1 https://ip.ffmuc.net >"$TMP4" 2>/dev/null &
-    curl -q -6 -sf --max-time 1 https://ip.ffmuc.net >"$TMP6" 2>/dev/null &
+    curl -q -4 -sf --max-time 1 -A "$UA" https://ip.ffmuc.net >"$TMP4" 2>/dev/null &
+    curl -q -6 -sf --max-time 1 -A "$UA" https://ip.ffmuc.net >"$TMP6" 2>/dev/null &
     wait
     EXT_IP4=$(cat "$TMP4"); EXT_IP6=$(cat "$TMP6")
     rm -f "$TMP4" "$TMP6"
