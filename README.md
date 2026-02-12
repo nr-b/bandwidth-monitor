@@ -1,12 +1,67 @@
 # Bandwidth Monitor
 
-A real-time network monitoring dashboard for Linux, written in Go. 
+A real-time network monitoring dashboard for Linux, written in Go.
 
 Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Home, NextDNS, or Pi-hole), UniFi wireless monitoring, GeoIP enrichment, and a macOS menu bar plugin.
+
+## Table of Contents
+
+- [Screenshots](#screenshots)
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [macOS Menu Bar Plugin](#macos-menu-bar-plugin)
+- [Architecture](#architecture)
+- [API Endpoints](#api-endpoints)
+- [External Services Transparency](#external-services-transparency)
+- [Notes](#notes)
+
+---
+
+## Screenshots
+
+<table>
+  <tr>
+    <th>Traffic (Light)</th>
+    <th>NAT (Light)</th>
+    <th>DNS (Light)</th>
+    <th>WiFi (Light)</th>
+    <th>Speed Test (Light)</th>
+    <th>Debug (Light)</th>
+  </tr>
+  <tr>
+    <td><img src="docs/traffic-light.png" width="300" alt="Traffic (light)" /></td>
+    <td><img src="docs/nat-light.png" width="300" alt="NAT (light)" /></td>
+    <td><img src="docs/dns-light.png" width="300" alt="DNS (light)" /></td>
+    <td><img src="docs/wifi-light.png" width="300" alt="WiFi (light)" /></td>
+    <td><img src="docs/speedtest-light.png" width="300" alt="Speed Test (light)" /></td>
+    <td><img src="docs/debug-light.png" width="300" alt="Debug (light)" /></td>
+  </tr>
+  <tr>
+    <th>Traffic (Dark)</th>
+    <th>NAT (Dark)</th>
+    <th>DNS (Dark)</th>
+    <th>WiFi (Dark)</th>
+    <th>Speed Test (Dark)</th>
+    <th>Debug (Dark)</th>
+  </tr>
+  <tr>
+    <td><img src="docs/traffic-dark.png" width="300" alt="Traffic (dark)" /></td>
+    <td><img src="docs/nat-dark.png" width="300" alt="NAT (dark)" /></td>
+    <td><img src="docs/dns-dark.png" width="300" alt="DNS (dark)" /></td>
+    <td><img src="docs/wifi-dark.png" width="300" alt="WiFi (dark)" /></td>
+    <td><img src="docs/speedtest-dark.png" width="300" alt="Speed Test (dark)" /></td>
+    <td><img src="docs/debug-dark.png" width="300" alt="Debug (dark)" /></td>
+  </tr>
+</table>
+
+---
 
 ## Features
 
 ### Traffic Tab
+
 - **Live interface stats** — queries the kernel via netlink (`RTM_GETLINK`) every second; shows RX/TX rates, totals, packets, errors, and drops per interface
 - **Interface grouping** — auto-classifies interfaces using netlink `IFLA_INFO_KIND` as Physical, VLAN, PPP/WAN, VPN, or Loopback
 - **VPN routing detection** — configurable sentinel files to show whether a VPN interface is actively routing traffic
@@ -20,12 +75,14 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 - **Reverse DNS** — resolves IPs to hostnames with in-memory cache
 
 ### DNS Tab
+
 - **AdGuard Home, NextDNS, or Pi-hole integration** — total queries, blocked count/percentage, average latency
 - **Time-series charts** — queries and blocked requests over time
 - **Top clients, domains, and blocked domains** — pie charts + ranked detail tables
 - **Upstream DNS servers** — response counts and average latency
 
 ### WiFi Tab
+
 - **UniFi controller integration** — polls AP and client data from the UniFi API
 - **AP cards** — per-AP status, clients, firmware, uptime, IP, MAC, live RX/TX rates
 - **Clients per AP / per SSID** — pie charts and detail tables
@@ -34,6 +91,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 - **Search & sort** — filter clients by name/IP/MAC/SSID/AP; sort by traffic, rate, name, or signal
 
 ### NAT Tab
+
 - **Conntrack via netlink** — uses [ti-mo/conntrack](https://github.com/ti-mo/conntrack) to query the kernel's connection tracking table directly via Netlink (no `/proc/net/nf_conntrack` needed)
 - **Connection table overview** — total active connections, max table size, usage percentage (color-coded warnings at >50% and >80%)
 - **IPv4 / IPv6 split** — separate counts and sub-tabs for browsing entries by IP version
@@ -46,6 +104,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 - **macOS menu bar** — SwiftBar plugin shows connection count, table usage, IPv4/IPv6 split, and SNAT/DNAT counts
 
 ### Speed Test Tab
+
 - **Server-side speed test** — runs download/upload/ping tests from the router against [speed.ffmuc.net](https://speed.ffmuc.net) (OpenSpeedTest)
 - **Live progress** — real-time gauges and progress bar streamed via SSE during the test
 - **Ping & jitter** — measures latency with outlier-resistant median filtering
@@ -54,17 +113,23 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 - **Configurable server** — change the target via `SPEEDTEST_SERVER` environment variable
 
 ### Debug Tab
+
 - **Traceroute** — native Go ICMP traceroute with configurable probes per hop (default 20), using raw sockets with proper TTL manipulation and ICMP ID matching; shows per-hop IP, reverse DNS hostname, avg/min/max RTT, and packet loss percentage; supports IPv4 and IPv6; streams progress via SSE
 - **DNS Check** — queries a domain (A, AAAA, MX, TXT, NS, CNAME, SOA, PTR) against 14 DNS servers in parallel: System Resolver, FFMUC Anycast01/02 (IPv4+IPv6), Cloudflare (IPv4+IPv6), Google (IPv4+IPv6), Quad9 (IPv4+IPv6), and OpenDNS (IPv4+IPv6); shows RCode, latency, TTL, DNSSEC AD flag per server; highlights the fastest server and flags records unique to a single server
 - **Resolver leak check** — automatically detects which public IPs your system resolver uses when talking to authoritative servers, via `o-o.myaddr.l.google.com` TXT and `dnscheck.tools` TXT (including IPv4-only and IPv6-only variants); shows the configured local resolver from `/etc/resolv.conf`, upstream egress IPs, EDNS Client Subnet info, and resolver org/geo from dnscheck.tools
 
 ### General
+
 - **WebSocket live updates** — 1-second refresh with automatic reconnection
 - **Dark/light/auto theme** — saved to localStorage
 - **Fully embedded UI** — all HTML/CSS/JS baked into the binary via `go:embed`
 - **macOS menu bar plugin** — SwiftBar/xbar script showing live stats
 
-## Requirements
+---
+
+## Quick Start
+
+### Requirements
 
 - **Linux** — uses netlink (`RTM_GETLINK`, `RTM_GETADDR`) for interface stats and addresses
 - **libpcap-dev** — for packet capture (top talkers)
@@ -82,7 +147,7 @@ sudo dnf install libpcap-devel
 sudo pacman -S libpcap
 ```
 
-## Quick Start
+### Build & Run
 
 ```bash
 # Build
@@ -97,100 +162,11 @@ sudo ./bandwidth-monitor
 
 Then open **http://localhost:8080**.
 
-## Configuration
-
-All configuration is via environment variables. Copy the example file and edit:
-
-```bash
-cp env.example /opt/bandwidth-monitor/.env
-chmod 0600 /opt/bandwidth-monitor/.env
-```
-
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LISTEN` | `:8080` | HTTP listen address (e.g. `198.51.100.1:8080`) |
-| `DEVICE` | *(all)* | Network device for packet capture (e.g. `eth0`) |
-| `PROMISCUOUS` | `true` | Enable promiscuous mode for packet capture (`true`/`false`) |
-| `GEO_COUNTRY` | `GeoLite2-Country.mmdb` | Path to GeoLite2 Country MMDB |
-| `GEO_ASN` | `GeoLite2-ASN.mmdb` | Path to GeoLite2 ASN MMDB |
-| `ADGUARD_URL` | *(disabled)* | AdGuard Home base URL (e.g. `http://adguard.example.net`) |
-| `ADGUARD_USER` | | AdGuard Home username |
-| `ADGUARD_PASS` | | AdGuard Home password |
-| `NEXTDNS_PROFILE` | *(disabled)* | NextDNS profile ID (e.g. `abc123`) |
-| `NEXTDNS_API_KEY` | | NextDNS API key (from [my.nextdns.io/account](https://my.nextdns.io/account)) |
-| `PIHOLE_URL` | *(disabled)* | Pi-hole base URL (e.g. `http://pi.hole`) |
-| `PIHOLE_PASSWORD` | | Pi-hole password or app password |
-| `UNIFI_URL` | *(disabled)* | UniFi controller URL (e.g. `https://unifi.example.net:8443`) |
-| `UNIFI_USER` | | UniFi controller username |
-| `UNIFI_PASS` | | UniFi controller password |
-| `UNIFI_SITE` | `default` | UniFi site name |
-| `VPN_STATUS_FILES` | *(none)* | Comma-separated `iface=path` pairs for VPN routing detection (e.g. `wg0=/run/wg0-active`) |
-| `LOCAL_NETS` | *(auto-detect)* | Comma-separated CIDRs for RX/TX direction detection (e.g. `192.0.2.0/24,2001:db8::/48`). Auto-discovered from local interfaces if not set. |
-| `SPAN_DEVICE` | *(disabled)* | SPAN/mirror port interface for direction-aware RX/TX (requires `LOCAL_NETS`; e.g. `eth1`) |
-| `SPEEDTEST_SERVER` | `https://speed.ffmuc.net` | Target server URL for the speed test tab |
-
-The DNS tab supports **AdGuard Home**, **NextDNS**, or **Pi-hole** (mutually exclusive; first configured wins in that order). The WiFi tab is only shown when UniFi is configured. The NAT tab appears automatically when the `nf_conntrack` kernel module is loaded and the process has `CAP_NET_ADMIN`.
-
-The UniFi integration auto-detects both legacy controllers (port 8443) and UniFi OS devices (UDM/UDR/CloudKey Gen2+, port 443).
-
-### Conntrack (NAT) Configuration
-
-The NAT tab works out of the box on any Linux system with `nf_conntrack` loaded — no configuration needed. To enable per-flow byte/packet counters:
-
-```bash
-# Enable conntrack accounting (required for per-flow bytes/packets)
-sysctl -w net.netfilter.nf_conntrack_acct=1
-
-# Make persistent
-echo 'net.netfilter.nf_conntrack_acct=1' >> /etc/sysctl.conf
-```
-
-The binary needs `CAP_NET_ADMIN` (or root) for netlink access. The included systemd service already grants this via `AmbientCapabilities`.
-
-### RX/TX Direction Detection
-
-The top-talkers tables show per-host RX (download) and TX (upload) columns. Local network ranges are **auto-discovered** from interface addresses at startup — no configuration needed in most cases.
-
-For SPAN/mirror port setups or if auto-discovery doesn't cover all your addresses (e.g. dynamic ISP prefixes), set `LOCAL_NETS` explicitly — similar to iftop's `-F`/`-G` flags:
-
-```bash
-LOCAL_NETS=192.0.2.0/24,2001:db8::/48
-```
-
-### SPAN / Mirror Port Mode
-
-On a SPAN or mirror port, the kernel reports all mirrored traffic as RX on the interface, making the normal RX/TX split meaningless. Setting `SPAN_DEVICE` activates a pcap-based overlay that inspects IP headers and classifies direction using `LOCAL_NETS`:
-
-- **src in LOCAL_NETS → remote** = upload (TX)
-- **remote → dst in LOCAL_NETS** = download (RX)
-- **both local** = counted as both (intra-LAN)
-
-```bash
-# In your .env
-SPAN_DEVICE=eth1
-LOCAL_NETS=192.0.2.0/24,2001:db8::/48
-```
-
-All other interfaces keep their normal netlink-based stats, VPN routing detection, interface grouping, etc. Only the SPAN device gets its RX/TX overridden. Requires root or `CAP_NET_RAW`.
-
-### VPN Routing Detection (OpenWrt)
-
-The `VPN_STATUS_FILES` variable tells bandwidth-monitor which sentinel files to check for active VPN routing. On OpenWrt, a hotplug script (`99-vpn-status`) is included that automatically creates and removes these sentinel files when WireGuard interfaces go up or down.
-
-The script is installed automatically with the OpenWrt package to `/etc/hotplug.d/iface/99-vpn-status`. It reads `VPN_STATUS_FILES` from `/etc/bandwidth-monitor/env` — the same file the main service uses — so there is nothing extra to configure:
-
-```bash
-# In /etc/bandwidth-monitor/env
-VPN_STATUS_FILES=wg0=/run/wg0-active,wg1=/run/wg1-active
-```
-
-When `wg0` comes up, the hotplug script writes a timestamp to `/run/wg0-active`. When it goes down, the file is removed. The dashboard shows a 🔒 icon on interfaces that are actively routing.
+---
 
 ## Installation
 
-### Pre-built packages
+### Pre-built Packages
 
 Pre-built packages are available from [GitHub Releases](https://github.com/awlx/bandwidth-monitor/releases) for:
 
@@ -290,6 +266,127 @@ The included `bandwidth-monitor.service` runs the binary with:
 - `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes` hardening
 - Environment loaded from `/opt/bandwidth-monitor/.env`
 
+---
+
+## Configuration
+
+All configuration is via environment variables. Copy the example file and edit:
+
+```bash
+cp env.example /opt/bandwidth-monitor/.env
+chmod 0600 /opt/bandwidth-monitor/.env
+```
+
+### Environment Variables
+
+#### Core
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LISTEN` | `:8080` | HTTP listen address (e.g. `198.51.100.1:8080`) |
+| `DEVICE` | *(all)* | Network device for packet capture (e.g. `eth0`) |
+| `PROMISCUOUS` | `true` | Enable promiscuous mode for packet capture (`true`/`false`) |
+| `GEO_COUNTRY` | `GeoLite2-Country.mmdb` | Path to GeoLite2 Country MMDB |
+| `GEO_ASN` | `GeoLite2-ASN.mmdb` | Path to GeoLite2 ASN MMDB |
+
+#### DNS (mutually exclusive — first configured wins)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ADGUARD_URL` | *(disabled)* | AdGuard Home base URL (e.g. `http://adguard.example.net`) |
+| `ADGUARD_USER` | | AdGuard Home username |
+| `ADGUARD_PASS` | | AdGuard Home password |
+| `NEXTDNS_PROFILE` | *(disabled)* | NextDNS profile ID (e.g. `abc123`) |
+| `NEXTDNS_API_KEY` | | NextDNS API key (from [my.nextdns.io/account](https://my.nextdns.io/account)) |
+| `PIHOLE_URL` | *(disabled)* | Pi-hole base URL (e.g. `http://pi.hole`) |
+| `PIHOLE_PASSWORD` | | Pi-hole password or app password |
+
+#### WiFi
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `UNIFI_URL` | *(disabled)* | UniFi controller URL (e.g. `https://unifi.example.net:8443`) |
+| `UNIFI_USER` | | UniFi controller username |
+| `UNIFI_PASS` | | UniFi controller password |
+| `UNIFI_SITE` | `default` | UniFi site name |
+
+The UniFi integration auto-detects both legacy controllers (port 8443) and UniFi OS devices (UDM/UDR/CloudKey Gen2+, port 443).
+
+#### Network & VPN
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOCAL_NETS` | *(auto-detect)* | Comma-separated CIDRs for RX/TX direction detection (e.g. `192.0.2.0/24,2001:db8::/48`). Auto-discovered from local interfaces if not set. |
+| `SPAN_DEVICE` | *(disabled)* | SPAN/mirror port interface for direction-aware RX/TX (requires `LOCAL_NETS`; e.g. `eth1`) |
+| `VPN_STATUS_FILES` | *(none)* | Comma-separated `iface=path` pairs for VPN routing detection (e.g. `wg0=/run/wg0-active`) |
+
+#### Speed Test
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SPEEDTEST_SERVER` | `https://speed.ffmuc.net` | Target server URL for the speed test tab |
+
+### Tab Visibility
+
+- **DNS tab** — shown when AdGuard Home, NextDNS, or Pi-hole is configured
+- **WiFi tab** — shown when UniFi is configured
+- **NAT tab** — shown automatically when `nf_conntrack` is loaded and the process has `CAP_NET_ADMIN`
+
+### Conntrack (NAT) Configuration
+
+The NAT tab works out of the box on any Linux system with `nf_conntrack` loaded — no configuration needed. To enable per-flow byte/packet counters:
+
+```bash
+# Enable conntrack accounting (required for per-flow bytes/packets)
+sysctl -w net.netfilter.nf_conntrack_acct=1
+
+# Make persistent
+echo 'net.netfilter.nf_conntrack_acct=1' >> /etc/sysctl.conf
+```
+
+The binary needs `CAP_NET_ADMIN` (or root) for netlink access. The included systemd service already grants this via `AmbientCapabilities`.
+
+### RX/TX Direction Detection
+
+The top-talkers tables show per-host RX (download) and TX (upload) columns. Local network ranges are **auto-discovered** from interface addresses at startup — no configuration needed in most cases.
+
+For SPAN/mirror port setups or if auto-discovery doesn't cover all your addresses (e.g. dynamic ISP prefixes), set `LOCAL_NETS` explicitly — similar to iftop's `-F`/`-G` flags:
+
+```bash
+LOCAL_NETS=192.0.2.0/24,2001:db8::/48
+```
+
+### SPAN / Mirror Port Mode
+
+On a SPAN or mirror port, the kernel reports all mirrored traffic as RX on the interface, making the normal RX/TX split meaningless. Setting `SPAN_DEVICE` activates a pcap-based overlay that inspects IP headers and classifies direction using `LOCAL_NETS`:
+
+- **src in LOCAL_NETS → remote** = upload (TX)
+- **remote → dst in LOCAL_NETS** = download (RX)
+- **both local** = counted as both (intra-LAN)
+
+```bash
+# In your .env
+SPAN_DEVICE=eth1
+LOCAL_NETS=192.0.2.0/24,2001:db8::/48
+```
+
+All other interfaces keep their normal netlink-based stats, VPN routing detection, interface grouping, etc. Only the SPAN device gets its RX/TX overridden. Requires root or `CAP_NET_RAW`.
+
+### VPN Routing Detection (OpenWrt)
+
+The `VPN_STATUS_FILES` variable tells bandwidth-monitor which sentinel files to check for active VPN routing. On OpenWrt, a hotplug script (`99-vpn-status`) is included that automatically creates and removes these sentinel files when WireGuard interfaces go up or down.
+
+The script is installed automatically with the OpenWrt package to `/etc/hotplug.d/iface/99-vpn-status`. It reads `VPN_STATUS_FILES` from `/etc/bandwidth-monitor/env` — the same file the main service uses — so there is nothing extra to configure:
+
+```bash
+# In /etc/bandwidth-monitor/env
+VPN_STATUS_FILES=wg0=/run/wg0-active,wg1=/run/wg1-active
+```
+
+When `wg0` comes up, the hotplug script writes a timestamp to `/run/wg0-active`. When it goes down, the file is removed. The dashboard shows a 🔒 icon on interfaces that are actively routing.
+
+---
+
 ## macOS Menu Bar Plugin
 
 A [SwiftBar](https://github.com/swiftbar/SwiftBar) / [xbar](https://xbarapp.com/) plugin is included at `swiftbar/bandwidth-monitor.5s.sh`. It shows live RX/TX rates, DNS stats, and WiFi client counts in the macOS menu bar.
@@ -320,6 +417,8 @@ PREFER_IFACE_MAP="http://198.51.100.1:8080=eth0,http://203.0.113.1:8080=ppp0"
 
 The plugin tries each server in order with a 1-second timeout. The preferred interface is resolved per-server from the map. Shows a 🔒 icon when VPN routing is active.
 
+---
+
 ## Architecture
 
 ```
@@ -333,6 +432,7 @@ handler/                  → HTTP REST API + WebSocket handler
 dns/                      → common DNS provider interface
 adguard/                  → AdGuard Home API client (stats, top clients/domains)
 nextdns/                  → NextDNS API client (stats, top clients/domains)
+pihole/                   → Pi-hole v6 API client (stats, top clients/domains, upstreams)
 unifi/                    → UniFi controller API client (APs, SSIDs, clients, live rates)
 geoip/                    → MaxMind MMDB GeoIP lookups (country, ASN)
 static/
@@ -354,6 +454,8 @@ bandwidth-monitor.service → systemd unit file
 Makefile                  → build, install, GeoIP download targets
 ```
 
+---
+
 ## API Endpoints
 
 | Endpoint | Method | Description |
@@ -362,7 +464,7 @@ Makefile                  → build, install, GeoIP download targets
 | `/api/interfaces/history` | GET | 24h time-series per interface |
 | `/api/talkers/bandwidth` | GET | Top 10 by current bandwidth |
 | `/api/talkers/volume` | GET | Top 10 by 24h volume |
-| `/api/dns` | GET | DNS summary (AdGuard Home or NextDNS) |
+| `/api/dns` | GET | DNS summary (AdGuard Home, NextDNS, or Pi-hole) |
 | `/api/wifi` | GET | UniFi WiFi summary |
 | `/api/conntrack` | GET | NAT / conntrack summary (connections, states, NAT types, entries) |
 | `/api/speedtest/run` | POST | Start a speed test; streams progress as SSE (Server-Sent Events) |
@@ -372,42 +474,7 @@ Makefile                  → build, install, GeoIP download targets
 | `/api/summary` | GET | Compact summary for menu bar clients |
 | `/api/ws` | WS | WebSocket — pushes all data every second |
 
-## Screenshots
-
-<table>
-  <tr>
-    <th>Traffic (Light)</th>
-    <th>NAT (Light)</th>
-    <th>DNS (Light)</th>
-    <th>WiFi (Light)</th>
-    <th>Speed Test (Light)</th>
-    <th>Debug (Light)</th>
-  </tr>
-  <tr>
-    <td><img src="docs/traffic-light.png" width="300" alt="Traffic (light)" /></td>
-    <td><img src="docs/nat-light.png" width="300" alt="NAT (light)" /></td>
-    <td><img src="docs/dns-light.png" width="300" alt="DNS (light)" /></td>
-    <td><img src="docs/wifi-light.png" width="300" alt="WiFi (light)" /></td>
-    <td><img src="docs/speedtest-light.png" width="300" alt="Speed Test (light)" /></td>
-    <td><img src="docs/debug-light.png" width="300" alt="Debug (light)" /></td>
-  </tr>
-  <tr>
-    <th>Traffic (Dark)</th>
-    <th>NAT (Dark)</th>
-    <th>DNS (Dark)</th>
-    <th>WiFi (Dark)</th>
-    <th>Speed Test (Dark)</th>
-    <th>Debug (Dark)</th>
-  </tr>
-  <tr>
-    <td><img src="docs/traffic-dark.png" width="300" alt="Traffic (dark)" /></td>
-    <td><img src="docs/nat-dark.png" width="300" alt="NAT (dark)" /></td>
-    <td><img src="docs/dns-dark.png" width="300" alt="DNS (dark)" /></td>
-    <td><img src="docs/wifi-dark.png" width="300" alt="WiFi (dark)" /></td>
-    <td><img src="docs/speedtest-dark.png" width="300" alt="Speed Test (dark)" /></td>
-    <td><img src="docs/debug-dark.png" width="300" alt="Debug (dark)" /></td>
-  </tr>
-</table>
+---
 
 ## External Services Transparency
 
@@ -428,20 +495,31 @@ Every hardcoded external service that bandwidth-monitor or its components contac
 
 All JavaScript libraries (Chart.js, Luxon) and fonts (Inter, JetBrains Mono) are **bundled in the binary** — no CDN requests are made at runtime. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for their licenses.
 
-User-configured services (AdGuard Home, NextDNS, UniFi Controller) are **not** listed here — they are optional and only contacted when explicitly configured via environment variables.
+User-configured services (AdGuard Home, NextDNS, Pi-hole, UniFi Controller) are **not** listed here — they are optional and only contacted when explicitly configured via environment variables.
 
 FFMUC services ([`speed.ffmuc.net`](https://speed.ffmuc.net), [`ip.ffmuc.net`](https://ip.ffmuc.net), Anycast DNS) are operated by [Freie Netze München e.V.](https://ffmuc.net/) — see their [privacy policy](https://ffmuc.net/privacy/).
 
 **No telemetry, no analytics, no crash reporting, no update checks.** The binary phones home to nothing.
 
+---
+
 ## Notes
 
-- **Interface stats** and **NAT tab** use netlink — require `CAP_NET_ADMIN` (or root)
-- **Top talkers** require `root` or `CAP_NET_RAW` for packet capture
-- If running without root, grant `CAP_NET_RAW` + `CAP_NET_ADMIN` for full functionality
-- **GeoIP** is optional — without MMDB files, country/ASN columns are simply hidden
-- **NAT tab** requires `CAP_NET_ADMIN` (or root) for netlink access to the conntrack table; enable `nf_conntrack_acct=1` for per-flow byte counters
-- **DNS and WiFi** tabs only appear when their respective integrations are configured
-- **Speed test** runs from the router, not the client — useful for testing WAN throughput independent of local WiFi
-- **Traceroute** (Debug tab) requires `CAP_NET_RAW` for raw ICMP sockets; the DNS check and resolver leak test work without special permissions
+### Permissions
+
+| Feature | Capability required |
+|---------|-------------------|
+| Interface stats, NAT tab | `CAP_NET_ADMIN` (or root) |
+| Top talkers, SPAN mode | `CAP_NET_RAW` (or root) |
+| Traceroute | `CAP_NET_RAW` |
+| DNS check, resolver leak test | No special permissions |
+
+If running without root, grant both `CAP_NET_RAW` and `CAP_NET_ADMIN` for full functionality.
+
+### Optional Features
+
+- **GeoIP** — without MMDB files, country/ASN columns are simply hidden
+- **DNS and WiFi tabs** — only appear when their respective integrations are configured
+- **Speed test** — runs from the router, not the client — useful for testing WAN throughput independent of local WiFi
+- **NAT per-flow counters** — require `nf_conntrack_acct=1` (see [Conntrack Configuration](#conntrack-nat-configuration))
 - All assets are embedded in the binary — single-file deployment, no runtime dependencies
