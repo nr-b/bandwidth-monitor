@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"log"
@@ -202,7 +204,26 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create sub filesystem: %v", err)
 	}
-	mux.Handle("/", noCacheFS(http.FileServer(http.FS(staticSub))))
+
+	// Compute content hashes for cache-busting query strings.
+	// embed.FS has a zero modtime so http.FileServer omits Last-Modified;
+	// Safari caches the response with heuristic expiration and never
+	// revalidates — even on Cmd+R.  Injecting ?v=<hash> into the HTML
+	// forces the browser to fetch fresh assets after every build.
+	assetVersion := computeAssetVersions(staticFiles)
+	indexHTML := buildIndexHTML(staticFiles, assetVersion)
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" && r.URL.Path != "/index.html" {
+			// Serve other static files with ETag-based caching.
+			w.Header().Set("Cache-Control", "no-cache")
+			http.FileServer(http.FS(staticSub)).ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Write(indexHTML)
+	})
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -234,16 +255,39 @@ func main() {
 	}
 }
 
-// noCacheFS wraps a file server to set Cache-Control headers.
-// embed.FS has no meaningful Last-Modified (zero time) and Go's
-// http.FileServer omits the header in that case, so Safari applies
-// aggressive heuristic caching and serves stale JS/CSS/HTML
-// indefinitely.  "no-cache" forces revalidation on every request.
-func noCacheFS(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
-		h.ServeHTTP(w, r)
-	})
+// computeAssetVersions hashes key embedded files to produce short
+// cache-busting version strings.  The returned map is keyed by
+// filename (e.g. "app.js") → 8-char hex hash.
+func computeAssetVersions(embedded embed.FS) map[string]string {
+	versions := make(map[string]string)
+	for _, name := range []string{"static/app.js", "static/style.css"} {
+		data, err := embedded.ReadFile(name)
+		if err != nil {
+			continue
+		}
+		h := sha256.Sum256(data)
+		// basename
+		parts := strings.Split(name, "/")
+		base := parts[len(parts)-1]
+		versions[base] = hex.EncodeToString(h[:4]) // 8 hex chars
+	}
+	return versions
+}
+
+// buildIndexHTML reads the embedded index.html and injects ?v=<hash>
+// into script src and link href attributes for cache-busted assets.
+func buildIndexHTML(embedded embed.FS, versions map[string]string) []byte {
+	data, err := embedded.ReadFile("static/index.html")
+	if err != nil {
+		log.Fatalf("embedded index.html: %v", err)
+	}
+	html := string(data)
+	for name, ver := range versions {
+		// Replace href="style.css" → href="style.css?v=abcd1234"
+		// Replace src="app.js"     → src="app.js?v=abcd1234"
+		html = strings.ReplaceAll(html, `"`+name+`"`, `"`+name+"?v="+ver+`"`)
+	}
+	return []byte(html)
 }
 
 // withSignature wraps an http.Handler to inject a X-Bandwidth-Monitor header
