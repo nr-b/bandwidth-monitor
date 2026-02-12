@@ -202,7 +202,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create sub filesystem: %v", err)
 	}
-	mux.Handle("/", http.FileServer(http.FS(staticSub)))
+	mux.Handle("/", noCacheFS(http.FileServer(http.FS(staticSub))))
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -232,6 +232,18 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
+}
+
+// noCacheFS wraps a file server to set Cache-Control headers.
+// embed.FS has no meaningful Last-Modified (zero time) and Go's
+// http.FileServer omits the header in that case, so Safari applies
+// aggressive heuristic caching and serves stale JS/CSS/HTML
+// indefinitely.  "no-cache" forces revalidation on every request.
+func noCacheFS(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		h.ServeHTTP(w, r)
+	})
 }
 
 // withSignature wraps an http.Handler to inject a X-Bandwidth-Monitor header
