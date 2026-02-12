@@ -20,7 +20,9 @@ import (
 )
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	ReadBufferSize:  1024,
+	WriteBufferSize: 32 * 1024,
+	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
 func InterfaceStats(c *collector.Collector) http.HandlerFunc {
@@ -355,6 +357,40 @@ func DebugDNS() http.HandlerFunc {
 	}
 }
 
+// buildWSPayload assembles the lightweight payload sent over WebSocket.
+// Conntrack entry tables (ipv4_entries/ipv6_entries) are excluded to keep
+// messages small (~5 KB instead of ~150 KB); the full data is available
+// via the /api/conntrack REST endpoint.
+func buildWSPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.Client, ct *conntrack.Tracker) map[string]interface{} {
+	payload := map[string]interface{}{
+		"interfaces":    c.GetAll(),
+		"sparklines":    c.GetSparklines(5*time.Minute, 50),
+		"protocols":     t.GetProtocolBreakdown(),
+		"ip_versions":   t.GetIPVersionBreakdown(),
+		"countries":     t.GetCountryBreakdown(),
+		"asns":          t.GetASNBreakdown(),
+		"top_bandwidth": t.TopByBandwidth(10),
+		"top_volume":    t.TopByVolume(10),
+		"timestamp":     time.Now().UnixMilli(),
+	}
+	if dp != nil {
+		payload["dns"] = dp.GetSummary()
+	}
+	if uf != nil {
+		payload["wifi"] = uf.GetSummary()
+	}
+	if ct != nil {
+		if s := ct.GetSummary(); s != nil {
+			// Send lightweight summary without the large entry arrays.
+			lite := *s
+			lite.IPv4Entries = nil
+			lite.IPv6Entries = nil
+			payload["conntrack"] = &lite
+		}
+	}
+	return payload
+}
+
 func WebSocket(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.Client, ct *conntrack.Tracker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -412,6 +448,11 @@ func WebSocket(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *
 			}
 		}()
 
+		// Send initial payload immediately so the client doesn't have to
+		// wait up to 1 s for the first ticker fire. Safari in particular
+		// may appear stuck at "Connecting" until the first data arrives.
+		sendCh <- buildWSPayload(c, t, dp, uf, ct)
+
 		for {
 			select {
 			case <-doneCh:
@@ -427,28 +468,7 @@ func WebSocket(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *
 					// Writer is backed up — skip ping, the write timeout will catch dead connections
 				}
 			case <-ticker.C:
-				payload := map[string]interface{}{
-					"interfaces":    c.GetAll(),
-					"sparklines":    c.GetSparklines(5*time.Minute, 50),
-					"protocols":     t.GetProtocolBreakdown(),
-					"ip_versions":   t.GetIPVersionBreakdown(),
-					"countries":     t.GetCountryBreakdown(),
-					"asns":          t.GetASNBreakdown(),
-					"top_bandwidth": t.TopByBandwidth(10),
-					"top_volume":    t.TopByVolume(10),
-					"timestamp":     time.Now().UnixMilli(),
-				}
-				if dp != nil {
-					payload["dns"] = dp.GetSummary()
-				}
-				if uf != nil {
-					payload["wifi"] = uf.GetSummary()
-				}
-				if ct != nil {
-					if s := ct.GetSummary(); s != nil {
-						payload["conntrack"] = s
-					}
-				}
+				payload := buildWSPayload(c, t, dp, uf, ct)
 				// Non-blocking send: drop the old message if backed up
 				select {
 				case sendCh <- payload:

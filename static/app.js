@@ -30,6 +30,7 @@
 
     // ── Tab navigation ──
     window._switchTab = function(tab) {
+        _activeTab = tab;
         var panels = { traffic: 'tabTraffic', nat: 'tabNat', dns: 'tabDns', wifi: 'tabWifi', speedtest: 'tabSpeedtest', debug: 'tabDebug' };
         for (var k in panels) {
             var p = document.getElementById(panels[k]);
@@ -39,6 +40,14 @@
             t.classList.toggle('active', t.getAttribute('data-tab') === tab);
         });
         if (tab === 'speedtest' && !_stHistoryLoaded) loadSpeedTestHistory();
+        // Start/stop NAT entry polling based on active tab
+        if (tab === 'nat') {
+            _pollNATEntries();
+            if (!_natPollTimer) _natPollTimer = setInterval(_pollNATEntries, 5000);
+        } else if (_natPollTimer) {
+            clearInterval(_natPollTimer);
+            _natPollTimer = null;
+        }
     };
 
     function formatBytes(bytes, dec) {
@@ -612,6 +621,9 @@
     }
 
     var ws, rd = 1000;
+    var _connectTimer = null;
+    var _activeTab = 'traffic';
+    var _natPollTimer = null;
 
     // DNS mini-bar charts
     function makeBarChart(canvasId, color) {
@@ -831,6 +843,11 @@
 
     function updateNAT(ct) {
         if (!ct) return;
+        // Preserve entry arrays fetched by REST poll – WS payloads omit them.
+        if (_lastConntrack) {
+            if (!ct.ipv4_entries && _lastConntrack.ipv4_entries) ct.ipv4_entries = _lastConntrack.ipv4_entries;
+            if (!ct.ipv6_entries && _lastConntrack.ipv6_entries) ct.ipv6_entries = _lastConntrack.ipv6_entries;
+        }
         _lastConntrack = ct;
         document.getElementById('natNoData').style.display = 'none';
         document.getElementById('natHasData').style.display = '';
@@ -1149,9 +1166,21 @@
     }
 
     function connect() {
+        // Clear any previous connection timeout
+        if (_connectTimer) { clearTimeout(_connectTimer); _connectTimer = null; }
+
         var p = location.protocol === 'https:' ? 'wss:' : 'ws:';
         ws = new WebSocket(p + '//' + location.host + '/api/ws');
+
+        // Safari fix: if the WebSocket doesn't open within 5 s, close and retry.
+        _connectTimer = setTimeout(function() {
+            if (ws && ws.readyState !== WebSocket.OPEN) {
+                ws.close();
+            }
+        }, 5000);
+
         ws.onopen = function() {
+            if (_connectTimer) { clearTimeout(_connectTimer); _connectTimer = null; }
             rd = 1000;
             document.getElementById('statusDot').className = 'status-dot';
             document.getElementById('statusText').textContent = 'Live';
@@ -1171,6 +1200,29 @@
                 process(d);
             } catch(ex) { console.error(ex); }
         };
+    }
+
+    // Reconnect when the page becomes visible again (Safari background tab fix)
+    document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible') {
+            if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+                rd = 1000;
+                connect();
+            }
+        }
+    });
+
+    // Poll /api/conntrack for the full entry tables (only when NAT tab is active).
+    // The WebSocket sends a lightweight conntrack summary without entry arrays.
+    function _pollNATEntries() {
+        fetch('/api/conntrack').then(function(r) { return r.json(); }).then(function(data) {
+            if (data && _activeTab === 'nat') {
+                _lastConntrack = _lastConntrack || {};
+                _lastConntrack.ipv4_entries = data.ipv4_entries || [];
+                _lastConntrack.ipv6_entries = data.ipv6_entries || [];
+                renderNATEntries(_lastConntrack);
+            }
+        }).catch(function() {});
     }
 
     function process(d) {
