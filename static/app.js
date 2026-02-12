@@ -1774,4 +1774,20 @@
     }
 
     connect();
+
+    // Safari keeps WebSocket connections alive across Cmd+R reloads.
+    // With a ~6-connection-per-origin limit, the lingering WS plus the
+    // HTTP requests for the new page exhaust the pool, causing the new
+    // WS upgrade to hang forever.  Explicitly closing the WS on page
+    // unload frees the connection slot before the reload starts.
+    // Using both pagehide (reliable in Safari) and beforeunload (works
+    // in all other browsers) for maximum coverage.
+    function _teardownWS() {
+        if (ws) {
+            ws.onclose = null;  // prevent reconnect attempt during unload
+            ws.close();
+        }
+    }
+    window.addEventListener('pagehide', _teardownWS);
+    window.addEventListener('beforeunload', _teardownWS);
 })();
