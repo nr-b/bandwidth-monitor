@@ -622,6 +622,7 @@
 
     var ws, rd = 1000;
     var _connectTimer = null;
+    var _reconnectTimer = null;
     var _activeTab = 'traffic';
     var _natPollTimer = null;
 
@@ -1166,8 +1167,18 @@
     }
 
     function connect() {
-        // Clear any previous connection timeout
+        // Cancel pending timers from previous connection attempt
         if (_connectTimer) { clearTimeout(_connectTimer); _connectTimer = null; }
+        if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+
+        // Clean up previous WebSocket so orphaned callbacks can't
+        // corrupt shared state (ws, rd, timers) or leak connections.
+        if (ws) {
+            ws.onopen = ws.onclose = ws.onerror = ws.onmessage = null;
+            if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+                ws.close();
+            }
+        }
 
         var p = location.protocol === 'https:' ? 'wss:' : 'ws:';
         ws = new WebSocket(p + '//' + location.host + '/api/ws');
@@ -1188,7 +1199,7 @@
         ws.onclose = function() {
             document.getElementById('statusDot').className = 'status-dot error';
             document.getElementById('statusText').textContent = 'Reconnecting';
-            setTimeout(connect, rd);
+            _reconnectTimer = setTimeout(connect, rd);
             rd = Math.min(rd * 1.5, 10000);
         };
         ws.onerror = function() { ws.close(); };
