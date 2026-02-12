@@ -2,7 +2,7 @@
 
 A real-time network monitoring dashboard for Linux, written in Go. 
 
-Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Home or NextDNS), UniFi wireless monitoring, GeoIP enrichment, and a macOS menu bar plugin.
+Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Home, NextDNS, or Pi-hole), UniFi wireless monitoring, GeoIP enrichment, and a macOS menu bar plugin.
 
 ## Features
 
@@ -20,7 +20,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 - **Reverse DNS** — resolves IPs to hostnames with in-memory cache
 
 ### DNS Tab
-- **AdGuard Home or NextDNS integration** — total queries, blocked count/percentage, average latency
+- **AdGuard Home, NextDNS, or Pi-hole integration** — total queries, blocked count/percentage, average latency
 - **Time-series charts** — queries and blocked requests over time
 - **Top clients, domains, and blocked domains** — pie charts + ranked detail tables
 - **Upstream DNS servers** — response counts and average latency
@@ -120,6 +120,8 @@ chmod 0600 /opt/bandwidth-monitor/.env
 | `ADGUARD_PASS` | | AdGuard Home password |
 | `NEXTDNS_PROFILE` | *(disabled)* | NextDNS profile ID (e.g. `abc123`) |
 | `NEXTDNS_API_KEY` | | NextDNS API key (from [my.nextdns.io/account](https://my.nextdns.io/account)) |
+| `PIHOLE_URL` | *(disabled)* | Pi-hole base URL (e.g. `http://pi.hole`) |
+| `PIHOLE_PASSWORD` | | Pi-hole password or app password |
 | `UNIFI_URL` | *(disabled)* | UniFi controller URL (e.g. `https://unifi.example.net:8443`) |
 | `UNIFI_USER` | | UniFi controller username |
 | `UNIFI_PASS` | | UniFi controller password |
@@ -129,7 +131,7 @@ chmod 0600 /opt/bandwidth-monitor/.env
 | `SPAN_DEVICE` | *(disabled)* | SPAN/mirror port interface for direction-aware RX/TX (requires `LOCAL_NETS`; e.g. `eth1`) |
 | `SPEEDTEST_SERVER` | `https://speed.ffmuc.net` | Target server URL for the speed test tab |
 
-The DNS tab supports either **AdGuard Home** or **NextDNS** (mutually exclusive; AdGuard takes priority if both are configured). The WiFi tab is only shown when UniFi is configured. The NAT tab appears automatically when the `nf_conntrack` kernel module is loaded and the process has `CAP_NET_ADMIN`.
+The DNS tab supports **AdGuard Home**, **NextDNS**, or **Pi-hole** (mutually exclusive; first configured wins in that order). The WiFi tab is only shown when UniFi is configured. The NAT tab appears automatically when the `nf_conntrack` kernel module is loaded and the process has `CAP_NET_ADMIN`.
 
 The UniFi integration auto-detects both legacy controllers (port 8443) and UniFi OS devices (UDM/UDR/CloudKey Gen2+, port 443).
 
