@@ -120,7 +120,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 
 ### General
 
-- **WebSocket live updates** — 1-second refresh with automatic reconnection
+- **Server-Sent Events (SSE) live updates** — 1-second refresh with automatic reconnection
 - **Dark/light/auto theme** — saved to localStorage
 - **Fully embedded UI** — all HTML/CSS/JS baked into the binary via `go:embed`
 - **macOS menu bar plugin** — SwiftBar/xbar script showing live stats
@@ -428,7 +428,7 @@ conntrack/                → netlink-based conntrack (NAT) table reader via ti-
 talkers/                  → pcap packet capture, per-IP tracking, 1-min bucket aggregation
 speedtest/                → HTTP-based speed test client (download/upload/ping against OpenSpeedTest servers)
 debug/                    → traceroute (native ICMP), DNS checker (multi-server), resolver leak detection
-handler/                  → HTTP REST API + WebSocket handler
+handler/                  → HTTP REST API + SSE streaming handler
 dns/                      → common DNS provider interface
 adguard/                  → AdGuard Home API client (stats, top clients/domains)
 nextdns/                  → NextDNS API client (stats, top clients/domains)
@@ -437,7 +437,7 @@ unifi/                    → UniFi controller API client (APs, SSIDs, clients, 
 geoip/                    → MaxMind MMDB GeoIP lookups (country, ASN)
 static/
   index.html              → HTML shell with six tabs (Traffic, NAT, DNS, WiFi, Speed Test, Debug)
-  app.js                  → all frontend JavaScript (charts, tables, WebSocket)
+  app.js                  → all frontend JavaScript (charts, tables, SSE client)
   style.css               → full stylesheet (dark/light themes)
 swiftbar/                 → macOS menu bar plugin
 packaging/
@@ -472,7 +472,7 @@ Makefile                  → build, install, GeoIP download targets
 | `/api/debug/traceroute` | POST | ICMP traceroute with SSE progress; params: `target`, `count` (probes/hop), `maxttl` |
 | `/api/debug/dns` | GET | DNS check against 14 servers + resolver leak test; params: `domain`, `type` |
 | `/api/summary` | GET | Compact summary for menu bar clients |
-| `/api/ws` | WS | WebSocket — pushes all data every second |
+| `/api/events` | GET | SSE stream — pushes all data every second (Server-Sent Events) |
 
 ---
 

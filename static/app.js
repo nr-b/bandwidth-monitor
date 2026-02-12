@@ -1170,7 +1170,7 @@
         if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
         if (ws) { ws.close(); ws = null; }
 
-        // Use Server-Sent Events instead of WebSocket.
+        // Use Server-Sent Events (SSE) for the live data stream.
         // SSE uses plain HTTP — no upgrade handshake, no Safari
         // connection-pool issues, built-in auto-reconnect.
         ws = new EventSource('/api/events');
@@ -1206,7 +1206,7 @@
     });
 
     // Poll /api/conntrack for the full entry tables (only when NAT tab is active).
-    // The WebSocket sends a lightweight conntrack summary without entry arrays.
+    // The SSE stream sends a lightweight conntrack summary without entry arrays.
     function _pollNATEntries() {
         fetch('/api/conntrack').then(function(r) { return r.json(); }).then(function(data) {
             if (data && _activeTab === 'nat') {

@@ -3,7 +3,6 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"sync"
@@ -16,13 +15,7 @@ import (
 	"bandwidth-monitor/speedtest"
 	"bandwidth-monitor/talkers"
 	"bandwidth-monitor/unifi"
-
-	"github.com/gorilla/websocket"
 )
-
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
 
 func InterfaceStats(c *collector.Collector) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -356,11 +349,11 @@ func DebugDNS() http.HandlerFunc {
 	}
 }
 
-// buildWSPayload assembles the lightweight payload sent over WebSocket.
+// buildPayload assembles the lightweight payload sent over SSE.
 // Conntrack entry tables (ipv4_entries/ipv6_entries) are excluded to keep
 // messages small (~5 KB instead of ~150 KB); the full data is available
 // via the /api/conntrack REST endpoint.
-func buildWSPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.Client, ct *conntrack.Tracker) map[string]interface{} {
+func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.Client, ct *conntrack.Tracker) map[string]interface{} {
 	payload := map[string]interface{}{
 		"interfaces":    c.GetAll(),
 		"sparklines":    c.GetSparklines(5*time.Minute, 50),
@@ -390,10 +383,9 @@ func buildWSPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider,
 	return payload
 }
 
-// SSE streams the same lightweight payload as the WebSocket endpoint
-// but uses Server-Sent Events over plain HTTP.  This avoids Safari's
-// problematic WebSocket connection management (upgrade handshake,
-// per-origin connection limits, missing teardown on reload).
+// SSE streams a lightweight JSON payload every second using Server-Sent Events.
+// SSE uses plain HTTP — no upgrade handshake, no per-origin connection pool
+// issues, and built-in auto-reconnect in the browser's EventSource API.
 func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.Client, ct *conntrack.Tracker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		flusher, ok := w.(http.Flusher)
@@ -408,7 +400,7 @@ func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.
 		w.Header().Set("X-Accel-Buffering", "no")
 
 		// Send initial payload immediately.
-		data, err := json.Marshal(buildWSPayload(c, t, dp, uf, ct))
+		data, err := json.Marshal(buildPayload(c, t, dp, uf, ct))
 		if err != nil {
 			return
 		}
@@ -423,7 +415,7 @@ func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.
 			case <-r.Context().Done():
 				return
 			case <-ticker.C:
-				data, err := json.Marshal(buildWSPayload(c, t, dp, uf, ct))
+				data, err := json.Marshal(buildPayload(c, t, dp, uf, ct))
 				if err != nil {
 					continue
 				}
@@ -432,100 +424,6 @@ func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.
 					return
 				}
 				flusher.Flush()
-			}
-		}
-	}
-}
-
-func WebSocket(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.Client, ct *conntrack.Tracker) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			log.Printf("websocket upgrade: %v", err)
-			return
-		}
-		defer conn.Close()
-
-		// Read pump — drain incoming messages so the connection
-		// can process control frames (close, ping/pong).
-		doneCh := make(chan struct{})
-		go func() {
-			defer close(doneCh)
-			conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-			conn.SetPongHandler(func(string) error {
-				conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-				return nil
-			})
-			for {
-				if _, _, err := conn.ReadMessage(); err != nil {
-					return
-				}
-			}
-		}()
-
-		ticker := time.NewTicker(1 * time.Second)
-		defer ticker.Stop()
-
-		pingTicker := time.NewTicker(30 * time.Second)
-		defer pingTicker.Stop()
-
-		// All writes go through sendCh to avoid concurrent writes on the
-		// websocket connection (gorilla/websocket is not safe for concurrent writers).
-		// A nil payload signals a ping; a non-nil payload is a JSON message.
-		sendCh := make(chan map[string]interface{}, 1)
-
-		// Writer goroutine — serialises all writes to the connection.
-		writerDone := make(chan struct{})
-		go func() {
-			defer close(writerDone)
-			for msg := range sendCh {
-				if msg == nil {
-					// Ping
-					conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-					if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-						return
-					}
-				} else {
-					conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-					if err := conn.WriteJSON(msg); err != nil {
-						return
-					}
-				}
-			}
-		}()
-
-		// Send initial payload immediately so the client doesn't have to
-		// wait up to 1 s for the first ticker fire. Safari in particular
-		// may appear stuck at "Connecting" until the first data arrives.
-		sendCh <- buildWSPayload(c, t, dp, uf, ct)
-
-		for {
-			select {
-			case <-doneCh:
-				close(sendCh)
-				return
-			case <-writerDone:
-				return
-			case <-pingTicker.C:
-				// Route ping through writer goroutine to avoid concurrent writes
-				select {
-				case sendCh <- nil:
-				default:
-					// Writer is backed up — skip ping, the write timeout will catch dead connections
-				}
-			case <-ticker.C:
-				payload := buildWSPayload(c, t, dp, uf, ct)
-				// Non-blocking send: drop the old message if backed up
-				select {
-				case sendCh <- payload:
-				default:
-					// Channel full — drain stale message, enqueue fresh one
-					select {
-					case <-sendCh:
-					default:
-					}
-					sendCh <- payload
-				}
 			}
 		}
 	}

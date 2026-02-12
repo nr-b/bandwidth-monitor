@@ -199,7 +199,6 @@ func main() {
 	mux.HandleFunc("/api/debug/traceroute", handler.DebugTraceroute())
 	mux.HandleFunc("/api/debug/dns", handler.DebugDNS())
 	mux.HandleFunc("/api/summary", handler.MenuBarSummary(statsCollector, talkerTracker, dnsProvider, unifiClient, conntrackTracker))
-	mux.HandleFunc("/api/ws", handler.WebSocket(statsCollector, talkerTracker, dnsProvider, unifiClient, conntrackTracker))
 	mux.HandleFunc("/api/events", handler.SSE(statsCollector, talkerTracker, dnsProvider, unifiClient, conntrackTracker))
 	staticSub, err := fs.Sub(staticFiles, "static")
 	if err != nil {
