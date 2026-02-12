@@ -1191,16 +1191,22 @@
         }, 2000);
 
         ws.onopen = function() {
-            if (_connectTimer) { clearTimeout(_connectTimer); _connectTimer = null; }
-            rd = 1000;
-            document.getElementById('statusDot').className = 'status-dot';
-            document.getElementById('statusText').textContent = 'Live';
+            // Safari may not repaint after DOM mutations in WebSocket callbacks.
+            // Deferring to a setTimeout(0) macrotask ensures a paint cycle runs.
+            setTimeout(function() {
+                if (_connectTimer) { clearTimeout(_connectTimer); _connectTimer = null; }
+                rd = 1000;
+                document.getElementById('statusDot').className = 'status-dot';
+                document.getElementById('statusText').textContent = 'Live';
+            }, 0);
         };
         ws.onclose = function() {
-            document.getElementById('statusDot').className = 'status-dot error';
-            document.getElementById('statusText').textContent = 'Reconnecting';
-            _reconnectTimer = setTimeout(connect, rd);
-            rd = Math.min(rd * 1.5, 10000);
+            setTimeout(function() {
+                document.getElementById('statusDot').className = 'status-dot error';
+                document.getElementById('statusText').textContent = 'Reconnecting';
+                _reconnectTimer = setTimeout(connect, rd);
+                rd = Math.min(rd * 1.5, 10000);
+            }, 0);
         };
         ws.onerror = function() { ws.close(); };
         ws.onmessage = function(e) {
@@ -1208,7 +1214,8 @@
                 var d = JSON.parse(e.data);
                 // Discard stale messages (e.g. buffered during hibernate)
                 if (d.timestamp && (Date.now() - d.timestamp) > 5000) return;
-                process(d);
+                // Defer to macrotask so Safari triggers a repaint after DOM updates.
+                setTimeout(function() { process(d); }, 0);
             } catch(ex) { console.error(ex); }
         };
     }
