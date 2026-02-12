@@ -1183,12 +1183,12 @@
         var p = location.protocol === 'https:' ? 'wss:' : 'ws:';
         ws = new WebSocket(p + '//' + location.host + '/api/ws');
 
-        // Safari fix: if the WebSocket doesn't open within 5 s, close and retry.
+        // Safari fix: if the WebSocket doesn't open within 2 s, close and retry.
         _connectTimer = setTimeout(function() {
             if (ws && ws.readyState !== WebSocket.OPEN) {
                 ws.close();
             }
-        }, 5000);
+        }, 2000);
 
         ws.onopen = function() {
             if (_connectTimer) { clearTimeout(_connectTimer); _connectTimer = null; }
