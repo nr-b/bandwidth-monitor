@@ -30,7 +30,6 @@
 
     // ── Tab navigation ──
     window._switchTab = function(tab) {
-        _activeTab = tab;
         var panels = { traffic: 'tabTraffic', nat: 'tabNat', dns: 'tabDns', wifi: 'tabWifi', speedtest: 'tabSpeedtest', debug: 'tabDebug' };
         for (var k in panels) {
             var p = document.getElementById(panels[k]);
@@ -612,9 +611,7 @@
         tb.innerHTML = h;
     }
 
-    var ws, rd = 1000;
-    var _reconnectTimer = null;
-    var _activeTab = 'traffic';
+    var sse = null;
 
     // DNS mini-bar charts
     function makeBarChart(canvasId, color) {
@@ -1152,40 +1149,31 @@
     }
 
     function connect() {
-        // Clean up previous connection
-        if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
-        if (ws) { ws.close(); ws = null; }
+        if (sse) { sse.close(); sse = null; }
 
-        // Use Server-Sent Events (SSE) for the live data stream.
-        // SSE uses plain HTTP — no upgrade handshake, no Safari
-        // connection-pool issues, built-in auto-reconnect.
-        ws = new EventSource('/api/events');
+        sse = new EventSource('/api/events');
 
-        ws.onopen = function() {
-            rd = 1000;
+        sse.onopen = function() {
             document.getElementById('statusDot').className = 'status-dot';
             document.getElementById('statusText').textContent = 'Live';
         };
-        ws.onerror = function() {
+        sse.onerror = function() {
             document.getElementById('statusDot').className = 'status-dot error';
             document.getElementById('statusText').textContent = 'Reconnecting';
         };
-        ws.onmessage = function(e) {
+        sse.onmessage = function(e) {
             try {
                 var d = JSON.parse(e.data);
                 if (d.timestamp && (Date.now() - d.timestamp) > 5000) return;
                 process(d);
-                // If status was reconnecting, update it now that we have data
-                document.getElementById('statusDot').className = 'status-dot';
-                document.getElementById('statusText').textContent = 'Live';
             } catch(ex) { console.error(ex); }
         };
     }
 
-    // Reconnect when the page becomes visible again
+    // Reconnect when the page becomes visible (e.g. after laptop sleep)
     document.addEventListener('visibilitychange', function() {
         if (document.visibilityState === 'visible') {
-            if (!ws || ws.readyState === EventSource.CLOSED) {
+            if (!sse || sse.readyState === EventSource.CLOSED) {
                 connect();
             }
         }
