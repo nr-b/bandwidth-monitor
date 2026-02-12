@@ -386,6 +386,11 @@ func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, u
 // SSE streams a lightweight JSON payload every second using Server-Sent Events.
 // SSE uses plain HTTP — no upgrade handshake, no per-origin connection pool
 // issues, and built-in auto-reconnect in the browser's EventSource API.
+//
+// A dedicated writer goroutine drains a 1-slot channel.  If the client is
+// backed up (e.g. hibernating laptop, congested link), only the most recent
+// payload is kept — preventing kernel send-buffer buildup (same backpressure
+// logic that PR #18 added to the old WebSocket handler).
 func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.Client, ct *conntrack.Tracker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		flusher, ok := w.(http.Flusher)
@@ -399,13 +404,30 @@ func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.
 		w.Header().Set("Connection", "keep-alive")
 		w.Header().Set("X-Accel-Buffering", "no")
 
+		// Non-blocking write channel: the ticker produces payloads and a
+		// dedicated writer goroutine drains them.  If the client is backed
+		// up, only the most recent payload is kept.
+		sendCh := make(chan []byte, 1)
+
+		// Writer goroutine — serialises all writes to the response.
+		writerDone := make(chan struct{})
+		go func() {
+			defer close(writerDone)
+			for data := range sendCh {
+				if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+					return
+				}
+				flusher.Flush()
+			}
+		}()
+
 		// Send initial payload immediately.
 		data, err := json.Marshal(buildPayload(c, t, dp, uf, ct))
 		if err != nil {
+			close(sendCh)
 			return
 		}
-		fmt.Fprintf(w, "data: %s\n\n", data)
-		flusher.Flush()
+		sendCh <- data
 
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
@@ -413,17 +435,26 @@ func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.
 		for {
 			select {
 			case <-r.Context().Done():
+				close(sendCh)
+				return
+			case <-writerDone:
 				return
 			case <-ticker.C:
 				data, err := json.Marshal(buildPayload(c, t, dp, uf, ct))
 				if err != nil {
 					continue
 				}
-				_, err = fmt.Fprintf(w, "data: %s\n\n", data)
-				if err != nil {
-					return
+				// Non-blocking send: drop the old message if backed up
+				select {
+				case sendCh <- data:
+				default:
+					// Channel full — drain stale message, enqueue fresh one
+					select {
+					case <-sendCh:
+					default:
+					}
+					sendCh <- data
 				}
-				flusher.Flush()
 			}
 		}
 	}
