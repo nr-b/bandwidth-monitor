@@ -21,6 +21,7 @@ import (
 	"bandwidth-monitor/geoip"
 	"bandwidth-monitor/handler"
 	"bandwidth-monitor/nextdns"
+	"bandwidth-monitor/pihole"
 	"bandwidth-monitor/speedtest"
 	"bandwidth-monitor/talkers"
 	"bandwidth-monitor/unifi"
@@ -102,6 +103,8 @@ func main() {
 	adguardPass := env("ADGUARD_PASS", "")
 	nextdnsProfile := env("NEXTDNS_PROFILE", "")
 	nextdnsAPIKey := env("NEXTDNS_API_KEY", "")
+	piholeURL := env("PIHOLE_URL", "")
+	piholePass := env("PIHOLE_PASSWORD", "")
 	unifiURL := env("UNIFI_URL", "")
 	unifiUser := env("UNIFI_USER", "")
 	unifiPass := env("UNIFI_PASS", "")
@@ -147,7 +150,7 @@ func main() {
 	talkerTracker := talkers.New(captureDevice, promiscuousBool, localNets, geoDB)
 	go talkerTracker.Run()
 
-	// DNS provider: AdGuard Home or NextDNS (mutually exclusive, AdGuard takes priority)
+	// DNS provider: AdGuard Home, NextDNS, or Pi-hole (mutually exclusive; first configured wins)
 	var dnsProvider dns.Provider
 	if adguardURL != "" {
 		ac := adguard.New(adguardURL, adguardUser, adguardPass, 10*time.Second)
@@ -159,6 +162,11 @@ func main() {
 		go nc.Run()
 		dnsProvider = nc
 		log.Printf("DNS integration: NextDNS (profile %s)", nextdnsProfile)
+	} else if piholeURL != "" {
+		pc := pihole.New(piholeURL, piholePass, 10*time.Second)
+		go pc.Run()
+		dnsProvider = pc
+		log.Printf("DNS integration: Pi-hole (%s)", piholeURL)
 	}
 
 	var unifiClient *unifi.Client
