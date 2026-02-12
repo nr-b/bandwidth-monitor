@@ -15,10 +15,11 @@ import (
 
 // Client polls ADGuard Home's REST API for DNS statistics.
 type Client struct {
-	baseURL  string
-	user     string
-	pass     string
-	interval time.Duration
+	baseURL    string
+	user       string
+	pass       string
+	interval   time.Duration
+	httpClient *http.Client
 
 	mu    sync.RWMutex
 	stats *Stats
@@ -53,11 +54,12 @@ type Stats struct {
 // baseURL should be like "http://adguard.example.local" (no trailing slash).
 func New(baseURL, user, pass string, pollInterval time.Duration) *Client {
 	return &Client{
-		baseURL:  baseURL,
-		user:     user,
-		pass:     pass,
-		interval: pollInterval,
-		stopCh:   make(chan struct{}),
+		baseURL:    baseURL,
+		user:       user,
+		pass:       pass,
+		interval:   pollInterval,
+		httpClient: &http.Client{Timeout: 10 * time.Second},
+		stopCh:     make(chan struct{}),
 	}
 }
 
@@ -96,8 +98,7 @@ func (c *Client) poll() {
 		req.SetBasicAuth(c.user, c.pass)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		log.Printf("adguard: fetch stats: %v", err)
 		return

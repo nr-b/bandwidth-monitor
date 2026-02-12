@@ -223,7 +223,13 @@ func main() {
 
 	log.Printf("Bandwidth Monitor starting on %s", listenAddr)
 	log.Printf("Open http://localhost%s in your browser", listenAddr)
-	if err := http.ListenAndServe(listenAddr, withSignature(mux)); err != nil {
+	srv := &http.Server{
+		Addr:              listenAddr,
+		Handler:           withSignature(mux),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }

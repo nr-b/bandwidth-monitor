@@ -114,9 +114,8 @@ func (t *Tracker) Stop() {
 }
 
 func (t *Tracker) TopByVolume(n int) []TalkerStat {
+	// Step 1: Copy raw data under lock
 	t.mu.RLock()
-	defer t.mu.RUnlock()
-
 	totals := make(map[string]*TalkerStat)
 	for _, b := range t.buckets {
 		for ip, acc := range b.hosts {
@@ -140,11 +139,11 @@ func (t *Tracker) TopByVolume(n int) []TalkerStat {
 			totals[ip].Packets += acc.packets
 		}
 	}
+	t.mu.RUnlock()
 
+	// Step 2: Sort + trim before enrichment to avoid unnecessary work
 	list := make([]TalkerStat, 0, len(totals))
 	for _, s := range totals {
-		s.Hostname = t.resolveIP(s.IP)
-		t.enrichGeo(s)
 		list = append(list, *s)
 	}
 	sort.Slice(list, func(i, j int) bool {
@@ -153,14 +152,20 @@ func (t *Tracker) TopByVolume(n int) []TalkerStat {
 	if len(list) > n {
 		list = list[:n]
 	}
+
+	// Step 3: Enrich outside lock — DNS resolution and GeoIP are expensive
+	for i := range list {
+		list[i].Hostname = t.resolveIP(list[i].IP)
+		t.enrichGeo(&list[i])
+	}
 	return list
 }
 
 func (t *Tracker) TopByBandwidth(n int) []TalkerStat {
+	// Step 1: Copy raw data under lock
 	t.mu.RLock()
-	defer t.mu.RUnlock()
-
 	if t.current == nil {
+		t.mu.RUnlock()
 		return nil
 	}
 
@@ -169,27 +174,44 @@ func (t *Tracker) TopByBandwidth(n int) []TalkerStat {
 		elapsed = 1
 	}
 
-	list := make([]TalkerStat, 0, len(t.current.hosts))
+	type rawEntry struct {
+		ip      string
+		bytes   uint64
+		rxBytes uint64
+		txBytes uint64
+		packets uint64
+	}
+	raw := make([]rawEntry, 0, len(t.current.hosts))
 	for ip, acc := range t.current.hosts {
-		s := TalkerStat{
-			IP:         ip,
-			Hostname:   t.resolveIP(ip),
-			TotalBytes: acc.bytes,
-			RxBytes:    acc.rxBytes,
-			TxBytes:    acc.txBytes,
-			RateBytes:  float64(acc.bytes) / elapsed,
-			RxRate:     float64(acc.rxBytes) / elapsed,
-			TxRate:     float64(acc.txBytes) / elapsed,
-			Packets:    acc.packets,
-		}
-		t.enrichGeo(&s)
-		list = append(list, s)
+		raw = append(raw, rawEntry{ip, acc.bytes, acc.rxBytes, acc.txBytes, acc.packets})
+	}
+	t.mu.RUnlock()
+
+	// Step 2: Build stats, sort, and trim before enrichment
+	list := make([]TalkerStat, 0, len(raw))
+	for _, r := range raw {
+		list = append(list, TalkerStat{
+			IP:         r.ip,
+			TotalBytes: r.bytes,
+			RxBytes:    r.rxBytes,
+			TxBytes:    r.txBytes,
+			RateBytes:  float64(r.bytes) / elapsed,
+			RxRate:     float64(r.rxBytes) / elapsed,
+			TxRate:     float64(r.txBytes) / elapsed,
+			Packets:    r.packets,
+		})
 	}
 	sort.Slice(list, func(i, j int) bool {
 		return list[i].RateBytes > list[j].RateBytes
 	})
 	if len(list) > n {
 		list = list[:n]
+	}
+
+	// Step 3: Enrich outside lock — DNS resolution and GeoIP are expensive
+	for i := range list {
+		list[i].Hostname = t.resolveIP(list[i].IP)
+		t.enrichGeo(&list[i])
 	}
 	return list
 }
@@ -352,6 +374,9 @@ func (t *Tracker) rotateBuckets() {
 	}
 }
 
+// dnsSem limits concurrent reverse DNS lookups to avoid goroutine explosion.
+var dnsSem = make(chan struct{}, 16)
+
 func (t *Tracker) resolveIP(ip string) string {
 	t.dnsCacheMu.RLock()
 	name, ok := t.dnsCache[ip]
@@ -371,20 +396,26 @@ func (t *Tracker) resolveIP(ip string) string {
 	t.dnsCache[ip] = ip
 	t.dnsCacheMu.Unlock()
 
-	// Resolve asynchronously
-	go func() {
-		names, err := net.LookupAddr(ip)
-		if err != nil || len(names) == 0 {
-			return
-		}
-		name := names[0]
-		if len(name) > 0 && name[len(name)-1] == '.' {
-			name = name[:len(name)-1]
-		}
-		t.dnsCacheMu.Lock()
-		t.dnsCache[ip] = name
-		t.dnsCacheMu.Unlock()
-	}()
+	// Resolve asynchronously with bounded concurrency
+	select {
+	case dnsSem <- struct{}{}:
+		go func() {
+			defer func() { <-dnsSem }()
+			names, err := net.LookupAddr(ip)
+			if err != nil || len(names) == 0 {
+				return
+			}
+			name := names[0]
+			if len(name) > 0 && name[len(name)-1] == '.' {
+				name = name[:len(name)-1]
+			}
+			t.dnsCacheMu.Lock()
+			t.dnsCache[ip] = name
+			t.dnsCacheMu.Unlock()
+		}()
+	default:
+		// Semaphore full — skip this lookup, will retry next time
+	}
 
 	return ip
 }
@@ -441,10 +472,8 @@ func (t *Tracker) GetCountryBreakdown() []CountryStat {
 		return nil
 	}
 
+	// Step 1: Copy raw data under lock
 	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	// Aggregate bytes per IP across all buckets
 	ipTotals := make(map[string]uint64)
 	for _, b := range t.buckets {
 		for ip, acc := range b.hosts {
@@ -456,8 +485,9 @@ func (t *Tracker) GetCountryBreakdown() []CountryStat {
 			ipTotals[ip] += acc.bytes
 		}
 	}
+	t.mu.RUnlock()
 
-	// Group by country
+	// Step 2: GeoIP enrichment outside lock
 	type countryAcc struct {
 		name  string
 		bytes uint64
@@ -526,9 +556,8 @@ func (t *Tracker) GetASNBreakdown() []ASNStat {
 		return nil
 	}
 
+	// Step 1: Copy raw data under lock
 	t.mu.RLock()
-	defer t.mu.RUnlock()
-
 	ipTotals := make(map[string]uint64)
 	for _, b := range t.buckets {
 		for ip, acc := range b.hosts {
@@ -540,7 +569,9 @@ func (t *Tracker) GetASNBreakdown() []ASNStat {
 			ipTotals[ip] += acc.bytes
 		}
 	}
+	t.mu.RUnlock()
 
+	// Step 2: GeoIP enrichment outside lock
 	type asnAcc struct {
 		org   string
 		bytes uint64
