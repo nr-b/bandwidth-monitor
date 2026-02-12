@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -387,6 +388,53 @@ func buildWSPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider,
 		}
 	}
 	return payload
+}
+
+// SSE streams the same lightweight payload as the WebSocket endpoint
+// but uses Server-Sent Events over plain HTTP.  This avoids Safari's
+// problematic WebSocket connection management (upgrade handshake,
+// per-origin connection limits, missing teardown on reload).
+func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.Client, ct *conntrack.Tracker) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+
+		// Send initial payload immediately.
+		data, err := json.Marshal(buildWSPayload(c, t, dp, uf, ct))
+		if err != nil {
+			return
+		}
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-ticker.C:
+				data, err := json.Marshal(buildWSPayload(c, t, dp, uf, ct))
+				if err != nil {
+					continue
+				}
+				_, err = fmt.Fprintf(w, "data: %s\n\n", data)
+				if err != nil {
+					return
+				}
+				flusher.Flush()
+			}
+		}
+	}
 }
 
 func WebSocket(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.Client, ct *conntrack.Tracker) http.HandlerFunc {

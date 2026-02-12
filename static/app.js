@@ -621,7 +621,6 @@
     }
 
     var ws, rd = 1000;
-    var _connectTimer = null;
     var _reconnectTimer = null;
     var _activeTab = 'traffic';
     var _natPollTimer = null;
@@ -1167,64 +1166,40 @@
     }
 
     function connect() {
-        // Cancel pending timers from previous connection attempt
-        if (_connectTimer) { clearTimeout(_connectTimer); _connectTimer = null; }
+        // Clean up previous connection
         if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+        if (ws) { ws.close(); ws = null; }
 
-        // Clean up previous WebSocket so orphaned callbacks can't
-        // corrupt shared state (ws, rd, timers) or leak connections.
-        if (ws) {
-            ws.onopen = ws.onclose = ws.onerror = ws.onmessage = null;
-            if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-                ws.close();
-            }
-        }
-
-        var p = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        ws = new WebSocket(p + '//' + location.host + '/api/ws');
-
-        // Safari fix: if the WebSocket doesn't open within 2 s, close and retry.
-        _connectTimer = setTimeout(function() {
-            if (ws && ws.readyState !== WebSocket.OPEN) {
-                ws.close();
-            }
-        }, 2000);
+        // Use Server-Sent Events instead of WebSocket.
+        // SSE uses plain HTTP — no upgrade handshake, no Safari
+        // connection-pool issues, built-in auto-reconnect.
+        ws = new EventSource('/api/events');
 
         ws.onopen = function() {
-            // Safari may not repaint after DOM mutations in WebSocket callbacks.
-            // Deferring to a setTimeout(0) macrotask ensures a paint cycle runs.
-            setTimeout(function() {
-                if (_connectTimer) { clearTimeout(_connectTimer); _connectTimer = null; }
-                rd = 1000;
-                document.getElementById('statusDot').className = 'status-dot';
-                document.getElementById('statusText').textContent = 'Live';
-            }, 0);
+            rd = 1000;
+            document.getElementById('statusDot').className = 'status-dot';
+            document.getElementById('statusText').textContent = 'Live';
         };
-        ws.onclose = function() {
-            setTimeout(function() {
-                document.getElementById('statusDot').className = 'status-dot error';
-                document.getElementById('statusText').textContent = 'Reconnecting';
-                _reconnectTimer = setTimeout(connect, rd);
-                rd = Math.min(rd * 1.5, 10000);
-            }, 0);
+        ws.onerror = function() {
+            document.getElementById('statusDot').className = 'status-dot error';
+            document.getElementById('statusText').textContent = 'Reconnecting';
         };
-        ws.onerror = function() { ws.close(); };
         ws.onmessage = function(e) {
             try {
                 var d = JSON.parse(e.data);
-                // Discard stale messages (e.g. buffered during hibernate)
                 if (d.timestamp && (Date.now() - d.timestamp) > 5000) return;
-                // Defer to macrotask so Safari triggers a repaint after DOM updates.
-                setTimeout(function() { process(d); }, 0);
+                process(d);
+                // If status was reconnecting, update it now that we have data
+                document.getElementById('statusDot').className = 'status-dot';
+                document.getElementById('statusText').textContent = 'Live';
             } catch(ex) { console.error(ex); }
         };
     }
 
-    // Reconnect when the page becomes visible again (Safari background tab fix)
+    // Reconnect when the page becomes visible again
     document.addEventListener('visibilitychange', function() {
         if (document.visibilityState === 'visible') {
-            if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
-                rd = 1000;
+            if (!ws || ws.readyState === EventSource.CLOSED) {
                 connect();
             }
         }
@@ -1781,20 +1756,4 @@
     }
 
     connect();
-
-    // Safari keeps WebSocket connections alive across Cmd+R reloads.
-    // With a ~6-connection-per-origin limit, the lingering WS plus the
-    // HTTP requests for the new page exhaust the pool, causing the new
-    // WS upgrade to hang forever.  Explicitly closing the WS on page
-    // unload frees the connection slot before the reload starts.
-    // Using both pagehide (reliable in Safari) and beforeunload (works
-    // in all other browsers) for maximum coverage.
-    function _teardownWS() {
-        if (ws) {
-            ws.onclose = null;  // prevent reconnect attempt during unload
-            ws.close();
-        }
-    }
-    window.addEventListener('pagehide', _teardownWS);
-    window.addEventListener('beforeunload', _teardownWS);
 })();
