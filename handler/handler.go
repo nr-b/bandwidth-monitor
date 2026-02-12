@@ -2,7 +2,7 @@ package handler
 
 import (
 	"encoding/json"
-	"log"
+	"fmt"
 	"net/http"
 	"strconv"
 	"sync"
@@ -15,13 +15,7 @@ import (
 	"bandwidth-monitor/speedtest"
 	"bandwidth-monitor/talkers"
 	"bandwidth-monitor/unifi"
-
-	"github.com/gorilla/websocket"
 )
-
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
 
 func InterfaceStats(c *collector.Collector) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -355,110 +349,104 @@ func DebugDNS() http.HandlerFunc {
 	}
 }
 
-func WebSocket(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.Client, ct *conntrack.Tracker) http.HandlerFunc {
+// buildPayload assembles the JSON payload sent over the SSE stream.
+func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.Client, ct *conntrack.Tracker) map[string]interface{} {
+	payload := map[string]interface{}{
+		"interfaces":    c.GetAll(),
+		"sparklines":    c.GetSparklines(5*time.Minute, 50),
+		"protocols":     t.GetProtocolBreakdown(),
+		"ip_versions":   t.GetIPVersionBreakdown(),
+		"countries":     t.GetCountryBreakdown(),
+		"asns":          t.GetASNBreakdown(),
+		"top_bandwidth": t.TopByBandwidth(10),
+		"top_volume":    t.TopByVolume(10),
+		"timestamp":     time.Now().UnixMilli(),
+	}
+	if dp != nil {
+		payload["dns"] = dp.GetSummary()
+	}
+	if uf != nil {
+		payload["wifi"] = uf.GetSummary()
+	}
+	if ct != nil {
+		if s := ct.GetSummary(); s != nil {
+			payload["conntrack"] = s
+		}
+	}
+	return payload
+}
+
+// SSE streams a lightweight JSON payload every second using Server-Sent Events.
+// SSE uses plain HTTP — no upgrade handshake, no per-origin connection pool
+// issues, and built-in auto-reconnect in the browser's EventSource API.
+//
+// A dedicated writer goroutine drains a 1-slot channel.  If the client is
+// backed up (e.g. hibernating laptop, congested link), only the most recent
+// payload is kept — preventing kernel send-buffer buildup (same backpressure
+// logic that PR #18 added to the old WebSocket handler).
+func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.Client, ct *conntrack.Tracker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			log.Printf("websocket upgrade: %v", err)
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
 			return
 		}
-		defer conn.Close()
 
-		// Read pump — drain incoming messages so the connection
-		// can process control frames (close, ping/pong).
-		doneCh := make(chan struct{})
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+
+		// Non-blocking write channel: the ticker produces payloads and a
+		// dedicated writer goroutine drains them.  If the client is backed
+		// up, only the most recent payload is kept.
+		sendCh := make(chan []byte, 1)
+
+		// Writer goroutine — serialises all writes to the response.
+		writerDone := make(chan struct{})
 		go func() {
-			defer close(doneCh)
-			conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-			conn.SetPongHandler(func(string) error {
-				conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-				return nil
-			})
-			for {
-				if _, _, err := conn.ReadMessage(); err != nil {
+			defer close(writerDone)
+			for data := range sendCh {
+				if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
 					return
 				}
+				flusher.Flush()
 			}
 		}()
+
+		// Send initial payload immediately.
+		data, err := json.Marshal(buildPayload(c, t, dp, uf, ct))
+		if err != nil {
+			close(sendCh)
+			return
+		}
+		sendCh <- data
 
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 
-		pingTicker := time.NewTicker(30 * time.Second)
-		defer pingTicker.Stop()
-
-		// All writes go through sendCh to avoid concurrent writes on the
-		// websocket connection (gorilla/websocket is not safe for concurrent writers).
-		// A nil payload signals a ping; a non-nil payload is a JSON message.
-		sendCh := make(chan map[string]interface{}, 1)
-
-		// Writer goroutine — serialises all writes to the connection.
-		writerDone := make(chan struct{})
-		go func() {
-			defer close(writerDone)
-			for msg := range sendCh {
-				if msg == nil {
-					// Ping
-					conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-					if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-						return
-					}
-				} else {
-					conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-					if err := conn.WriteJSON(msg); err != nil {
-						return
-					}
-				}
-			}
-		}()
-
 		for {
 			select {
-			case <-doneCh:
+			case <-r.Context().Done():
 				close(sendCh)
 				return
 			case <-writerDone:
 				return
-			case <-pingTicker.C:
-				// Route ping through writer goroutine to avoid concurrent writes
-				select {
-				case sendCh <- nil:
-				default:
-					// Writer is backed up — skip ping, the write timeout will catch dead connections
-				}
 			case <-ticker.C:
-				payload := map[string]interface{}{
-					"interfaces":    c.GetAll(),
-					"sparklines":    c.GetSparklines(5*time.Minute, 50),
-					"protocols":     t.GetProtocolBreakdown(),
-					"ip_versions":   t.GetIPVersionBreakdown(),
-					"countries":     t.GetCountryBreakdown(),
-					"asns":          t.GetASNBreakdown(),
-					"top_bandwidth": t.TopByBandwidth(10),
-					"top_volume":    t.TopByVolume(10),
-					"timestamp":     time.Now().UnixMilli(),
-				}
-				if dp != nil {
-					payload["dns"] = dp.GetSummary()
-				}
-				if uf != nil {
-					payload["wifi"] = uf.GetSummary()
-				}
-				if ct != nil {
-					if s := ct.GetSummary(); s != nil {
-						payload["conntrack"] = s
-					}
+				data, err := json.Marshal(buildPayload(c, t, dp, uf, ct))
+				if err != nil {
+					continue
 				}
 				// Non-blocking send: drop the old message if backed up
 				select {
-				case sendCh <- payload:
+				case sendCh <- data:
 				default:
 					// Channel full — drain stale message, enqueue fresh one
 					select {
 					case <-sendCh:
 					default:
 					}
-					sendCh <- payload
+					sendCh <- data
 				}
 			}
 		}

@@ -611,7 +611,7 @@
         tb.innerHTML = h;
     }
 
-    var ws, rd = 1000;
+    var sse = null;
 
     // DNS mini-bar charts
     function makeBarChart(canvasId, color) {
@@ -1149,29 +1149,35 @@
     }
 
     function connect() {
-        var p = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        ws = new WebSocket(p + '//' + location.host + '/api/ws');
-        ws.onopen = function() {
-            rd = 1000;
+        if (sse) { sse.close(); sse = null; }
+
+        sse = new EventSource('/api/events');
+
+        sse.onopen = function() {
             document.getElementById('statusDot').className = 'status-dot';
             document.getElementById('statusText').textContent = 'Live';
         };
-        ws.onclose = function() {
+        sse.onerror = function() {
             document.getElementById('statusDot').className = 'status-dot error';
             document.getElementById('statusText').textContent = 'Reconnecting';
-            setTimeout(connect, rd);
-            rd = Math.min(rd * 1.5, 10000);
         };
-        ws.onerror = function() { ws.close(); };
-        ws.onmessage = function(e) {
+        sse.onmessage = function(e) {
             try {
                 var d = JSON.parse(e.data);
-                // Discard stale messages (e.g. buffered during hibernate)
                 if (d.timestamp && (Date.now() - d.timestamp) > 5000) return;
                 process(d);
             } catch(ex) { console.error(ex); }
         };
     }
+
+    // Reconnect when the page becomes visible (e.g. after laptop sleep)
+    document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible') {
+            if (!sse || sse.readyState === EventSource.CLOSED) {
+                connect();
+            }
+        }
+    });
 
     function process(d) {
         var ifaces = d.interfaces || [], bw = d.top_bandwidth || [], vol = d.top_volume || [];
