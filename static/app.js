@@ -40,14 +40,6 @@
             t.classList.toggle('active', t.getAttribute('data-tab') === tab);
         });
         if (tab === 'speedtest' && !_stHistoryLoaded) loadSpeedTestHistory();
-        // Start/stop NAT entry polling based on active tab
-        if (tab === 'nat') {
-            _pollNATEntries();
-            if (!_natPollTimer) _natPollTimer = setInterval(_pollNATEntries, 5000);
-        } else if (_natPollTimer) {
-            clearInterval(_natPollTimer);
-            _natPollTimer = null;
-        }
     };
 
     function formatBytes(bytes, dec) {
@@ -623,7 +615,6 @@
     var ws, rd = 1000;
     var _reconnectTimer = null;
     var _activeTab = 'traffic';
-    var _natPollTimer = null;
 
     // DNS mini-bar charts
     function makeBarChart(canvasId, color) {
@@ -843,11 +834,6 @@
 
     function updateNAT(ct) {
         if (!ct) return;
-        // Preserve entry arrays fetched by REST poll – WS payloads omit them.
-        if (_lastConntrack) {
-            if (!ct.ipv4_entries && _lastConntrack.ipv4_entries) ct.ipv4_entries = _lastConntrack.ipv4_entries;
-            if (!ct.ipv6_entries && _lastConntrack.ipv6_entries) ct.ipv6_entries = _lastConntrack.ipv6_entries;
-        }
         _lastConntrack = ct;
         document.getElementById('natNoData').style.display = 'none';
         document.getElementById('natHasData').style.display = '';
@@ -1204,19 +1190,6 @@
             }
         }
     });
-
-    // Poll /api/conntrack for the full entry tables (only when NAT tab is active).
-    // The SSE stream sends a lightweight conntrack summary without entry arrays.
-    function _pollNATEntries() {
-        fetch('/api/conntrack').then(function(r) { return r.json(); }).then(function(data) {
-            if (data && _activeTab === 'nat') {
-                _lastConntrack = _lastConntrack || {};
-                _lastConntrack.ipv4_entries = data.ipv4_entries || [];
-                _lastConntrack.ipv6_entries = data.ipv6_entries || [];
-                renderNATEntries(_lastConntrack);
-            }
-        }).catch(function() {});
-    }
 
     function process(d) {
         var ifaces = d.interfaces || [], bw = d.top_bandwidth || [], vol = d.top_volume || [];

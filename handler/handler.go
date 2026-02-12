@@ -349,10 +349,7 @@ func DebugDNS() http.HandlerFunc {
 	}
 }
 
-// buildPayload assembles the lightweight payload sent over SSE.
-// Conntrack entry tables (ipv4_entries/ipv6_entries) are excluded to keep
-// messages small (~5 KB instead of ~150 KB); the full data is available
-// via the /api/conntrack REST endpoint.
+// buildPayload assembles the JSON payload sent over the SSE stream.
 func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.Client, ct *conntrack.Tracker) map[string]interface{} {
 	payload := map[string]interface{}{
 		"interfaces":    c.GetAll(),
@@ -373,11 +370,7 @@ func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, u
 	}
 	if ct != nil {
 		if s := ct.GetSummary(); s != nil {
-			// Send lightweight summary without the large entry arrays.
-			lite := *s
-			lite.IPv4Entries = nil
-			lite.IPv6Entries = nil
-			payload["conntrack"] = &lite
+			payload["conntrack"] = s
 		}
 	}
 	return payload
