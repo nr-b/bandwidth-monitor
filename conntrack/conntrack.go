@@ -58,10 +58,16 @@ type Entry struct {
 	TTL      int    `json:"ttl"`
 
 	// Original direction
-	OrigSrc   string `json:"orig_src"`
-	OrigDst   string `json:"orig_dst"`
-	OrigSPort string `json:"orig_sport,omitempty"`
-	OrigDPort string `json:"orig_dport,omitempty"`
+	OrigSrc     string `json:"orig_src"`
+	OrigDst     string `json:"orig_dst"`
+	OrigSPort   string `json:"orig_sport,omitempty"`
+	OrigDPort   string `json:"orig_dport,omitempty"`
+	OrigSrcHost string `json:"orig_src_host,omitempty"`
+	OrigSrcGeo  string `json:"orig_src_geo,omitempty"`
+	OrigSrcASN  string `json:"orig_src_asn,omitempty"`
+	OrigDstHost string `json:"orig_dst_host,omitempty"`
+	OrigDstGeo  string `json:"orig_dst_geo,omitempty"`
+	OrigDstASN  string `json:"orig_dst_asn,omitempty"`
 
 	// Reply direction
 	ReplSrc   string `json:"repl_src"`
@@ -314,6 +320,12 @@ func (t *Tracker) poll() {
 	if len(ipv6Entries) > maxEntries {
 		ipv6Entries = ipv6Entries[:maxEntries]
 	}
+
+	// Enrich the capped entry lists with reverse DNS + GeoIP.
+	// Uses the shared async resolver (cache-first) and GeoIP cache.
+	t.enrichEntries(ipv4Entries)
+	t.enrichEntries(ipv6Entries)
+
 	s.IPv4Entries = ipv4Entries
 	s.IPv6Entries = ipv6Entries
 
@@ -434,6 +446,46 @@ func (t *Tracker) enrichHosts(hosts []HostStat) {
 				hosts[i].CountryName = geo.CountryName
 				hosts[i].ASN = geo.ASN
 				hosts[i].ASOrg = geo.ASOrg
+			}
+		}
+	}
+}
+
+// enrichEntries adds reverse DNS hostnames and GeoIP to orig_src and orig_dst.
+// Uses async resolver (returns cached or raw IP) and GeoIP cache.
+func (t *Tracker) enrichEntries(entries []Entry) {
+	for i := range entries {
+		e := &entries[i]
+
+		// Reverse DNS for original source and destination
+		if t.dns != nil {
+			e.OrigSrcHost = t.dns.LookupAddrAsync(e.OrigSrc)
+			if e.OrigSrcHost == e.OrigSrc {
+				e.OrigSrcHost = ""
+			}
+			e.OrigDstHost = t.dns.LookupAddrAsync(e.OrigDst)
+			if e.OrigDstHost == e.OrigDst {
+				e.OrigDstHost = ""
+			}
+		}
+
+		// GeoIP for original source and destination
+		if t.geoDB != nil && t.geoDB.Available() {
+			if geo := t.geoDB.Lookup(e.OrigSrc); geo != nil {
+				if geo.Country != "" {
+					e.OrigSrcGeo = geo.Country
+				}
+				if geo.ASOrg != "" {
+					e.OrigSrcASN = fmt.Sprintf("AS%d %s", geo.ASN, geo.ASOrg)
+				}
+			}
+			if geo := t.geoDB.Lookup(e.OrigDst); geo != nil {
+				if geo.Country != "" {
+					e.OrigDstGeo = geo.Country
+				}
+				if geo.ASOrg != "" {
+					e.OrigDstASN = fmt.Sprintf("AS%d %s", geo.ASN, geo.ASOrg)
+				}
 			}
 		}
 	}
