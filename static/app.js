@@ -939,6 +939,10 @@
                        (e.orig_dst || '').indexOf(search) !== -1 ||
                        (e.repl_src || '').indexOf(search) !== -1 ||
                        (e.repl_dst || '').indexOf(search) !== -1 ||
+                       (e.orig_src_host || '').toLowerCase().indexOf(search) !== -1 ||
+                       (e.orig_dst_host || '').toLowerCase().indexOf(search) !== -1 ||
+                       (e.orig_dst_asn || '').toLowerCase().indexOf(search) !== -1 ||
+                       (e.orig_src_asn || '').toLowerCase().indexOf(search) !== -1 ||
                        (e.protocol || '').toLowerCase().indexOf(search) !== -1 ||
                        (e.state || '').toLowerCase().indexOf(search) !== -1 ||
                        (e.orig_sport || '').indexOf(search) !== -1 ||
@@ -970,11 +974,23 @@
             var replSrcHL = (e.repl_src !== e.orig_dst) ? ' style="color:var(--tx);font-weight:600"' : '';
             var replDstHL = (e.repl_dst !== e.orig_src) ? ' style="color:var(--rx);font-weight:600"' : '';
 
+            // Helper: render IP cell with optional enrichment below
+            function ipCell(addr, host, geo, asn, hlStyle) {
+                var s = '<td' + (hlStyle || '') + '><div style="font-family:JetBrains Mono,monospace;font-size:11px;white-space:nowrap">' + addr + '</div>';
+                var info = [];
+                if (host) info.push(host);
+                if (geo) info.push(countryFlag(geo) + ' ' + geo);
+                if (asn) info.push(asn);
+                if (info.length) s += '<div style="font-size:9px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px">' + info.join(' · ') + '</div>';
+                s += '</td>';
+                return s;
+            }
+
             h += '<tr>';
             h += '<td style="font-size:12px;font-weight:500">' + (e.protocol || '').toUpperCase() + '</td>';
             h += '<td>' + (e.state ? '<span class="nat-state-badge ' + stateClass + '">' + e.state + '</span>' : '<span style="color:var(--text-2)">—</span>') + '</td>';
-            h += '<td style="font-family:JetBrains Mono,monospace;font-size:11px;white-space:nowrap">' + origSrc + '</td>';
-            h += '<td style="font-family:JetBrains Mono,monospace;font-size:11px;white-space:nowrap">' + origDst + '</td>';
+            h += ipCell(origSrc, e.orig_src_host, e.orig_src_geo, e.orig_src_asn, '');
+            h += ipCell(origDst, e.orig_dst_host, e.orig_dst_geo, e.orig_dst_asn, '');
             h += '<td style="font-family:JetBrains Mono,monospace;font-size:11px;white-space:nowrap"' + replSrcHL + '>' + replSrc + '</td>';
             h += '<td style="font-family:JetBrains Mono,monospace;font-size:11px;white-space:nowrap"' + replDstHL + '>' + replDst + '</td>';
             h += '<td><span class="nat-badge ' + e.nat_type + '">' + (e.nat_type || 'none').toUpperCase() + '</span></td>';
