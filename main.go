@@ -23,6 +23,7 @@ import (
 	"bandwidth-monitor/dns"
 	"bandwidth-monitor/geoip"
 	"bandwidth-monitor/handler"
+	"bandwidth-monitor/latency"
 	"bandwidth-monitor/nextdns"
 	"bandwidth-monitor/omada"
 	"bandwidth-monitor/pihole"
@@ -217,6 +218,20 @@ func main() {
 	speedTester := speedtest.New(speedtestServer)
 	log.Printf("Speed test server: %s", speedtestServer)
 
+	// Latency monitor: continuous ICMP + HTTPS probes.
+	// LATENCY_TARGETS: comma-separated hostnames/IPs. Defaults to FFMUC + GitHub.
+	var latencyTargets []string
+	if raw := os.Getenv("LATENCY_TARGETS"); raw != "" {
+		for _, t := range strings.Split(raw, ",") {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				latencyTargets = append(latencyTargets, t)
+			}
+		}
+	}
+	latencyMonitor := latency.New(latencyTargets)
+	go latencyMonitor.Run()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/interfaces", handler.InterfaceStats(statsCollector))
 	mux.HandleFunc("/api/interfaces/history", handler.InterfaceHistory(statsCollector))
@@ -225,12 +240,13 @@ func main() {
 	mux.HandleFunc("/api/dns", handler.DNSSummary(dnsProvider))
 	mux.HandleFunc("/api/wifi", handler.WiFiSummary(wifiProvider))
 	mux.HandleFunc("/api/conntrack", handler.ConntrackSummary(conntrackTracker))
+	mux.HandleFunc("/api/latency", handler.LatencyStatus(latencyMonitor))
 	mux.HandleFunc("/api/speedtest/run", handler.SpeedTestRun(speedTester))
 	mux.HandleFunc("/api/speedtest/results", handler.SpeedTestResults(speedTester))
 	mux.HandleFunc("/api/debug/traceroute", handler.DebugTraceroute(dnsResolver))
 	mux.HandleFunc("/api/debug/dns", handler.DebugDNS())
 	mux.HandleFunc("/api/summary", handler.MenuBarSummary(statsCollector, talkerTracker, dnsProvider, wifiProvider, conntrackTracker))
-	mux.HandleFunc("/api/events", handler.SSE(statsCollector, talkerTracker, dnsProvider, wifiProvider, conntrackTracker))
+	mux.HandleFunc("/api/events", handler.SSE(statsCollector, talkerTracker, dnsProvider, wifiProvider, conntrackTracker, latencyMonitor))
 	staticSub, err := fs.Sub(staticFiles, "static")
 	if err != nil {
 		log.Fatalf("Failed to create sub filesystem: %v", err)
@@ -296,6 +312,7 @@ func main() {
 		wifiProvider.Stop()
 	}
 	conntrackTracker.Stop()
+	latencyMonitor.Stop()
 	dnsResolver.Stop()
 }
 

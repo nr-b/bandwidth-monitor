@@ -74,6 +74,8 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 - **IP version breakdown** — IPv4 vs IPv6 traffic split
 - **GeoIP enrichment** — country flags, ASN org names via MaxMind MMDB files
 - **Reverse DNS** — resolves IPs to hostnames via a shared resolver with TTL-based cache expiry and bounded concurrency
+- **Traffic world map** — live SVG map showing traffic flows by country, sized by volume, with animated flow lines to active destinations
+- **Latency monitor** — continuous ICMP + HTTPS probes against configurable targets (default: FFMUC anycast, GitHub) with rolling sparklines, RTT, jitter, and packet loss
 
 ### DNS Tab
 
@@ -339,6 +341,12 @@ The UniFi integration auto-detects both legacy controllers (port 8443) and UniFi
 |----------|---------|-------------|
 | `SPEEDTEST_SERVER` | `https://speed.ffmuc.net` | Target server URL for the speed test tab |
 
+#### Latency
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LATENCY_TARGETS` | `anycast01.ffmuc.net,anycast02.ffmuc.net,github.com` | Comma-separated hostnames/IPs to probe via ICMP and HTTPS |
+
 ### Tab Visibility
 
 - **DNS tab** — shown when AdGuard Home, NextDNS, or Pi-hole is configured
@@ -440,6 +448,7 @@ collector/                → netlink-based interface stats (RTM_GETLINK/RTM_GET
 conntrack/                → netlink-based conntrack (NAT) table reader via ti-mo/conntrack
 talkers/                  → pcap packet capture, per-IP tracking, 1-min bucket aggregation
 resolver/                 → shared reverse-DNS resolver with TTL-based cache and bounded concurrency
+latency/                  → continuous ICMP + HTTPS latency monitoring with rolling history
 speedtest/                → HTTP-based speed test client (download/upload/ping against OpenSpeedTest servers)
 debug/                    → traceroute (native ICMP), DNS checker (multi-server), resolver leak detection
 handler/                  → HTTP REST API + SSE streaming handler
@@ -482,6 +491,7 @@ Makefile                  → build, install, GeoIP download targets
 | `/api/talkers/volume` | GET | Top 10 by 24h volume |
 | `/api/dns` | GET | DNS summary (AdGuard Home, NextDNS, or Pi-hole) |
 | `/api/wifi` | GET | UniFi WiFi summary |
+| `/api/latency` | GET | Latency monitoring status (ICMP + HTTPS probes) |
 | `/api/conntrack` | GET | NAT / conntrack summary (connections, states, NAT types, entries) |
 | `/api/speedtest/run` | POST | Start a speed test; streams progress as SSE (Server-Sent Events) |
 | `/api/speedtest/results` | GET | Speed test history (last 50 results) and running status |

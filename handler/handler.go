@@ -12,6 +12,7 @@ import (
 	"bandwidth-monitor/conntrack"
 	"bandwidth-monitor/debug"
 	"bandwidth-monitor/dns"
+	"bandwidth-monitor/latency"
 	"bandwidth-monitor/resolver"
 	"bandwidth-monitor/speedtest"
 	"bandwidth-monitor/talkers"
@@ -76,6 +77,18 @@ func ConntrackSummary(ct *conntrack.Tracker) http.HandlerFunc {
 			return
 		}
 		json.NewEncoder(w).Encode(ct.GetSummary())
+	}
+}
+
+// LatencyStatus returns the current latency monitoring data.
+func LatencyStatus(lm *latency.Monitor) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if lm == nil {
+			w.Write([]byte("null"))
+			return
+		}
+		json.NewEncoder(w).Encode(lm.GetStatus())
 	}
 }
 
@@ -353,7 +366,7 @@ func DebugDNS() http.HandlerFunc {
 }
 
 // buildPayload assembles the JSON payload sent over the SSE stream.
-func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Provider, ct *conntrack.Tracker) map[string]interface{} {
+func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Provider, ct *conntrack.Tracker, lm *latency.Monitor) map[string]interface{} {
 	geo := t.GetGeoBreakdown()
 	payload := map[string]interface{}{
 		"interfaces":    c.GetAll(),
@@ -377,6 +390,9 @@ func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, w
 			payload["conntrack"] = s
 		}
 	}
+	if lm != nil {
+		payload["latency"] = lm.GetStatus()
+	}
 	return payload
 }
 
@@ -388,7 +404,7 @@ func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, w
 // backed up (e.g. hibernating laptop, congested link), only the most recent
 // payload is kept — preventing kernel send-buffer buildup (same backpressure
 // logic that PR #18 added to the old WebSocket handler).
-func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Provider, ct *conntrack.Tracker) http.HandlerFunc {
+func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Provider, ct *conntrack.Tracker, lm *latency.Monitor) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		flusher, ok := w.(http.Flusher)
 		if !ok {
@@ -419,7 +435,7 @@ func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Pr
 		}()
 
 		// Send initial payload immediately.
-		data, err := json.Marshal(buildPayload(c, t, dp, wp, ct))
+		data, err := json.Marshal(buildPayload(c, t, dp, wp, ct, lm))
 		if err != nil {
 			close(sendCh)
 			return
@@ -437,7 +453,7 @@ func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Pr
 			case <-writerDone:
 				return
 			case <-ticker.C:
-				data, err := json.Marshal(buildPayload(c, t, dp, wp, ct))
+				data, err := json.Marshal(buildPayload(c, t, dp, wp, ct, lm))
 				if err != nil {
 					continue
 				}

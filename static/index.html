@@ -138,6 +138,28 @@
             </div>
         </div>
 
+        <!-- World Traffic Map -->
+        <div class="card" id="worldMapSection" style="display:none;margin-bottom:16px">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">Traffic World Map</div>
+                    <div class="card-subtitle">Live traffic flows by country</div>
+                </div>
+            </div>
+            <div id="worldMapContainer" style="width:100%;aspect-ratio:2/1;position:relative;overflow:hidden"></div>
+        </div>
+
+        <!-- Latency Monitor -->
+        <div class="card" id="latencySection" style="display:none;margin-bottom:16px">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">Latency Monitor</div>
+                    <div class="card-subtitle">ICMP &amp; HTTPS probes</div>
+                </div>
+            </div>
+            <div id="latencyTargets" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;padding:12px"></div>
+        </div>
+
         <div class="two-col">
             <div class="card">
                 <div class="card-header">

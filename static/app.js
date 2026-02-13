@@ -994,6 +994,161 @@
         });
     });
 
+    // ── World Traffic Map ──
+    // Country centroids (ISO alpha-2 → [lat, lon]) for map visualization.
+    var countryCentroids = {"AF":[33,65],"AL":[41,20],"DZ":[28,3],"AO":[-12,17],"AR":[-34,-64],"AM":[40,45],"AU":[-25,134],"AT":[47,14],"AZ":[41,48],"BD":[24,90],"BY":[53,28],"BE":[51,4],"BJ":[9,2],"BO":[-17,-65],"BA":[44,18],"BW":[-22,24],"BR":[-10,-55],"BG":[43,25],"BF":[12,-2],"KH":[13,105],"CM":[6,12],"CA":[56,-96],"CF":[7,21],"TD":[15,19],"CL":[-30,-71],"CN":[35,105],"CO":[4,-72],"CD":[-3,24],"CG":[-1,15],"CR":[10,-84],"CI":[8,-5],"HR":[45,16],"CU":[22,-80],"CY":[35,33],"CZ":[50,15],"DK":[56,10],"DO":[19,-70],"EC":[-2,-78],"EG":[27,30],"SV":[14,-89],"EE":[59,26],"ET":[9,40],"FI":[64,26],"FR":[46,2],"GA":[0,12],"DE":[51,9],"GH":[8,-2],"GR":[39,22],"GT":[16,-90],"GN":[11,-12],"HT":[19,-72],"HN":[15,-87],"HU":[47,20],"IS":[65,-18],"IN":[21,78],"ID":[-5,120],"IR":[32,53],"IQ":[33,44],"IE":[53,-8],"IL":[31,35],"IT":[43,12],"JM":[18,-77],"JP":[36,138],"JO":[31,37],"KZ":[48,68],"KE":[-1,38],"KW":[29,48],"KG":[41,75],"LA":[18,105],"LV":[57,25],"LB":[34,36],"LY":[27,17],"LT":[56,24],"LU":[50,6],"MG":[-19,47],"MY":[4,109],"ML":[17,-4],"MX":[23,-102],"MD":[47,29],"MN":[48,106],"ME":[43,19],"MA":[32,-5],"MZ":[-18,35],"MM":[22,96],"NA":[-22,17],"NP":[28,84],"NL":[52,5],"NZ":[-41,174],"NI":[13,-85],"NE":[18,8],"NG":[10,8],"KP":[40,127],"NO":[62,10],"OM":[21,57],"PK":[30,70],"PA":[9,-80],"PY":[-23,-58],"PE":[-10,-76],"PH":[13,122],"PL":[52,20],"PT":[39,-8],"QA":[25,51],"RO":[46,25],"RU":[62,105],"RW":[-2,30],"SA":[24,45],"SN":[14,-14],"RS":[44,21],"SG":[1,104],"SK":[49,20],"SI":[46,15],"ZA":[-29,24],"KR":[36,128],"ES":[40,-4],"LK":[8,81],"SD":[13,30],"SE":[62,16],"CH":[47,8],"SY":[35,38],"TW":[24,121],"TJ":[39,69],"TZ":[-7,35],"TH":[15,101],"TN":[34,9],"TR":[39,35],"TM":[39,60],"UA":[49,32],"AE":[24,54],"GB":[54,-2],"US":[38,-97],"UY":[-33,-56],"UZ":[41,65],"VE":[8,-66],"VN":[16,108],"YE":[16,48],"ZM":[-14,28],"ZW":[-19,30]};
+
+    function updateWorldMap(countries, topBW) {
+        var sec = document.getElementById('worldMapSection');
+        if (!countries || !countries.length) { sec.style.display = 'none'; return; }
+        sec.style.display = '';
+
+        var container = document.getElementById('worldMapContainer');
+        var W = container.clientWidth || 800;
+        var H = Math.round(W / 2);
+
+        // Mercator-like projection (equirectangular)
+        function project(lat, lon) {
+            var x = (lon + 180) / 360 * W;
+            var y = (90 - lat) / 180 * H;
+            return [x, y];
+        }
+
+        var maxBytes = 1;
+        for (var i = 0; i < countries.length; i++) {
+            if (countries[i].bytes > maxBytes) maxBytes = countries[i].bytes;
+        }
+
+        var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:100%;background:var(--bg-2);border-radius:8px">';
+        // Draw grid lines
+        svg += '<g stroke="var(--text-3)" stroke-width="0.5" opacity="0.2">';
+        for (var lon = -180; lon <= 180; lon += 30) {
+            var gx = (lon + 180) / 360 * W;
+            svg += '<line x1="' + gx + '" y1="0" x2="' + gx + '" y2="' + H + '"/>';
+        }
+        for (var lat = -60; lat <= 80; lat += 30) {
+            var gy = (90 - lat) / 180 * H;
+            svg += '<line x1="0" y1="' + gy + '" x2="' + W + '" y2="' + gy + '"/>';
+        }
+        svg += '</g>';
+
+        // Draw country dots sized by traffic volume
+        for (var i = 0; i < countries.length; i++) {
+            var c = countries[i];
+            var cc = c.country;
+            if (!cc || !countryCentroids[cc]) continue;
+            var pos = project(countryCentroids[cc][0], countryCentroids[cc][1]);
+            var ratio = c.bytes / maxBytes;
+            var r = Math.max(4, Math.sqrt(ratio) * 28);
+            var opacity = 0.3 + ratio * 0.6;
+            svg += '<circle cx="' + pos[0] + '" cy="' + pos[1] + '" r="' + r + '" fill="var(--rx)" opacity="' + opacity.toFixed(2) + '">';
+            svg += '<title>' + countryFlag(cc) + ' ' + (c.country_name || cc) + ': ' + formatBytes(c.bytes) + ' (' + c.connections + ' IPs)</title>';
+            svg += '</circle>';
+        }
+
+        // Draw active flow lines from top bandwidth talkers
+        if (topBW && topBW.length) {
+            var center = project(50, 10); // approximate user location (Europe default)
+            svg += '<g stroke="var(--tx)" stroke-width="1" opacity="0.4">';
+            for (var i = 0; i < Math.min(topBW.length, 10); i++) {
+                var t = topBW[i];
+                if (!t.country || !countryCentroids[t.country]) continue;
+                var dest = project(countryCentroids[t.country][0], countryCentroids[t.country][1]);
+                var midX = (center[0] + dest[0]) / 2;
+                var midY = Math.min(center[1], dest[1]) - 20;
+                svg += '<path d="M' + center[0] + ',' + center[1] + ' Q' + midX + ',' + midY + ' ' + dest[0] + ',' + dest[1] + '" fill="none" stroke-dasharray="4,3">';
+                svg += '<animate attributeName="stroke-dashoffset" from="0" to="-14" dur="1s" repeatCount="indefinite"/>';
+                svg += '</path>';
+            }
+            svg += '</g>';
+        }
+
+        svg += '</svg>';
+        container.innerHTML = svg;
+    }
+
+    // ── Latency Monitor ──
+    function updateLatency(targets) {
+        var sec = document.getElementById('latencySection');
+        if (!targets || !targets.length) { sec.style.display = 'none'; return; }
+        sec.style.display = '';
+
+        var el = document.getElementById('latencyTargets');
+        var h = '';
+        for (var i = 0; i < targets.length; i++) {
+            var t = targets[i];
+            var statusColor = t.alive ? 'var(--success, #22c55e)' : 'var(--danger, #ef4444)';
+            var statusText = t.alive ? 'UP' : 'DOWN';
+
+            h += '<div style="background:var(--bg-2);border-radius:8px;padding:12px;border:1px solid var(--border)">';
+            h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+            h += '<div>';
+            h += '<div style="font-weight:600;font-size:13px">' + t.name + '</div>';
+            h += '<div style="font-size:11px;color:var(--text-2)">' + t.ip + '</div>';
+            h += '</div>';
+            h += '<div style="display:flex;align-items:center;gap:6px">';
+            h += '<span style="width:8px;height:8px;border-radius:50%;background:' + statusColor + ';display:inline-block"></span>';
+            h += '<span style="font-size:11px;font-weight:600;color:' + statusColor + '">' + statusText + '</span>';
+            h += '</div></div>';
+
+            // Stats row
+            h += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:8px;font-size:11px">';
+            h += '<div><div style="color:var(--text-2)">RTT</div><div style="font-variant-numeric:tabular-nums">' + (t.rtt_ms >= 0 ? t.rtt_ms.toFixed(1) + ' ms' : '—') + '</div></div>';
+            h += '<div><div style="color:var(--text-2)">Avg</div><div style="font-variant-numeric:tabular-nums">' + (t.avg_rtt_ms > 0 ? t.avg_rtt_ms.toFixed(1) + ' ms' : '—') + '</div></div>';
+            h += '<div><div style="color:var(--text-2)">Jitter</div><div style="font-variant-numeric:tabular-nums">' + (t.jitter_ms > 0 ? t.jitter_ms.toFixed(1) + ' ms' : '—') + '</div></div>';
+            h += '<div><div style="color:var(--text-2)">Loss</div><div style="font-variant-numeric:tabular-nums;color:' + (t.loss_pct > 0 ? 'var(--danger)' : 'inherit') + '">' + t.loss_pct.toFixed(1) + '%</div></div>';
+            h += '</div>';
+
+            // Mini sparkline for ICMP
+            if (t.icmp && t.icmp.length > 1) {
+                h += '<div style="margin-bottom:4px">';
+                h += '<div style="font-size:10px;color:var(--text-2);margin-bottom:2px">ICMP</div>';
+                h += renderLatencySparkline(t.icmp, 'var(--rx)');
+                h += '</div>';
+            }
+            // Mini sparkline for HTTPS
+            if (t.https && t.https.length > 1) {
+                h += '<div>';
+                h += '<div style="font-size:10px;color:var(--text-2);margin-bottom:2px">HTTPS</div>';
+                h += renderLatencySparkline(t.https, 'var(--tx)');
+                h += '</div>';
+            }
+
+            h += '</div>';
+        }
+        el.innerHTML = h;
+    }
+
+    function renderLatencySparkline(points, color) {
+        var W = 280, H = 32;
+        var maxRTT = 1;
+        for (var i = 0; i < points.length; i++) {
+            if (points[i].rtt > maxRTT) maxRTT = points[i].rtt;
+        }
+        maxRTT = Math.max(maxRTT, 5); // minimum 5ms scale
+
+        var path = '';
+        var dots = '';
+        for (var i = 0; i < points.length; i++) {
+            var x = (i / (points.length - 1)) * W;
+            if (points[i].rtt < 0) {
+                // Packet loss: red dot at bottom
+                dots += '<circle cx="' + x + '" cy="' + (H - 1) + '" r="1.5" fill="var(--danger, #ef4444)"/>';
+                continue;
+            }
+            var y = H - (points[i].rtt / maxRTT) * (H - 4) - 2;
+            path += (path ? ' L' : 'M') + x.toFixed(1) + ',' + y.toFixed(1);
+        }
+
+        var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:' + H + 'px">';
+        if (path) {
+            svg += '<path d="' + path + '" fill="none" stroke="' + color + '" stroke-width="1.5" stroke-linejoin="round"/>';
+        }
+        svg += dots;
+        svg += '</svg>';
+        return svg;
+    }
+
     // ── WiFi ──
     function updateWiFi(wifi) {
         if (!wifi) return;
@@ -1232,6 +1387,8 @@
         updateIPVersions(d.ip_versions);
         updateCountries(d.countries);
         updateASNs(d.asns);
+        updateWorldMap(d.countries, d.top_bandwidth);
+        updateLatency(d.latency);
         renderTalkers('bwTable', bw, 'rate_bytes', formatRate, 'bw');
         renderTalkers('volTable', vol, 'total_bytes', formatBytes, 'vol');
         updateDNS(d.dns || null);
