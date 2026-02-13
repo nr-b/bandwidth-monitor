@@ -178,7 +178,7 @@ func main() {
 		log.Printf("UniFi controller integration enabled: %s", unifiURL)
 	}
 
-	conntrackTracker := conntrack.New(localNets)
+	conntrackTracker := conntrack.New(localNets, geoDB)
 	go conntrackTracker.Run()
 	log.Println("Conntrack (NAT) tracking enabled")
 
@@ -243,7 +243,11 @@ func main() {
 	}()
 
 	log.Printf("Bandwidth Monitor starting on %s", listenAddr)
-	log.Printf("Open http://localhost%s in your browser", listenAddr)
+	if strings.HasPrefix(listenAddr, ":") {
+		log.Printf("Open http://localhost%s in your browser", listenAddr)
+	} else {
+		log.Printf("Open http://%s in your browser", listenAddr)
+	}
 	srv := &http.Server{
 		Addr:              listenAddr,
 		Handler:           withSignature(mux),

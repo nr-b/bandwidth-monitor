@@ -910,8 +910,15 @@
         for (var i = 0; i < hosts.length; i++) {
             var host = hosts[i];
             var pct = ((host.connections / mx) * 100).toFixed(1);
+            var flag = host.country ? countryFlag(host.country) + ' ' : '';
+            var geo = '';
+            if (host.as_org) geo = '<span class="hostname">' + flag + (host.country_name || '') + ' &middot; AS' + (host.asn || '') + ' ' + host.as_org + '</span>';
+            else if (host.country_name) geo = '<span class="hostname">' + flag + host.country_name + '</span>';
+            var cell = host.hostname
+                ? '<span class="ip-cell">' + host.ip + '</span><span class="hostname">' + host.hostname + '</span>' + geo
+                : '<span class="ip-cell">' + host.ip + '</span>' + geo;
             h += '<tr><td><span class="' + rankClass(i) + '">' + (i + 1) + '</span></td>';
-            h += '<td><span class="ip-cell">' + host.ip + '</span></td>';
+            h += '<td>' + cell + '</td>';
             h += '<td style="font-variant-numeric:tabular-nums">' + host.connections.toLocaleString() + '</td>';
             h += '<td class="bar-cell"><div class="bar-bg"></div><div class="bar-fill bw" style="width:' + pct + '%"></div></td></tr>';
         }
