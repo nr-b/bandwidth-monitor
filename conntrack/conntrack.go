@@ -1,6 +1,7 @@
 package conntrack
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/netip"
@@ -11,6 +12,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"bandwidth-monitor/geoip"
 
 	ct "github.com/ti-mo/conntrack"
 )
@@ -75,8 +78,12 @@ type Entry struct {
 // HostStat aggregates connections per host.
 type HostStat struct {
 	IP          string `json:"ip"`
+	Hostname    string `json:"hostname,omitempty"`
 	Connections int    `json:"connections"`
 	NATType     string `json:"nat_type,omitempty"`
+	Country     string `json:"country,omitempty"`
+	CountryName string `json:"country_name,omitempty"`
+	ASOrg       string `json:"as_org,omitempty"`
 }
 
 // Summary holds aggregated conntrack data.
@@ -109,6 +116,9 @@ type Tracker struct {
 	sockBufSize int // netlink socket receive buffer size
 	errCount    int // consecutive dump errors (for log rate-limiting)
 	stopCh      chan struct{}
+	geoDB       *geoip.DB
+	dnsCacheMu  sync.RWMutex
+	dnsCache    map[string]string
 }
 
 // Default and maximum netlink socket buffer sizes.
@@ -120,11 +130,13 @@ const (
 // New creates a new conntrack Tracker.
 // localNets defines which IPs are considered local/LAN (used to split
 // top sources vs top destinations into LAN clients vs remote hosts).
-func New(localNets []*net.IPNet) *Tracker {
+func New(localNets []*net.IPNet, geoDB *geoip.DB) *Tracker {
 	return &Tracker{
 		localNets:   localNets,
 		sockBufSize: defaultSockBuf,
 		stopCh:      make(chan struct{}),
+		geoDB:       geoDB,
+		dnsCache:    make(map[string]string, 256),
 	}
 }
 
@@ -279,6 +291,10 @@ func (t *Tracker) poll() {
 	s.TopLANClients = topHosts(srcCount, 20)
 	s.TopRemoteDestinations = topHosts(dstCount, 20)
 
+	// Enrich top hosts with reverse DNS and GeoIP (outside the hot path).
+	t.enrichHosts(s.TopLANClients)
+	t.enrichHosts(s.TopRemoteDestinations)
+
 	const maxEntries = 200
 	sort.Slice(ipv4Entries, func(i, j int) bool { return ipv4Entries[i].TTL > ipv4Entries[j].TTL })
 	sort.Slice(ipv6Entries, func(i, j int) bool { return ipv6Entries[i].TTL > ipv6Entries[j].TTL })
@@ -389,6 +405,45 @@ func topHosts(counts map[string]int, n int) []HostStat {
 		list = list[:n]
 	}
 	return list
+}
+
+// enrichHosts adds reverse DNS hostnames and GeoIP data to a host list.
+func (t *Tracker) enrichHosts(hosts []HostStat) {
+	for i := range hosts {
+		ip := hosts[i].IP
+
+		// Reverse DNS (with cache)
+		t.dnsCacheMu.RLock()
+		name, ok := t.dnsCache[ip]
+		t.dnsCacheMu.RUnlock()
+		if ok {
+			hosts[i].Hostname = name
+		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			names, err := net.DefaultResolver.LookupAddr(ctx, ip)
+			cancel()
+			if err == nil && len(names) > 0 {
+				resolved := strings.TrimSuffix(names[0], ".")
+				hosts[i].Hostname = resolved
+				t.dnsCacheMu.Lock()
+				t.dnsCache[ip] = resolved
+				t.dnsCacheMu.Unlock()
+			} else {
+				t.dnsCacheMu.Lock()
+				t.dnsCache[ip] = ""
+				t.dnsCacheMu.Unlock()
+			}
+		}
+
+		// GeoIP
+		if t.geoDB != nil && t.geoDB.Available() {
+			if geo := t.geoDB.Lookup(ip); geo != nil {
+				hosts[i].Country = geo.Country
+				hosts[i].CountryName = geo.CountryName
+				hosts[i].ASOrg = geo.ASOrg
+			}
+		}
+	}
 }
 
 func readIntFile(path string) int {

@@ -178,7 +178,7 @@ func main() {
 		log.Printf("UniFi controller integration enabled: %s", unifiURL)
 	}
 
-	conntrackTracker := conntrack.New(localNets)
+	conntrackTracker := conntrack.New(localNets, geoDB)
 	go conntrackTracker.Run()
 	log.Println("Conntrack (NAT) tracking enabled")
 
