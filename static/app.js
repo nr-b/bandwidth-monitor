@@ -231,8 +231,8 @@
         for (var n of list) {
             if (!chartData[n]) continue;
             var c = chartColors[ci % chartColors.length];
-            ds.push({ label: n + ' RX', data: chartData[n].rx, borderColor: c.rx, backgroundColor: c.rxBg, fill: 'origin', tension: 0, pointRadius: 0, borderWidth: 1.5 });
-            ds.push({ label: n + ' TX', data: chartData[n].tx, borderColor: c.tx, backgroundColor: c.txBg, fill: 'origin', tension: 0, pointRadius: 0, borderWidth: 1.5 });
+            ds.push({ label: n + ' RX', data: chartData[n].rx, borderColor: c.rx, backgroundColor: c.rxBg, fill: 'origin', tension: 0.3, pointRadius: 0, borderWidth: 1.5 });
+            ds.push({ label: n + ' TX', data: chartData[n].tx, borderColor: c.tx, backgroundColor: c.txBg, fill: 'origin', tension: 0.3, pointRadius: 0, borderWidth: 1.5 });
             ci++;
         }
         trafficChart.data.datasets = ds;
@@ -262,11 +262,11 @@
     }
 
     var groupMeta = {
-        physical: { label: 'Physical', order: 0 },
-        loopback: { label: 'Loopback', order: 1 },
+        wan:      { label: 'WAN', order: 0 },
+        vpn:      { label: 'VPN', order: 1 },
         vlan:     { label: 'VLAN', order: 2 },
-        wan:      { label: 'WAN', order: 3 },
-        vpn:      { label: 'VPN', order: 4 }
+        physical: { label: 'Physical', order: 3 },
+        loopback: { label: 'Loopback', order: 4 }
     };
 
     function renderStatsRow(ifaces) {
