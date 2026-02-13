@@ -1587,8 +1587,16 @@
         updateIPVersions(d.ip_versions);
         updateCountries(d.countries);
         updateASNs(d.asns);
-        updateWorldMap(d.countries, d.top_bandwidth);
-        updateLatency(d.latency);
+        // Throttle map (5s) and latency (2s) to allow tooltip hover and reduce DOM churn
+        var now = Date.now();
+        if (!window._lastMapUpdate || now - window._lastMapUpdate > 5000) {
+            updateWorldMap(d.countries, d.top_bandwidth);
+            window._lastMapUpdate = now;
+        }
+        if (!window._lastLatUpdate || now - window._lastLatUpdate > 2000) {
+            updateLatency(d.latency);
+            window._lastLatUpdate = now;
+        }
         renderTalkers('bwTable', bw, 'rate_bytes', formatRate, 'bw');
         renderTalkers('volTable', vol, 'total_bytes', formatBytes, 'vol');
         updateDNS(d.dns || null);
