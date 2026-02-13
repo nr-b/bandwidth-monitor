@@ -1073,7 +1073,7 @@
                 }
                 d += 'Z';
                 svg += '<path d="' + d + '" fill="' + fill + '" fill-opacity="' + fo + '" stroke="' + stroke + '" stroke-width="' + sw + '"';
-                if (traffic) svg += '><title>' + countryFlag(cc) + ' ' + (traffic.country_name || cc) + ': ' + formatBytes(traffic.bytes) + '</title></path>';
+                if (traffic) svg += '><title>' + countryFlag(cc) + ' ' + (traffic.country_name || cc) + ': ' + formatBytes(traffic.bytes) + ' (' + traffic.connections + ' IPs)</title></path>';
                 else svg += '/>';
             }
         }
@@ -1087,7 +1087,13 @@
                 if (!t.country || !countryCentroids[t.country]) continue;
                 var dest = proj(countryCentroids[t.country][0], countryCentroids[t.country][1]);
                 var mx = (center[0] + dest[0]) / 2, my = Math.min(center[1], dest[1]) - 35;
-                svg += '<path d="M' + center[0] + ',' + center[1] + ' Q' + mx + ',' + my + ' ' + dest[0] + ',' + dest[1] + '" fill="none" stroke="' + flowColor + '" stroke-width="1.5" stroke-dasharray="6,4" opacity="0.5"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.5s" repeatCount="indefinite"/></path>';
+                var pathD = 'M' + center[0] + ',' + center[1] + ' Q' + mx + ',' + my + ' ' + dest[0] + ',' + dest[1];
+                var host = t.hostname && t.hostname !== t.ip ? t.hostname + ' (' + t.ip + ')' : t.ip;
+                var tip = host + ' \u2192 ' + formatRate(t.rate_bytes || 0);
+                // Invisible wide hit area for hover
+                svg += '<path d="' + pathD + '" fill="none" stroke="transparent" stroke-width="12" style="cursor:pointer"><title>' + tip + '</title></path>';
+                // Visible animated line
+                svg += '<path d="' + pathD + '" fill="none" stroke="' + flowColor + '" stroke-width="1.5" stroke-dasharray="6,4" opacity="0.5" style="pointer-events:none"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.5s" repeatCount="indefinite"/></path>';
             }
         }
 
