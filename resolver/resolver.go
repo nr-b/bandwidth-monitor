@@ -3,20 +3,27 @@
 // (and anything else that needs IP-to-hostname lookups) should use a single
 // shared instance so that cache entries are not duplicated and TTL expiry
 // is handled consistently.
+//
+// PTR queries are performed via miekg/dns so that the real DNS TTL from the
+// response is used for cache expiry rather than a hardcoded value.
 package resolver
 
 import (
-	"context"
+	"fmt"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
+
+	mdns "github.com/miekg/dns"
 )
 
 // Default tuning knobs.
 const (
-	DefaultTTL        = 5 * time.Minute
 	DefaultNegTTL     = 1 * time.Minute
+	DefaultMinTTL     = 10 * time.Second // floor so we don't hammer the resolver
+	DefaultMaxTTL     = 30 * time.Minute // cap for sanity
 	DefaultTimeout    = 500 * time.Millisecond
 	DefaultConcurrent = 16
 )
@@ -33,24 +40,37 @@ type Resolver struct {
 	mu      sync.RWMutex
 	cache   map[string]cacheEntry
 	sem     chan struct{} // limits concurrent lookups
-	ttl     time.Duration
 	negTTL  time.Duration
+	minTTL  time.Duration
+	maxTTL  time.Duration
 	timeout time.Duration
+	server  string // DNS server address (host:port)
 }
 
-// New creates a Resolver with sensible defaults.
+// New creates a Resolver that reads /etc/resolv.conf for the system resolver.
+// Falls back to 127.0.0.1:53 if the config cannot be read.
 func New() *Resolver {
+	server := "127.0.0.1:53"
+	if config, err := mdns.ClientConfigFromFile("/etc/resolv.conf"); err == nil && len(config.Servers) > 0 {
+		server = net.JoinHostPort(config.Servers[0], config.Port)
+	} else {
+		fmt.Fprintf(os.Stderr, "resolver: cannot read /etc/resolv.conf, falling back to %s\n", server)
+	}
+
 	return &Resolver{
 		cache:   make(map[string]cacheEntry, 256),
 		sem:     make(chan struct{}, DefaultConcurrent),
-		ttl:     DefaultTTL,
 		negTTL:  DefaultNegTTL,
+		minTTL:  DefaultMinTTL,
+		maxTTL:  DefaultMaxTTL,
 		timeout: DefaultTimeout,
+		server:  server,
 	}
 }
 
 // LookupAddr performs a synchronous reverse-DNS lookup for ip, returning the
-// resolved hostname or "" on failure.  Results are cached with TTL.
+// resolved hostname or "" on failure.  Results are cached using the real DNS
+// TTL from the response.
 func (r *Resolver) LookupAddr(ip string) string {
 	// Fast path: check cache under read lock.
 	now := time.Now()
@@ -71,21 +91,73 @@ func (r *Resolver) LookupAddrFresh(ip string) string {
 	return r.resolve(ip)
 }
 
-// resolve does the actual DNS lookup and caches the result.
+// ptrName converts an IP address (v4 or v6) to its reverse-DNS PTR name.
+func ptrName(ip string) (string, error) {
+	addr := net.ParseIP(ip)
+	if addr == nil {
+		return "", fmt.Errorf("invalid IP: %s", ip)
+	}
+
+	arpa, err := mdns.ReverseAddr(ip)
+	if err != nil {
+		return "", err
+	}
+	return arpa, nil
+}
+
+// resolve does the actual PTR lookup via miekg/dns and caches with the real TTL.
 func (r *Resolver) resolve(ip string) string {
 	now := time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
-	names, err := net.DefaultResolver.LookupAddr(ctx, ip)
-	cancel()
 
+	ptr, err := ptrName(ip)
+	if err != nil {
+		// Invalid IP — cache as negative.
+		r.mu.Lock()
+		r.cache[ip] = cacheEntry{hostname: "", expires: now.Add(r.negTTL)}
+		r.mu.Unlock()
+		return ""
+	}
+
+	msg := new(mdns.Msg)
+	msg.SetQuestion(ptr, mdns.TypePTR)
+	msg.RecursionDesired = true
+
+	client := &mdns.Client{Timeout: r.timeout}
+	resp, _, err := client.Exchange(msg, r.server)
+
+	if err != nil || resp == nil || resp.Rcode != mdns.RcodeSuccess || len(resp.Answer) == 0 {
+		// Negative result — cache with negTTL.
+		r.mu.Lock()
+		r.cache[ip] = cacheEntry{hostname: "", expires: now.Add(r.negTTL)}
+		r.mu.Unlock()
+		return ""
+	}
+
+	// Extract hostname and TTL from the first PTR record.
 	var hostname string
-	var cacheTTL time.Duration
-	if err == nil && len(names) > 0 {
-		hostname = strings.TrimSuffix(names[0], ".")
-		cacheTTL = r.ttl
-	} else {
-		hostname = ""
-		cacheTTL = r.negTTL
+	var ttl uint32
+	for _, rr := range resp.Answer {
+		if p, ok := rr.(*mdns.PTR); ok {
+			hostname = strings.TrimSuffix(p.Ptr, ".")
+			ttl = rr.Header().Ttl
+			break
+		}
+	}
+
+	if hostname == "" {
+		r.mu.Lock()
+		r.cache[ip] = cacheEntry{hostname: "", expires: now.Add(r.negTTL)}
+		r.mu.Unlock()
+		return ""
+	}
+
+	// Clamp the TTL to [minTTL, maxTTL].
+	cacheTTL := time.Duration(ttl) * time.Second
+	if cacheTTL < r.minTTL {
+		cacheTTL = r.minTTL
+	}
+	if cacheTTL > r.maxTTL {
+		cacheTTL = r.maxTTL
 	}
 
 	r.mu.Lock()
@@ -132,19 +204,7 @@ func (r *Resolver) LookupAddrAsync(ip string) string {
 	case r.sem <- struct{}{}:
 		go func() {
 			defer func() { <-r.sem }()
-
-			ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
-			names, err := net.DefaultResolver.LookupAddr(ctx, ip)
-			cancel()
-
-			if err != nil || len(names) == 0 {
-				return // negative entry already cached above
-			}
-
-			resolved := strings.TrimSuffix(names[0], ".")
-			r.mu.Lock()
-			r.cache[ip] = cacheEntry{hostname: resolved, expires: time.Now().Add(r.ttl)}
-			r.mu.Unlock()
+			r.resolve(ip)
 		}()
 	default:
 		// Semaphore full — skip, will retry on next call.
