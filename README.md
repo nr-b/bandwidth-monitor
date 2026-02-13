@@ -249,9 +249,14 @@ inputs.bandwidth-monitor.url = "github:awlx/bandwidth-monitor";
     };
     # Or use an environment file:
     # environmentFile = "/etc/bandwidth-monitor/env";
+
+    # Use services.geoipupdate for fresh databases instead of bundled ones:
+    # geoipDir = "/var/lib/GeoIP";
   };
 }
 ```
+
+To update the bundled GeoIP databases: `nix flake update`
 
 Or run directly without installing:
 ```bash
