@@ -1058,23 +1058,30 @@
             for (var pi = 0; pi < polys.length; pi++) {
                 var ring = polys[pi];
                 if (ring.length < 3) continue;
-                // Skip polygons crossing the antimeridian (lon span > 180°)
-                var minLon = 999, maxLon = -999;
-                for (var ri = 0; ri < ring.length; ri++) {
-                    var lon = ring[ri][0];
-                    if (lon < minLon) minLon = lon;
-                    if (lon > maxLon) maxLon = lon;
+                // Handle antimeridian: split ring into segments that don't
+                // cross the date line, so each segment renders correctly.
+                var segments = [[]];
+                segments[0].push(ring[0]);
+                for (var ri = 1; ri < ring.length; ri++) {
+                    if (Math.abs(ring[ri][0] - ring[ri-1][0]) > 170) {
+                        // Date line crossing — start a new segment
+                        segments.push([]);
+                    }
+                    segments[segments.length - 1].push(ring[ri]);
                 }
-                if (maxLon - minLon > 180) continue;
-                var d = '';
-                for (var ri = 0; ri < ring.length; ri++) {
-                    var p = proj(ring[ri][1], ring[ri][0]);
-                    d += (ri === 0 ? 'M' : 'L') + p[0].toFixed(0) + ',' + p[1].toFixed(0);
+                for (var si = 0; si < segments.length; si++) {
+                    var seg = segments[si];
+                    if (seg.length < 3) continue;
+                    var d = '';
+                    for (var ri = 0; ri < seg.length; ri++) {
+                        var p = proj(seg[ri][1], seg[ri][0]);
+                        d += (ri === 0 ? 'M' : 'L') + p[0].toFixed(0) + ',' + p[1].toFixed(0);
+                    }
+                    d += 'Z';
+                    svg += '<path d="' + d + '" fill="' + fill + '" fill-opacity="' + fo + '" stroke="' + stroke + '" stroke-width="' + sw + '"';
+                    if (traffic) svg += '><title>' + countryFlag(cc) + ' ' + (traffic.country_name || cc) + ': ' + formatBytes(traffic.bytes) + ' (' + traffic.connections + ' IPs)</title></path>';
+                    else svg += '/>';
                 }
-                d += 'Z';
-                svg += '<path d="' + d + '" fill="' + fill + '" fill-opacity="' + fo + '" stroke="' + stroke + '" stroke-width="' + sw + '"';
-                if (traffic) svg += '><title>' + countryFlag(cc) + ' ' + (traffic.country_name || cc) + ': ' + formatBytes(traffic.bytes) + ' (' + traffic.connections + ' IPs)</title></path>';
-                else svg += '/>';
             }
         }
 
