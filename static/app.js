@@ -905,18 +905,20 @@
 
     function renderHostTable(tbId, hosts) {
         var tb = document.getElementById(tbId);
-        if (!hosts || !hosts.length) { tb.innerHTML = '<tr><td colspan="5" class="empty-state">No data</td></tr>'; return; }
+        if (!hosts || !hosts.length) { tb.innerHTML = '<tr><td colspan="4" class="empty-state">No data</td></tr>'; return; }
         var mx = hosts[0].connections || 1, h = '';
         for (var i = 0; i < hosts.length; i++) {
             var host = hosts[i];
             var pct = ((host.connections / mx) * 100).toFixed(1);
-            var flag = host.country ? '<span title="' + (host.country_name || host.country) + '">' + countryFlag(host.country) + '</span> ' : '';
-            var info = host.hostname || '';
-            var asLabel = host.as_org ? (host.asn ? 'AS' + host.asn + ' ' + host.as_org : host.as_org) : '';
-            if (asLabel) info += (info ? ' <span style="color:var(--text-2);font-size:11px">(' + asLabel + ')</span>' : '<span style="color:var(--text-2);font-size:11px">' + asLabel + '</span>');
+            var flag = host.country ? countryFlag(host.country) + ' ' : '';
+            var geo = '';
+            if (host.as_org) geo = '<span class="hostname">' + flag + (host.country_name || '') + ' &middot; AS' + (host.asn || '') + ' ' + host.as_org + '</span>';
+            else if (host.country_name) geo = '<span class="hostname">' + flag + host.country_name + '</span>';
+            var cell = host.hostname
+                ? '<span class="ip-cell">' + host.ip + '</span><span class="hostname">' + host.hostname + '</span>' + geo
+                : '<span class="ip-cell">' + host.ip + '</span>' + geo;
             h += '<tr><td><span class="' + rankClass(i) + '">' + (i + 1) + '</span></td>';
-            h += '<td><span class="ip-cell">' + host.ip + '</span></td>';
-            h += '<td style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px">' + flag + info + '</td>';
+            h += '<td>' + cell + '</td>';
             h += '<td style="font-variant-numeric:tabular-nums">' + host.connections.toLocaleString() + '</td>';
             h += '<td class="bar-cell"><div class="bar-bg"></div><div class="bar-fill bw" style="width:' + pct + '%"></div></td></tr>';
         }
