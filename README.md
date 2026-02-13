@@ -183,6 +183,7 @@ Pre-built packages are available from [GitHub Releases](https://github.com/awlx/
 | `.rpm` | amd64, arm64 | Fedora, RHEL, AlmaLinux |
 | `.ipk` | x86_64, aarch64, mips_24kc, mipsel_24kc | OpenWrt 23.05 (stable) |
 | `.apk` | x86_64, aarch64 | OpenWrt snapshot (nightly) |
+| Nix flake | any | NixOS / Nix on Linux |
 
 #### Debian / Ubuntu
 
@@ -224,6 +225,37 @@ apk add --allow-untrusted /tmp/bandwidth-monitor-*.apk
 vi /etc/bandwidth-monitor/env
 /etc/init.d/bandwidth-monitor enable
 /etc/init.d/bandwidth-monitor start
+```
+
+#### NixOS / Nix Flake
+
+The repo includes a Nix flake with a NixOS module. GeoIP databases are downloaded automatically during the build.
+
+```nix
+# In your flake.nix inputs:
+inputs.bandwidth-monitor.url = "github:awlx/bandwidth-monitor";
+
+# In your NixOS configuration:
+{ inputs, ... }: {
+  imports = [ inputs.bandwidth-monitor.nixosModules.default ];
+
+  services.bandwidth-monitor = {
+    enable = true;
+    listenAddress = ":8080";
+    settings = {
+      ADGUARD_URL = "http://adguard.local";
+      ADGUARD_USER = "admin";
+      ADGUARD_PASS = "secret";
+    };
+    # Or use an environment file:
+    # environmentFile = "/etc/bandwidth-monitor/env";
+  };
+}
+```
+
+Or run directly without installing:
+```bash
+nix run github:awlx/bandwidth-monitor
 ```
 
 ### Using the Makefile
@@ -480,6 +512,7 @@ nfpm.yaml                 → deb/rpm packaging config (nfpm)
 .github/workflows/        → CI: builds deb, rpm, ipk, apk on push & tag
 env.example               → example environment configuration
 bandwidth-monitor.service → systemd unit file
+flake.nix                 → Nix flake with package + NixOS module
 Makefile                  → build, install, GeoIP download targets
 ```
 
