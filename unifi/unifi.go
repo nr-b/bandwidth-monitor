@@ -12,6 +12,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"bandwidth-monitor/wifi"
 )
 
 type Client struct {
@@ -43,53 +45,10 @@ type byteSnap struct {
 	rx int64
 }
 
-type APInfo struct {
-	Name       string  `json:"name"`
-	Model      string  `json:"model"`
-	MAC        string  `json:"mac"`
-	IP         string  `json:"ip"`
-	Version    string  `json:"version"`
-	Status     string  `json:"status"`
-	NumClients int     `json:"num_clients"`
-	Uptime     int64   `json:"uptime"`
-	TxBytes    int64   `json:"tx_bytes"`
-	RxBytes    int64   `json:"rx_bytes"`
-	TxRate     float64 `json:"tx_rate"`
-	RxRate     float64 `json:"rx_rate"`
-}
-
-type SSIDStat struct {
-	Name       string  `json:"name"`
-	NumClients int     `json:"num_clients"`
-	TxBytes    int64   `json:"tx_bytes"`
-	RxBytes    int64   `json:"rx_bytes"`
-	TxRate     float64 `json:"tx_rate"`
-	RxRate     float64 `json:"rx_rate"`
-}
-
-type ClientInfo struct {
-	MAC      string  `json:"mac"`
-	Hostname string  `json:"hostname"`
-	IP       string  `json:"ip"`
-	SSID     string  `json:"ssid"`
-	APMAC    string  `json:"ap_mac"`
-	APName   string  `json:"ap_name"`
-	Signal   int     `json:"signal"`
-	Channel  int     `json:"channel"`
-	Radio    string  `json:"radio"`
-	TxBytes  int64   `json:"tx_bytes"`
-	RxBytes  int64   `json:"rx_bytes"`
-	TxRate   float64 `json:"tx_rate"`
-	RxRate   float64 `json:"rx_rate"`
-}
-
-type Summary struct {
-	TotalAPs     int          `json:"total_aps"`
-	TotalClients int          `json:"total_clients"`
-	APs          []APInfo     `json:"aps"`
-	SSIDs        []SSIDStat   `json:"ssids"`
-	Clients      []ClientInfo `json:"clients"`
-}
+type APInfo = wifi.APInfo
+type SSIDStat = wifi.SSIDStat
+type ClientInfo = wifi.ClientInfo
+type Summary = wifi.Summary
 
 func New(baseURL, user, pass, site string, pollInterval time.Duration) *Client {
 	if site == "" {
@@ -135,7 +94,7 @@ func (c *Client) Stop() {
 	}
 }
 
-func (c *Client) GetSummary() *Summary {
+func (c *Client) GetSummary() *wifi.Summary {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.summary
@@ -494,6 +453,7 @@ func (c *Client) buildSummary(devices []rawDevice, clients []rawClient, dt float
 	})
 
 	return &Summary{
+		ProviderName: "UniFi",
 		TotalAPs:     len(aps),
 		TotalClients: totalWireless,
 		APs:          aps,

@@ -24,11 +24,13 @@ import (
 	"bandwidth-monitor/geoip"
 	"bandwidth-monitor/handler"
 	"bandwidth-monitor/nextdns"
+	"bandwidth-monitor/omada"
 	"bandwidth-monitor/pihole"
 	"bandwidth-monitor/resolver"
 	"bandwidth-monitor/speedtest"
 	"bandwidth-monitor/talkers"
 	"bandwidth-monitor/unifi"
+	"bandwidth-monitor/wifi"
 )
 
 //go:embed static/*
@@ -113,6 +115,10 @@ func main() {
 	unifiUser := env("UNIFI_USER", "")
 	unifiPass := env("UNIFI_PASS", "")
 	unifiSite := env("UNIFI_SITE", "default")
+	omadaURL := env("OMADA_URL", "")
+	omadaUser := env("OMADA_USER", "")
+	omadaPass := env("OMADA_PASS", "")
+	omadaSite := env("OMADA_SITE", "Default")
 
 	geoDB, err := geoip.Open(geoCountry, geoASN)
 	if err != nil {
@@ -189,11 +195,18 @@ func main() {
 		log.Printf("DNS integration: Pi-hole (%s)", piholeURL)
 	}
 
-	var unifiClient *unifi.Client
+	// WiFi provider: UniFi or Omada (mutually exclusive; first configured wins)
+	var wifiProvider wifi.Provider
 	if unifiURL != "" {
-		unifiClient = unifi.New(unifiURL, unifiUser, unifiPass, unifiSite, 15*time.Second)
-		go unifiClient.Run()
-		log.Printf("UniFi controller integration enabled: %s", unifiURL)
+		uc := unifi.New(unifiURL, unifiUser, unifiPass, unifiSite, 15*time.Second)
+		go uc.Run()
+		wifiProvider = uc
+		log.Printf("WiFi integration: UniFi (%s)", unifiURL)
+	} else if omadaURL != "" {
+		oc := omada.New(omadaURL, omadaUser, omadaPass, omadaSite, 15*time.Second)
+		go oc.Run()
+		wifiProvider = oc
+		log.Printf("WiFi integration: Omada (%s)", omadaURL)
 	}
 
 	conntrackTracker := conntrack.New(localNets, geoDB, dnsResolver)
@@ -210,14 +223,14 @@ func main() {
 	mux.HandleFunc("/api/talkers/bandwidth", handler.TopTalkersBandwidth(talkerTracker))
 	mux.HandleFunc("/api/talkers/volume", handler.TopTalkersVolume(talkerTracker))
 	mux.HandleFunc("/api/dns", handler.DNSSummary(dnsProvider))
-	mux.HandleFunc("/api/wifi", handler.WiFiSummary(unifiClient))
+	mux.HandleFunc("/api/wifi", handler.WiFiSummary(wifiProvider))
 	mux.HandleFunc("/api/conntrack", handler.ConntrackSummary(conntrackTracker))
 	mux.HandleFunc("/api/speedtest/run", handler.SpeedTestRun(speedTester))
 	mux.HandleFunc("/api/speedtest/results", handler.SpeedTestResults(speedTester))
 	mux.HandleFunc("/api/debug/traceroute", handler.DebugTraceroute(dnsResolver))
 	mux.HandleFunc("/api/debug/dns", handler.DebugDNS())
-	mux.HandleFunc("/api/summary", handler.MenuBarSummary(statsCollector, talkerTracker, dnsProvider, unifiClient, conntrackTracker))
-	mux.HandleFunc("/api/events", handler.SSE(statsCollector, talkerTracker, dnsProvider, unifiClient, conntrackTracker))
+	mux.HandleFunc("/api/summary", handler.MenuBarSummary(statsCollector, talkerTracker, dnsProvider, wifiProvider, conntrackTracker))
+	mux.HandleFunc("/api/events", handler.SSE(statsCollector, talkerTracker, dnsProvider, wifiProvider, conntrackTracker))
 	staticSub, err := fs.Sub(staticFiles, "static")
 	if err != nil {
 		log.Fatalf("Failed to create sub filesystem: %v", err)
@@ -279,8 +292,8 @@ func main() {
 	if dnsProvider != nil {
 		dnsProvider.Stop()
 	}
-	if unifiClient != nil {
-		unifiClient.Stop()
+	if wifiProvider != nil {
+		wifiProvider.Stop()
 	}
 	conntrackTracker.Stop()
 	dnsResolver.Stop()
