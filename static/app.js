@@ -1089,7 +1089,8 @@
                 var mx = (center[0] + dest[0]) / 2, my = Math.min(center[1], dest[1]) - 35;
                 var pathD = 'M' + center[0] + ',' + center[1] + ' Q' + mx + ',' + my + ' ' + dest[0] + ',' + dest[1];
                 var host = t.hostname && t.hostname !== t.ip ? t.hostname + ' (' + t.ip + ')' : t.ip;
-                var tip = host + ' \u2192 ' + formatRate(t.rate_bytes || 0);
+                var asInfo = t.as_org ? ' \u00b7 AS' + (t.asn || '') + ' ' + t.as_org : '';
+                var tip = host + asInfo + ' \u2192 ' + formatRate(t.rate_bytes || 0);
                 // Invisible wide hit area for hover
                 svg += '<path d="' + pathD + '" fill="none" stroke="transparent" stroke-width="12" style="cursor:pointer"><title>' + tip + '</title></path>';
                 // Visible animated line
