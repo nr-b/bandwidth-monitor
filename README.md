@@ -2,7 +2,7 @@
 
 A real-time network monitoring dashboard for Linux, written in Go.
 
-Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Home, NextDNS, or Pi-hole), UniFi wireless monitoring, GeoIP enrichment, and a macOS menu bar plugin.
+Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Home, NextDNS, or Pi-hole), WiFi monitoring (UniFi or Omada), GeoIP enrichment, continuous latency monitoring, and a macOS menu bar plugin.
 
 ## Table of Contents
 
@@ -75,7 +75,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 - **GeoIP enrichment** — country flags, ASN org names via MaxMind MMDB files
 - **Reverse DNS** — resolves IPs to hostnames via a shared resolver with TTL-based cache expiry and bounded concurrency
 - **Traffic world map** — live SVG map showing traffic flows by country, sized by volume, with animated flow lines to active destinations
-- **Latency monitor** — continuous ICMP + HTTPS probes against configurable targets (default: FFMUC anycast, GitHub) with rolling sparklines, RTT, jitter, and packet loss
+- **Latency monitor** — continuous ICMP + HTTPS probes against configurable targets (default: FFMUC anycast, Quad9, Digitalcourage) with rolling sparklines, RTT, jitter, and packet loss; dual-stack IPv4+IPv6; 15-minute history
 
 ### DNS Tab
 
@@ -118,7 +118,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 ### Debug Tab
 
 - **Traceroute** — native Go ICMP traceroute with configurable probes per hop (default 20), using raw sockets with proper TTL manipulation and ICMP ID matching; shows per-hop IP, reverse DNS hostname (always fresh, bypasses cache), avg/min/max RTT, and packet loss percentage; supports IPv4 and IPv6; streams progress via SSE
-- **DNS Check** — queries a domain (A, AAAA, MX, TXT, NS, CNAME, SOA, PTR) against 14 DNS servers in parallel: System Resolver, FFMUC Anycast01/02 (IPv4+IPv6), Cloudflare (IPv4+IPv6), Google (IPv4+IPv6), Quad9 (IPv4+IPv6), and OpenDNS (IPv4+IPv6); shows RCode, latency, TTL, DNSSEC AD flag per server; highlights the fastest server and flags records unique to a single server
+- **DNS Check** — queries a domain (A, AAAA, MX, TXT, NS, CNAME, SOA, PTR) against 16 DNS servers in parallel: System Resolver, FFMUC Anycast01/02 (IPv4+IPv6), Cloudflare (IPv4+IPv6), Google (IPv4+IPv6), Quad9 (IPv4+IPv6), Digitalcourage (IPv4+IPv6), and OpenDNS (IPv4+IPv6); shows comparison matrix, RCode, latency, TTL, DNSSEC AD flag per server; highlights the fastest server and flags records unique to a single server
 - **Resolver leak check** — automatically detects which public IPs your system resolver uses when talking to authoritative servers, via `o-o.myaddr.l.google.com` TXT and `dnscheck.tools` TXT (including IPv4-only and IPv6-only variants); shows the configured local resolver from `/etc/resolv.conf`, upstream egress IPs, EDNS Client Subnet info, and resolver org/geo from dnscheck.tools
 
 ### General
@@ -461,7 +461,7 @@ unifi/                    → UniFi controller API client (APs, SSIDs, clients, 
 omada/                    → TP-Link Omada controller API client (APs, SSIDs, clients, live rates)
 geoip/                    → MaxMind MMDB GeoIP lookups (country, ASN)
 static/
-  index.html              → HTML shell with six tabs (Traffic, NAT, DNS, WiFi, Speed Test, Debug)
+  index.html              → HTML shell with seven tabs (Traffic, NAT, DNS, WiFi, Monitor, Speed Test, Debug)
   app.js                  → all frontend JavaScript (charts, tables, SSE client)
   style.css               → full stylesheet (dark/light themes)
 swiftbar/                 → macOS menu bar plugin
@@ -490,13 +490,13 @@ Makefile                  → build, install, GeoIP download targets
 | `/api/talkers/bandwidth` | GET | Top 10 by current bandwidth |
 | `/api/talkers/volume` | GET | Top 10 by 24h volume |
 | `/api/dns` | GET | DNS summary (AdGuard Home, NextDNS, or Pi-hole) |
-| `/api/wifi` | GET | UniFi WiFi summary |
+| `/api/wifi` | GET | WiFi summary (UniFi or Omada) |
 | `/api/latency` | GET | Latency monitoring status (ICMP + HTTPS probes) |
 | `/api/conntrack` | GET | NAT / conntrack summary (connections, states, NAT types, entries) |
 | `/api/speedtest/run` | POST | Start a speed test; streams progress as SSE (Server-Sent Events) |
 | `/api/speedtest/results` | GET | Speed test history (last 50 results) and running status |
 | `/api/debug/traceroute` | POST | ICMP traceroute with SSE progress; params: `target`, `count` (probes/hop), `maxttl` |
-| `/api/debug/dns` | GET | DNS check against 14 servers + resolver leak test; params: `domain`, `type` |
+| `/api/debug/dns` | GET | DNS check against 16 servers + resolver leak test; params: `domain`, `type` |
 | `/api/summary` | GET | Compact summary for menu bar clients |
 | `/api/events` | GET | SSE stream — pushes all data every second (Server-Sent Events) |
 
@@ -515,6 +515,7 @@ Every hardcoded external service that bandwidth-monitor or its components contac
 | **Cloudflare DNS** | `1.1.1.1`, `2606:4700:4700::1111` | DNS Check | User clicks "Query" | DNS query for user-entered domain | DNS records |
 | **Google DNS** | `8.8.8.8`, `2001:4860:4860::8888` | DNS Check | User clicks "Query" | DNS query for user-entered domain | DNS records |
 | **Quad9 DNS** | `9.9.9.9`, `2620:fe::fe` | DNS Check | User clicks "Query" | DNS query for user-entered domain | DNS records |
+| **Digitalcourage DNS** | `5.9.164.112`, `2a01:4f8:251:554::2` | DNS Check | User clicks "Query" | DNS query for user-entered domain | DNS records |
 | **OpenDNS** | `208.67.222.222`, `2620:119:35::35` | DNS Check | User clicks "Query" | DNS query for user-entered domain | DNS records |
 | **Google Authoritative** | `o-o.myaddr.l.google.com` | Resolver leak check | Piggybacks on DNS Check | TXT query via system resolver | Resolver's public IP, ECS info |
 | **dnscheck.tools** | `test.dnscheck.tools`, `test-ipv4.*`, `test-ipv6.*` | Resolver leak check | Piggybacks on DNS Check | TXT query via system resolver | Resolver IP, org, geo, protocol |
