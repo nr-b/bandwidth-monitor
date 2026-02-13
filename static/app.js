@@ -994,11 +994,13 @@
         });
     });
 
-    // ── WiFi (UniFi) ──
+    // ── WiFi ──
     function updateWiFi(wifi) {
         if (!wifi) return;
         document.getElementById('wifiNoData').style.display = 'none';
         document.getElementById('wifiHasData').style.display = '';
+        var pn = document.getElementById('wifiProviderName');
+        if (pn && wifi.provider_name) pn.textContent = wifi.provider_name;
 
         document.getElementById('wifiTotalAPs').textContent = wifi.total_aps || 0;
         document.getElementById('wifiTotalClients').textContent = wifi.total_clients || 0;

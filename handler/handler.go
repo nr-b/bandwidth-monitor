@@ -15,7 +15,7 @@ import (
 	"bandwidth-monitor/resolver"
 	"bandwidth-monitor/speedtest"
 	"bandwidth-monitor/talkers"
-	"bandwidth-monitor/unifi"
+	"bandwidth-monitor/wifi"
 )
 
 func InterfaceStats(c *collector.Collector) http.HandlerFunc {
@@ -57,14 +57,14 @@ func DNSSummary(dp dns.Provider) http.HandlerFunc {
 	}
 }
 
-func WiFiSummary(uf *unifi.Client) http.HandlerFunc {
+func WiFiSummary(wp wifi.Provider) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if uf == nil {
+		if wp == nil {
 			w.Write([]byte("null"))
 			return
 		}
-		json.NewEncoder(w).Encode(uf.GetSummary())
+		json.NewEncoder(w).Encode(wp.GetSummary())
 	}
 }
 
@@ -80,7 +80,7 @@ func ConntrackSummary(ct *conntrack.Tracker) http.HandlerFunc {
 }
 
 // MenuBarSummary returns a compact JSON snapshot for menu-bar widgets.
-func MenuBarSummary(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.Client, ctr *conntrack.Tracker) http.HandlerFunc {
+func MenuBarSummary(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Provider, ctr *conntrack.Tracker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		type ifaceBrief struct {
@@ -100,8 +100,9 @@ func MenuBarSummary(c *collector.Collector, t *talkers.Tracker, dp dns.Provider,
 			LatencyMs    float64 `json:"latency_ms"`
 		}
 		type wifiBrief struct {
-			APs     int `json:"aps"`
-			Clients int `json:"clients"`
+			Provider string `json:"provider_name"`
+			APs      int    `json:"aps"`
+			Clients  int    `json:"clients"`
 		}
 		type natBrief struct {
 			Total    int     `json:"total"`
@@ -154,15 +155,16 @@ func MenuBarSummary(c *collector.Collector, t *talkers.Tracker, dp dns.Provider,
 				}
 			}
 		}
-		if uf != nil {
-			if ws := uf.GetSummary(); ws != nil {
+		if wp != nil {
+			if ws := wp.GetSummary(); ws != nil {
 				totalClients := 0
 				for _, ap := range ws.APs {
 					totalClients += ap.NumClients
 				}
 				out.WiFi = &wifiBrief{
-					APs:     len(ws.APs),
-					Clients: totalClients,
+					Provider: ws.ProviderName,
+					APs:      len(ws.APs),
+					Clients:  totalClients,
 				}
 			}
 		}
@@ -351,7 +353,7 @@ func DebugDNS() http.HandlerFunc {
 }
 
 // buildPayload assembles the JSON payload sent over the SSE stream.
-func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.Client, ct *conntrack.Tracker) map[string]interface{} {
+func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Provider, ct *conntrack.Tracker) map[string]interface{} {
 	geo := t.GetGeoBreakdown()
 	payload := map[string]interface{}{
 		"interfaces":    c.GetAll(),
@@ -367,8 +369,8 @@ func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, u
 	if dp != nil {
 		payload["dns"] = dp.GetSummary()
 	}
-	if uf != nil {
-		payload["wifi"] = uf.GetSummary()
+	if wp != nil {
+		payload["wifi"] = wp.GetSummary()
 	}
 	if ct != nil {
 		if s := ct.GetSummary(); s != nil {
@@ -386,7 +388,7 @@ func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, u
 // backed up (e.g. hibernating laptop, congested link), only the most recent
 // payload is kept — preventing kernel send-buffer buildup (same backpressure
 // logic that PR #18 added to the old WebSocket handler).
-func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.Client, ct *conntrack.Tracker) http.HandlerFunc {
+func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Provider, ct *conntrack.Tracker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		flusher, ok := w.(http.Flusher)
 		if !ok {
@@ -417,7 +419,7 @@ func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.
 		}()
 
 		// Send initial payload immediately.
-		data, err := json.Marshal(buildPayload(c, t, dp, uf, ct))
+		data, err := json.Marshal(buildPayload(c, t, dp, wp, ct))
 		if err != nil {
 			close(sendCh)
 			return
@@ -435,7 +437,7 @@ func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.
 			case <-writerDone:
 				return
 			case <-ticker.C:
-				data, err := json.Marshal(buildPayload(c, t, dp, uf, ct))
+				data, err := json.Marshal(buildPayload(c, t, dp, wp, ct))
 				if err != nil {
 					continue
 				}

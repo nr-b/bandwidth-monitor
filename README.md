@@ -84,7 +84,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 
 ### WiFi Tab
 
-- **UniFi controller integration** — polls AP and client data from the UniFi API
+- **UniFi or Omada controller integration** — polls AP and client data from the controller API (first configured wins)
 - **AP cards** — per-AP status, clients, firmware, uptime, IP, MAC, live RX/TX rates
 - **Clients per AP / per SSID** — pie charts and detail tables
 - **Traffic per AP / per SSID** — cumulative bytes + live rates
@@ -303,7 +303,9 @@ chmod 0600 /opt/bandwidth-monitor/.env
 | `PIHOLE_URL` | *(disabled)* | Pi-hole base URL (e.g. `http://pi.hole`) |
 | `PIHOLE_PASSWORD` | | Pi-hole password or app password |
 
-#### WiFi
+### WiFi (mutually exclusive — first configured wins)
+
+#### UniFi
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -313,6 +315,15 @@ chmod 0600 /opt/bandwidth-monitor/.env
 | `UNIFI_SITE` | `default` | UniFi site name |
 
 The UniFi integration auto-detects both legacy controllers (port 8443) and UniFi OS devices (UDM/UDR/CloudKey Gen2+, port 443).
+
+#### Omada
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OMADA_URL` | *(disabled)* | TP-Link Omada controller URL (e.g. `https://omada.example.net`) |
+| `OMADA_USER` | | Omada controller username |
+| `OMADA_PASS` | | Omada controller password |
+| `OMADA_SITE` | `Default` | Omada site name |
 
 #### Network & VPN
 
@@ -331,7 +342,7 @@ The UniFi integration auto-detects both legacy controllers (port 8443) and UniFi
 ### Tab Visibility
 
 - **DNS tab** — shown when AdGuard Home, NextDNS, or Pi-hole is configured
-- **WiFi tab** — shown when UniFi is configured
+- **WiFi tab** — shown when UniFi or Omada is configured
 - **NAT tab** — shown automatically when `nf_conntrack` is loaded and the process has `CAP_NET_ADMIN`
 
 ### Conntrack (NAT) Configuration
@@ -436,7 +447,9 @@ dns/                      → common DNS provider interface
 adguard/                  → AdGuard Home API client (stats, top clients/domains)
 nextdns/                  → NextDNS API client (stats, top clients/domains)
 pihole/                   → Pi-hole v6 API client (stats, top clients/domains, upstreams)
+wifi/                     → common WiFi provider interface
 unifi/                    → UniFi controller API client (APs, SSIDs, clients, live rates)
+omada/                    → TP-Link Omada controller API client (APs, SSIDs, clients, live rates)
 geoip/                    → MaxMind MMDB GeoIP lookups (country, ASN)
 static/
   index.html              → HTML shell with six tabs (Traffic, NAT, DNS, WiFi, Speed Test, Debug)

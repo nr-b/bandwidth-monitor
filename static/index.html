@@ -480,14 +480,14 @@
 
         <div class="tab-panel" id="tabWifi">
         <div id="wifiNoData" style="text-align:center;padding:48px 16px;color:var(--text-2)">
-            <div style="font-size:14px;font-weight:500;margin-bottom:4px">UniFi controller not connected</div>
-            <div style="font-size:12px">Configure with --unifi-url or UNIFI_URL env var</div>
+            <div style="font-size:14px;font-weight:500;margin-bottom:4px">WiFi controller not connected</div>
+            <div style="font-size:12px">Configure with UNIFI_URL or OMADA_URL env var</div>
         </div>
         <div id="wifiHasData" style="display:none">
             <div class="card" style="margin-bottom:16px">
                 <div class="card-header">
                     <div>
-                        <div class="card-title">WiFi &mdash; UniFi</div>
+                        <div class="card-title">WiFi &mdash; <span id="wifiProviderName">Controller</span></div>
                         <div class="card-subtitle">Access points &amp; clients</div>
                     </div>
                 </div>
