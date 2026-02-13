@@ -69,8 +69,6 @@ type resolvedTarget struct {
 type targetState struct {
 	icmpHist  []Point
 	httpsHist []Point
-	sent      int
-	lost      int
 }
 
 // New creates a latency monitor. Pass nil or empty targets to use defaults.
@@ -178,8 +176,15 @@ func (m *Monitor) GetStatus() []TargetStatus {
 			ts.AvgRTT, ts.MinRTT, ts.MaxRTT, ts.Jitter = computeStats(st.icmpHist)
 		}
 
-		if st.sent > 0 {
-			ts.LossPct = float64(st.lost) / float64(st.sent) * 100
+		// Compute loss from ICMP history window (not lifetime counters)
+		if len(st.icmpHist) > 0 {
+			var lost int
+			for _, p := range st.icmpHist {
+				if p.RTT < 0 {
+					lost++
+				}
+			}
+			ts.LossPct = float64(lost) / float64(len(st.icmpHist)) * 100
 		}
 
 		ts.ICMP = make([]Point, len(st.icmpHist))
@@ -257,23 +262,24 @@ func (m *Monitor) probeAll() {
 
 		m.mu.Lock()
 		st := m.state[t.name]
-		st.sent++
-		if icmpRTT < 0 {
-			st.lost++
-		}
 
-		st.icmpHist = append(st.icmpHist, Point{Timestamp: ts, RTT: icmpRTT})
-		if len(st.icmpHist) > maxHistory {
-			st.icmpHist = st.icmpHist[len(st.icmpHist)-maxHistory:]
-		}
-
-		st.httpsHist = append(st.httpsHist, Point{Timestamp: ts, RTT: httpsRTT})
-		if len(st.httpsHist) > maxHistory {
-			st.httpsHist = st.httpsHist[len(st.httpsHist)-maxHistory:]
-		}
+		st.icmpHist = appendAndTrim(st.icmpHist, Point{Timestamp: ts, RTT: icmpRTT})
+		st.httpsHist = appendAndTrim(st.httpsHist, Point{Timestamp: ts, RTT: httpsRTT})
 
 		m.mu.Unlock()
 	}
+}
+
+// appendAndTrim appends a point and caps the slice at maxHistory.
+// When trimming, it copies to a new slice to release the old backing array.
+func appendAndTrim(s []Point, p Point) []Point {
+	s = append(s, p)
+	if len(s) > maxHistory {
+		trimmed := make([]Point, maxHistory)
+		copy(trimmed, s[len(s)-maxHistory:])
+		return trimmed
+	}
+	return s
 }
 
 var icmpLogged bool
