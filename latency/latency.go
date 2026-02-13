@@ -24,7 +24,7 @@ const (
 	probeInterval = 2 * time.Second
 	icmpTimeout   = 900 * time.Millisecond
 	httpsTimeout  = 3 * time.Second
-	maxHistory    = 300 // 5 minutes at 2s interval
+	maxHistory    = 450 // 15 minutes at 2s interval
 )
 
 // DefaultTargets are used when no LATENCY_TARGETS env var is set.

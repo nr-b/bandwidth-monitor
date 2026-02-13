@@ -999,31 +999,24 @@
     var countryCentroids = {"AF":[33,65],"AL":[41,20],"DZ":[28,3],"AO":[-12,17],"AR":[-34,-64],"AM":[40,45],"AU":[-25,134],"AT":[47,14],"AZ":[41,48],"BD":[24,90],"BY":[53,28],"BE":[51,4],"BJ":[9,2],"BO":[-17,-65],"BA":[44,18],"BW":[-22,24],"BR":[-10,-55],"BG":[43,25],"BF":[12,-2],"KH":[13,105],"CM":[6,12],"CA":[56,-96],"CF":[7,21],"TD":[15,19],"CL":[-30,-71],"CN":[35,105],"CO":[4,-72],"CD":[-3,24],"CG":[-1,15],"CR":[10,-84],"CI":[8,-5],"HR":[45,16],"CU":[22,-80],"CY":[35,33],"CZ":[50,15],"DK":[56,10],"DO":[19,-70],"EC":[-2,-78],"EG":[27,30],"SV":[14,-89],"EE":[59,26],"ET":[9,40],"FI":[64,26],"FR":[46,2],"GA":[0,12],"DE":[51,9],"GH":[8,-2],"GR":[39,22],"GT":[16,-90],"GN":[11,-12],"HT":[19,-72],"HN":[15,-87],"HU":[47,20],"IS":[65,-18],"IN":[21,78],"ID":[-5,120],"IR":[32,53],"IQ":[33,44],"IE":[53,-8],"IL":[31,35],"IT":[43,12],"JM":[18,-77],"JP":[36,138],"JO":[31,37],"KZ":[48,68],"KE":[-1,38],"KW":[29,48],"KG":[41,75],"LA":[18,105],"LV":[57,25],"LB":[34,36],"LY":[27,17],"LT":[56,24],"LU":[50,6],"MG":[-19,47],"MY":[4,109],"ML":[17,-4],"MX":[23,-102],"MD":[47,29],"MN":[48,106],"ME":[43,19],"MA":[32,-5],"MZ":[-18,35],"MM":[22,96],"NA":[-22,17],"NP":[28,84],"NL":[52,5],"NZ":[-41,174],"NI":[13,-85],"NE":[18,8],"NG":[10,8],"KP":[40,127],"NO":[62,10],"OM":[21,57],"PK":[30,70],"PA":[9,-80],"PY":[-23,-58],"PE":[-10,-76],"PH":[13,122],"PL":[52,20],"PT":[39,-8],"QA":[25,51],"RO":[46,25],"RU":[62,105],"RW":[-2,30],"SA":[24,45],"SN":[14,-14],"RS":[44,21],"SG":[1,104],"SK":[49,20],"SI":[46,15],"ZA":[-29,24],"KR":[36,128],"ES":[40,-4],"LK":[8,81],"SD":[13,30],"SE":[62,16],"CH":[47,8],"SY":[35,38],"TW":[24,121],"TJ":[39,69],"TZ":[-7,35],"TH":[15,101],"TN":[34,9],"TR":[39,35],"TM":[39,60],"UA":[49,32],"AE":[24,54],"GB":[54,-2],"US":[38,-97],"UY":[-33,-56],"UZ":[41,65],"VE":[8,-66],"VN":[16,108],"YE":[16,48],"ZM":[-14,28],"ZW":[-19,30]};
 
     function updateWorldMap(countries, topBW) {
-        var sec = document.getElementById('worldMapSection');
         if (!countries || !countries.length) return;
+        var wc = window._worldCountries || {};
 
         var container = document.getElementById('worldMapContainer');
         var W = container.clientWidth || 800;
-        var H = Math.round(W / 2);
+        var H = Math.round(W * 0.5);
 
-        function project(lat, lon) {
-            var x = (lon + 180) / 360 * W;
-            var y = (90 - lat) / 180 * H;
-            return [x, y];
+        function proj(lat, lon) {
+            return [(lon + 180) / 360 * W, (90 - lat) / 180 * H];
         }
 
-        var continents = [
-            [[-10,-80],[15,-85],[20,-105],[32,-117],[49,-125],[60,-140],[65,-168],[72,-157],[71,-135],[68,-110],[58,-95],[52,-80],[47,-70],[44,-66],[30,-80],[25,-80],[18,-88],[15,-85]],
-            [[-5,-80],[5,-77],[12,-72],[11,-62],[7,-60],[2,-50],[-5,-35],[-15,-39],[-23,-42],[-33,-52],[-42,-63],[-55,-68],[-55,-73],[-46,-75],[-37,-73],[-30,-71],[-18,-70],[-15,-76],[-5,-80]],
-            [[36,-10],[38,-8],[43,-9],[44,0],[46,-2],[48,5],[51,2],[54,8],[56,8],[58,12],[60,5],[62,5],[64,12],[68,16],[71,26],[70,32],[65,30],[60,30],[56,24],[55,21],[54,14],[52,14],[48,16],[47,20],[45,14],[43,17],[42,20],[41,29],[42,28],[44,40],[47,40],[55,38],[60,55],[55,55],[50,40],[44,45],[40,44],[41,29],[39,26],[38,24],[35,25],[37,15],[40,18],[42,3],[38,0],[36,-5],[36,-10]],
-            [[37,10],[35,0],[32,-5],[27,-13],[21,-17],[15,-17],[12,-16],[5,-5],[5,2],[4,10],[0,10],[-1,12],[-5,12],[-10,14],[-12,25],[-15,35],[-26,33],[-34,18],[-34,26],[-30,31],[-25,35],[-12,40],[-3,40],[2,42],[5,42],[10,44],[12,51],[15,43],[18,40],[20,37],[25,35],[30,33],[32,35],[37,10]],
-            [[42,28],[45,40],[50,40],[55,38],[60,55],[65,55],[70,60],[72,80],[75,100],[73,130],[70,140],[67,140],[60,155],[56,140],[55,135],[51,140],[46,143],[43,145],[35,140],[35,132],[30,122],[23,120],[20,110],[10,106],[1,104],[1,110],[-8,115],[-8,120],[0,130],[-3,140],[-8,132],[-8,115],[1,104],[-6,105],[5,100],[7,98],[14,100],[20,107],[22,97],[28,97],[30,80],[24,70],[25,62],[22,60],[25,56],[27,51],[30,48],[33,44],[37,36],[42,28]],
-            [[-12,130],[-15,141],[-18,146],[-25,153],[-28,153],[-33,152],[-37,150],[-39,146],[-38,141],[-35,137],[-32,133],[-32,127],[-22,114],[-13,127],[-12,131],[-12,130]]
-        ];
-
+        // Build traffic lookup
+        var trafficByCC = {};
         var maxBytes = 1;
         for (var i = 0; i < countries.length; i++) {
-            if (countries[i].bytes > maxBytes) maxBytes = countries[i].bytes;
+            var c = countries[i];
+            trafficByCC[c.country] = c;
+            if (c.bytes > maxBytes) maxBytes = c.bytes;
         }
 
         var isDark = (function() {
@@ -1033,102 +1026,74 @@
             return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
         })();
 
-        var oceanColor = isDark ? '#0a1628' : '#e8edf5';
-        var landFill = isDark ? '#1a2744' : '#c8d0dc';
-        var landStroke = isDark ? '#2a3a5c' : '#a0aab8';
-        var gridColor = isDark ? '#1e3050' : '#d0d8e4';
-        var glowColor = '#22d3ee';
+        var oceanBg = isDark ? '#0c1929' : '#eaeff6';
+        var landDefault = isDark ? '#1c2e4a' : '#c5cdd9';
+        var landStroke = isDark ? '#263d5e' : '#a8b2bf';
+        var activeColor = '#22d3ee';
         var flowColor = '#a78bfa';
-        var textOnBubble = isDark ? '#0a1628' : '#ffffff';
+        var labelColor = isDark ? '#0c1929' : '#fff';
 
         var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:100%;border-radius:8px">';
+        svg += '<defs><filter id="glow"><feGaussianBlur stdDeviation="2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>';
+        svg += '<rect width="' + W + '" height="' + H + '" fill="' + oceanBg + '" rx="8"/>';
 
-        // Defs: glow filter + gradients
-        svg += '<defs>';
-        svg += '<filter id="glow"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>';
-        svg += '<radialGradient id="bubbleGrad"><stop offset="0%" stop-color="' + glowColor + '" stop-opacity="0.9"/><stop offset="100%" stop-color="' + glowColor + '" stop-opacity="0.3"/></radialGradient>';
-        svg += '<linearGradient id="flowGrad" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="' + flowColor + '" stop-opacity="0.7"/><stop offset="100%" stop-color="' + glowColor + '" stop-opacity="0.7"/></linearGradient>';
-        svg += '</defs>';
-
-        // Ocean background
-        svg += '<rect width="' + W + '" height="' + H + '" fill="' + oceanColor + '" rx="8"/>';
-
-        // Subtle grid
-        svg += '<g stroke="' + gridColor + '" stroke-width="0.5" opacity="0.4">';
-        for (var lon = -150; lon <= 180; lon += 30) {
-            var gx = (lon + 180) / 360 * W;
-            svg += '<line x1="' + gx + '" y1="0" x2="' + gx + '" y2="' + H + '"/>';
-        }
-        for (var lat = -60; lat <= 80; lat += 30) {
-            var gy = (90 - lat) / 180 * H;
-            svg += '<line x1="0" y1="' + gy + '" x2="' + W + '" y2="' + gy + '"/>';
-        }
+        // Grid
+        svg += '<g stroke="' + (isDark ? '#1a2a45' : '#d5dde8') + '" stroke-width="0.5" opacity="0.5">';
+        for (var lon = -150; lon <= 180; lon += 30) { var gx = (lon + 180) / 360 * W; svg += '<line x1="' + gx + '" y1="0" x2="' + gx + '" y2="' + H + '"/>'; }
+        for (var lat = -60; lat <= 80; lat += 30) { var gy = (90 - lat) / 180 * H; svg += '<line x1="0" y1="' + gy + '" x2="' + W + '" y2="' + gy + '"/>'; }
         svg += '</g>';
 
-        // Continent shapes
-        for (var ci = 0; ci < continents.length; ci++) {
-            var pts = continents[ci];
-            var d = '';
-            for (var pi = 0; pi < pts.length; pi++) {
-                var p = project(pts[pi][0], pts[pi][1]);
-                d += (pi === 0 ? 'M' : 'L') + p[0].toFixed(1) + ',' + p[1].toFixed(1);
+        // Country shapes from embedded GeoJSON
+        var activeCCs = {};
+        for (var cc in wc) {
+            var polys = wc[cc];
+            var traffic = trafficByCC[cc];
+            var fill = landDefault, stroke = landStroke, sw = '0.3', fo = '1';
+            if (traffic) {
+                var ratio = traffic.bytes / maxBytes;
+                fill = activeColor; fo = '' + (0.3 + ratio * 0.7).toFixed(2);
+                stroke = activeColor; sw = '0.5';
+                activeCCs[cc] = { ratio: ratio, traffic: traffic };
             }
-            d += 'Z';
-            svg += '<path d="' + d + '" fill="' + landFill + '" stroke="' + landStroke + '" stroke-width="0.8"/>';
+            for (var pi = 0; pi < polys.length; pi++) {
+                var ring = polys[pi];
+                if (ring.length < 3) continue;
+                var d = '';
+                for (var ri = 0; ri < ring.length; ri++) {
+                    var p = proj(ring[ri][1], ring[ri][0]);
+                    d += (ri === 0 ? 'M' : 'L') + p[0].toFixed(0) + ',' + p[1].toFixed(0);
+                }
+                d += 'Z';
+                svg += '<path d="' + d + '" fill="' + fill + '" fill-opacity="' + fo + '" stroke="' + stroke + '" stroke-width="' + sw + '"';
+                if (traffic) svg += '><title>' + countryFlag(cc) + ' ' + (traffic.country_name || cc) + ': ' + formatBytes(traffic.bytes) + '</title></path>';
+                else svg += '/>';
+            }
         }
 
-        // Flow lines (behind bubbles)
+        // Flow lines from top bandwidth talkers
         if (topBW && topBW.length) {
-            var center = project(50, 10);
-            // Draw origin pulse
-            svg += '<circle cx="' + center[0] + '" cy="' + center[1] + '" r="4" fill="' + flowColor + '" opacity="0.8">';
-            svg += '<animate attributeName="r" values="3;7;3" dur="2s" repeatCount="indefinite"/>';
-            svg += '<animate attributeName="opacity" values="0.8;0.3;0.8" dur="2s" repeatCount="indefinite"/>';
-            svg += '</circle>';
-            for (var i = 0; i < Math.min(topBW.length, 10); i++) {
+            var center = proj(50, 10);
+            svg += '<circle cx="' + center[0] + '" cy="' + center[1] + '" r="3" fill="' + flowColor + '" opacity="0.8"><animate attributeName="r" values="2;6;2" dur="2s" repeatCount="indefinite"/></circle>';
+            for (var i = 0; i < Math.min(topBW.length, 8); i++) {
                 var t = topBW[i];
                 if (!t.country || !countryCentroids[t.country]) continue;
-                var dest = project(countryCentroids[t.country][0], countryCentroids[t.country][1]);
-                var midX = (center[0] + dest[0]) / 2;
-                var midY = Math.min(center[1], dest[1]) - 40;
-                svg += '<path d="M' + center[0] + ',' + center[1] + ' Q' + midX + ',' + midY + ' ' + dest[0] + ',' + dest[1] + '" fill="none" stroke="url(#flowGrad)" stroke-width="1.5" stroke-dasharray="6,4" opacity="0.6">';
-                svg += '<animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.5s" repeatCount="indefinite"/>';
-                svg += '</path>';
+                var dest = proj(countryCentroids[t.country][0], countryCentroids[t.country][1]);
+                var mx = (center[0] + dest[0]) / 2, my = Math.min(center[1], dest[1]) - 35;
+                svg += '<path d="M' + center[0] + ',' + center[1] + ' Q' + mx + ',' + my + ' ' + dest[0] + ',' + dest[1] + '" fill="none" stroke="' + flowColor + '" stroke-width="1.5" stroke-dasharray="6,4" opacity="0.5"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.5s" repeatCount="indefinite"/></path>';
             }
         }
 
-        // Glowing country bubbles with labels
-        svg += '<g filter="url(#glow)">';
-        for (var i = 0; i < countries.length; i++) {
-            var c = countries[i];
-            var cc = c.country;
-            if (!cc || !countryCentroids[cc]) continue;
-            var pos = project(countryCentroids[cc][0], countryCentroids[cc][1]);
-            var ratio = c.bytes / maxBytes;
-            var r = Math.max(8, Math.sqrt(ratio) * 32);
-            svg += '<circle cx="' + pos[0] + '" cy="' + pos[1] + '" r="' + r.toFixed(1) + '" fill="url(#bubbleGrad)">';
-            svg += '<title>' + countryFlag(cc) + ' ' + (c.country_name || cc) + ': ' + formatBytes(c.bytes) + ' (' + c.connections + ' IPs)</title>';
-            svg += '</circle>';
+        // Country code labels on active countries
+        for (var cc in activeCCs) {
+            if (!countryCentroids[cc]) continue;
+            var p = proj(countryCentroids[cc][0], countryCentroids[cc][1]);
+            var fs = Math.max(7, Math.min(12, 7 + activeCCs[cc].ratio * 8));
+            svg += '<text x="' + p[0] + '" y="' + (p[1] + fs * 0.35) + '" text-anchor="middle" fill="' + labelColor + '" font-size="' + fs.toFixed(0) + 'px" font-weight="700" style="pointer-events:none;text-shadow:0 1px 3px rgba(0,0,0,0.6)">' + cc + '</text>';
         }
-        svg += '</g>';
-        // Labels on top (no filter)
-        for (var i = 0; i < countries.length; i++) {
-            var c = countries[i];
-            var cc = c.country;
-            if (!cc || !countryCentroids[cc]) continue;
-            var pos = project(countryCentroids[cc][0], countryCentroids[cc][1]);
-            var ratio = c.bytes / maxBytes;
-            var r = Math.max(8, Math.sqrt(ratio) * 32);
-            if (r >= 12) {
-                var fs = Math.max(8, Math.min(13, r * 0.65));
-                svg += '<text x="' + pos[0] + '" y="' + (pos[1] + fs * 0.35) + '" text-anchor="middle" fill="' + textOnBubble + '" font-size="' + fs.toFixed(0) + 'px" font-weight="700" style="pointer-events:none;text-shadow:0 1px 2px rgba(0,0,0,0.5)">' + cc + '</text>';
-            }
-        }
-
         svg += '</svg>';
         container.innerHTML = svg;
 
-        // Country traffic table below map
+        // Country traffic table
         var tableWrap = document.getElementById('mapCountryTable');
         var tableEl = document.getElementById('mapCountryList');
         if (tableWrap && tableEl) {
@@ -1139,11 +1104,10 @@
             for (var i = 0; i < countries.length; i++) {
                 var c = countries[i];
                 var pct = total > 0 ? (c.bytes / total * 100) : 0;
-                var barW = Math.max(2, pct);
                 th += '<div style="display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:4px;background:var(--bg-1)">';
                 th += '<span style="width:20px;text-align:center">' + countryFlag(c.country) + '</span>';
                 th += '<span style="font-weight:600;width:24px">' + c.country + '</span>';
-                th += '<div style="flex:1;height:6px;background:var(--bg-2);border-radius:3px;overflow:hidden"><div style="width:' + barW.toFixed(1) + '%;height:100%;background:' + glowColor + ';border-radius:3px;opacity:0.7"></div></div>';
+                th += '<div style="flex:1;height:6px;background:var(--bg-2);border-radius:3px;overflow:hidden"><div style="width:' + Math.max(2, pct).toFixed(1) + '%;height:100%;background:' + activeColor + ';border-radius:3px;opacity:0.7"></div></div>';
                 th += '<span style="font-variant-numeric:tabular-nums;color:var(--text-2);min-width:55px;text-align:right">' + formatBytes(c.bytes) + '</span>';
                 th += '<span style="color:var(--text-3);min-width:38px;text-align:right">' + pct.toFixed(1) + '%</span>';
                 th += '</div>';
@@ -1277,72 +1241,75 @@
     }
 
     function renderLatencyChart(points, strokeColor, fillHex) {
-        var ML = 38; // left margin for Y axis labels
-        var W = 360, H = 64;
+        var ML = 42; // left margin for Y axis labels
+        var W = 360, H = 72;
         var chartW = W - ML;
+        var PT = 4, PB = 12; // padding top/bottom inside chart
 
         // Find max RTT for scale
         var maxRTT = 1;
         for (var i = 0; i < points.length; i++) {
             if (points[i].rtt > maxRTT) maxRTT = points[i].rtt;
         }
-        maxRTT = Math.max(maxRTT * 1.15, 5); // 15% headroom, min 5ms
+        maxRTT = Math.max(maxRTT * 1.2, 5); // 20% headroom, min 5ms
 
         // Nice Y-axis ticks
-        var yTicks = niceScale(0, maxRTT, 4);
+        var yTicks = niceScale(0, maxRTT, 3);
+
+        function yPx(val) { return PT + (1 - val / maxRTT) * (H - PT - PB); }
 
         var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:' + H + 'px;display:block">';
 
-        // Background
-        svg += '<rect x="' + ML + '" y="0" width="' + chartW + '" height="' + H + '" fill="var(--bg-1)" rx="3"/>';
+        // Chart background
+        svg += '<rect x="' + ML + '" y="0" width="' + chartW + '" height="' + H + '" fill="var(--bg-1)" rx="4"/>';
 
         // Y-axis grid lines and labels
         for (var yi = 0; yi < yTicks.length; yi++) {
             var yVal = yTicks[yi];
-            var yPx = H - (yVal / maxRTT) * (H - 6) - 3;
-            if (yPx < 2 || yPx > H - 2) continue;
-            svg += '<line x1="' + ML + '" y1="' + yPx.toFixed(1) + '" x2="' + W + '" y2="' + yPx.toFixed(1) + '" stroke="var(--text-3)" stroke-width="0.5" opacity="0.3"/>';
+            var y = yPx(yVal);
+            if (y < PT || y > H - PB) continue;
+            svg += '<line x1="' + ML + '" y1="' + y.toFixed(1) + '" x2="' + W + '" y2="' + y.toFixed(1) + '" stroke="var(--text-3)" stroke-width="0.5" opacity="0.25"/>';
             var label = yVal < 10 ? yVal.toFixed(1) : Math.round(yVal);
-            svg += '<text x="' + (ML - 4) + '" y="' + (yPx + 3) + '" text-anchor="end" fill="var(--text-2)" font-size="8px" style="font-variant-numeric:tabular-nums">' + label + '</text>';
+            svg += '<text x="' + (ML - 3) + '" y="' + (y + 3) + '" text-anchor="end" fill="var(--text-2)" font-size="9px" style="font-variant-numeric:tabular-nums">' + label + '</text>';
         }
-        // "ms" unit label
-        svg += '<text x="' + (ML - 4) + '" y="9" text-anchor="end" fill="var(--text-3)" font-size="7px">ms</text>';
+        // "ms" unit label — positioned at top-left, clear of tick values
+        svg += '<text x="2" y="9" fill="var(--text-3)" font-size="8px" font-weight="600">ms</text>';
 
         // Build path + fill
         var path = '', fillPath = '';
         var lossDots = '';
-        var lastGoodX = -1;
+        var firstGoodX = -1, lastGoodX = -1;
         for (var i = 0; i < points.length; i++) {
-            var x = ML + (i / (points.length - 1)) * chartW;
+            var x = ML + (i / Math.max(points.length - 1, 1)) * chartW;
             if (points[i].rtt < 0) {
-                lossDots += '<rect x="' + (x - 0.5) + '" y="0" width="1" height="' + H + '" fill="var(--danger, #ef4444)" opacity="0.15"/>';
+                lossDots += '<line x1="' + x.toFixed(1) + '" y1="' + PT + '" x2="' + x.toFixed(1) + '" y2="' + (H - PB) + '" stroke="var(--danger, #ef4444)" stroke-width="1" opacity="0.12"/>';
                 continue;
             }
-            var y = H - (points[i].rtt / maxRTT) * (H - 6) - 3;
+            var y = yPx(points[i].rtt);
             path += (path ? ' L' : 'M') + x.toFixed(1) + ',' + y.toFixed(1);
-            if (!fillPath) fillPath = 'M' + x.toFixed(1) + ',' + H;
+            if (firstGoodX < 0) { firstGoodX = x; fillPath = 'M' + x.toFixed(1) + ',' + (H - PB); }
             fillPath += ' L' + x.toFixed(1) + ',' + y.toFixed(1);
             lastGoodX = x;
         }
         if (fillPath && lastGoodX >= 0) {
-            fillPath += ' L' + lastGoodX.toFixed(1) + ',' + H + ' Z';
+            fillPath += ' L' + lastGoodX.toFixed(1) + ',' + (H - PB) + ' Z';
         }
 
-        // Loss indicator strips
+        // Loss strips
         svg += lossDots;
 
-        // Fill area
+        // Fill area — very subtle
         if (fillPath) {
-            svg += '<path d="' + fillPath + '" fill="' + fillHex + '" opacity="0.08"/>';
+            svg += '<path d="' + fillPath + '" fill="' + fillHex + '" opacity="0.06"/>';
         }
         // Line
         if (path) {
-            svg += '<path d="' + path + '" fill="none" stroke="' + strokeColor + '" stroke-width="1.5" stroke-linejoin="round"/>';
+            svg += '<path d="' + path + '" fill="none" stroke="' + strokeColor + '" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>';
         }
 
-        // Time label: "5m ago" on left, "now" on right
-        svg += '<text x="' + (ML + 2) + '" y="' + (H - 2) + '" fill="var(--text-3)" font-size="7px">5m ago</text>';
-        svg += '<text x="' + (W - 2) + '" y="' + (H - 2) + '" text-anchor="end" fill="var(--text-3)" font-size="7px">now</text>';
+        // Time labels
+        svg += '<text x="' + (ML + 3) + '" y="' + (H - 1) + '" fill="var(--text-3)" font-size="8px">15m ago</text>';
+        svg += '<text x="' + (W - 3) + '" y="' + (H - 1) + '" text-anchor="end" fill="var(--text-3)" font-size="8px">now</text>';
 
         svg += '</svg>';
         return svg;
