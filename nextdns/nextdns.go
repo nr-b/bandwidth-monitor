@@ -20,6 +20,7 @@ type Client struct {
 	profile  string
 	apiKey   string
 	interval time.Duration
+	httpC    *http.Client
 
 	mu    sync.RWMutex
 	stats *snapshot
@@ -61,6 +62,7 @@ func New(profile, apiKey string, pollInterval time.Duration) *Client {
 		profile:  profile,
 		apiKey:   apiKey,
 		interval: pollInterval,
+		httpC:    &http.Client{Timeout: 15 * time.Second},
 		stopCh:   make(chan struct{}),
 	}
 }
@@ -201,8 +203,7 @@ func fetchJSON[T any](c *Client, path string) (T, bool) {
 	}
 	req.Header.Set("X-Api-Key", c.apiKey)
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := c.httpC.Do(req)
 	if err != nil {
 		log.Printf("nextdns: fetch %s: %v", path, err)
 		return zero, false

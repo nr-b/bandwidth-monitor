@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"bandwidth-monitor/resolver"
+
 	mdns "github.com/miekg/dns"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
@@ -74,7 +76,7 @@ type TracerouteProgress struct {
 
 // RunTraceroute performs N probes per hop from TTL 1..maxTTL using ICMP echo.
 // It streams progress updates over the returned channel.
-func RunTraceroute(target string, probesPerTTL int, maxTTL int) <-chan TracerouteProgress {
+func RunTraceroute(target string, probesPerTTL int, maxTTL int, dns *resolver.Resolver) <-chan TracerouteProgress {
 	ch := make(chan TracerouteProgress, 64)
 
 	go func() {
@@ -110,8 +112,21 @@ func RunTraceroute(target string, probesPerTTL int, maxTTL int) <-chan Tracerout
 		var hops []TracerouteHop
 		reachedDest := false
 
+		// Open a single ICMP socket for the entire traceroute run.
+		var conn *icmp.PacketConn
+		if isV4 {
+			conn, err = icmp.ListenPacket("ip4:icmp", "0.0.0.0")
+		} else {
+			conn, err = icmp.ListenPacket("ip6:ipv6-icmp", "::")
+		}
+		if err != nil {
+			ch <- TracerouteProgress{Phase: "error", Message: fmt.Sprintf("cannot open ICMP socket (need root/CAP_NET_RAW): %v", err)}
+			return
+		}
+		defer conn.Close()
+
 		for ttl := 1; ttl <= maxTTL; ttl++ {
-			hop := probeHop(destIP, ttl, probesPerTTL, isV4)
+			hop := probeHop(conn, destIP, ttl, probesPerTTL, isV4, dns)
 			hops = append(hops, hop)
 
 			ch <- TracerouteProgress{
@@ -153,14 +168,14 @@ func hopLabel(h TracerouteHop) string {
 	return h.IP
 }
 
-func probeHop(dest net.IP, ttl int, count int, isV4 bool) TracerouteHop {
+func probeHop(conn *icmp.PacketConn, dest net.IP, ttl int, count int, isV4 bool, dns *resolver.Resolver) TracerouteHop {
 	hop := TracerouteHop{TTL: ttl, Sent: count}
 
 	var rtts []float64
 	respondentIP := ""
 
 	for i := 0; i < count; i++ {
-		ip, rtt, err := sendProbe(dest, ttl, isV4, i)
+		ip, rtt, err := sendProbe(conn, dest, ttl, isV4, i)
 		if err != nil {
 			continue
 		}
@@ -190,12 +205,9 @@ func probeHop(dest net.IP, ttl int, count int, isV4 bool) TracerouteHop {
 		}
 		hop.AvgRTT = sum / float64(len(rtts))
 
-		// Reverse DNS (best effort, short timeout)
-		if hop.IP != "" {
-			names, err := net.LookupAddr(hop.IP)
-			if err == nil && len(names) > 0 {
-				hop.Hostname = strings.TrimSuffix(names[0], ".")
-			}
+		// Reverse DNS via shared resolver (always fresh for debug diagnostics).
+		if hop.IP != "" && dns != nil {
+			hop.Hostname = dns.LookupAddrFresh(hop.IP)
 		}
 	} else {
 		hop.MinRTT = 0
@@ -204,28 +216,19 @@ func probeHop(dest net.IP, ttl int, count int, isV4 bool) TracerouteHop {
 	return hop
 }
 
-func sendProbe(dest net.IP, ttl int, isV4 bool, seq int) (respIP string, rttMs float64, err error) {
+func sendProbe(conn *icmp.PacketConn, dest net.IP, ttl int, isV4 bool, seq int) (respIP string, rttMs float64, err error) {
 	if isV4 {
-		return sendProbeV4(dest, ttl, seq)
+		return sendProbeV4(conn, dest, ttl, seq)
 	}
-	return sendProbeV6(dest, ttl, seq)
+	return sendProbeV6(conn, dest, ttl, seq)
 }
 
-func sendProbeV4(dest net.IP, ttl int, seq int) (string, float64, error) {
-	// Use raw socket — required for setting TTL and receiving Time Exceeded
-	conn, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0")
-	if err != nil {
-		return "", 0, fmt.Errorf("listen (need root/CAP_NET_RAW): %w", err)
-	}
-	defer conn.Close()
-
+func sendProbeV4(conn *icmp.PacketConn, dest net.IP, ttl int, seq int) (string, float64, error) {
 	raw := conn.IPv4PacketConn()
 	if err := raw.SetTTL(ttl); err != nil {
 		return "", 0, fmt.Errorf("set TTL: %w", err)
 	}
-	if err := raw.SetControlMessage(ipv4.FlagTTL, true); err != nil {
-		// not critical, continue
-	}
+	raw.SetControlMessage(ipv4.FlagTTL, true)
 	conn.SetDeadline(time.Now().Add(1 * time.Second))
 
 	// Encode TTL and seq in the ICMP ID/Seq so we can match responses
@@ -310,13 +313,7 @@ func matchInnerICMP(data []byte, expectedID uint16) bool {
 	return innerID == expectedID
 }
 
-func sendProbeV6(dest net.IP, ttl int, seq int) (string, float64, error) {
-	conn, err := icmp.ListenPacket("ip6:ipv6-icmp", "::")
-	if err != nil {
-		return "", 0, fmt.Errorf("listen (need root/CAP_NET_RAW): %w", err)
-	}
-	defer conn.Close()
-
+func sendProbeV6(conn *icmp.PacketConn, dest net.IP, ttl int, seq int) (string, float64, error) {
 	raw := conn.IPv6PacketConn()
 	if err := raw.SetHopLimit(ttl); err != nil {
 		return "", 0, fmt.Errorf("set hop limit: %w", err)

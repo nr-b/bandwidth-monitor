@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"bandwidth-monitor/geoip"
+	"bandwidth-monitor/resolver"
 
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
@@ -64,19 +65,18 @@ type Tracker struct {
 	buckets     []*bucket
 	current     *bucket
 	stopCh      chan struct{}
-	dnsCache    map[string]string
-	dnsCacheMu  sync.RWMutex
+	dns         *resolver.Resolver
 	geoDB       *geoip.DB
 }
 
-func New(device string, promiscuous bool, localNets []*net.IPNet, geoDB *geoip.DB) *Tracker {
+func New(device string, promiscuous bool, localNets []*net.IPNet, geoDB *geoip.DB, dns *resolver.Resolver) *Tracker {
 	return &Tracker{
 		device:      device,
 		promiscuous: promiscuous,
 		localNets:   localNets,
 		buckets:     make([]*bucket, 0, 1440),
 		stopCh:      make(chan struct{}),
-		dnsCache:    make(map[string]string),
+		dns:         dns,
 		geoDB:       geoDB,
 	}
 }
@@ -155,7 +155,9 @@ func (t *Tracker) TopByVolume(n int) []TalkerStat {
 
 	// Step 3: Enrich outside lock — DNS resolution and GeoIP are expensive
 	for i := range list {
-		list[i].Hostname = t.resolveIP(list[i].IP)
+		if t.dns != nil {
+			list[i].Hostname = t.dns.LookupAddrAsync(list[i].IP)
+		}
 		t.enrichGeo(&list[i])
 	}
 	return list
@@ -210,7 +212,9 @@ func (t *Tracker) TopByBandwidth(n int) []TalkerStat {
 
 	// Step 3: Enrich outside lock — DNS resolution and GeoIP are expensive
 	for i := range list {
-		list[i].Hostname = t.resolveIP(list[i].IP)
+		if t.dns != nil {
+			list[i].Hostname = t.dns.LookupAddrAsync(list[i].IP)
+		}
 		t.enrichGeo(&list[i])
 	}
 	return list
@@ -252,7 +256,7 @@ func (t *Tracker) captureDevice(device string) {
 			return
 		default:
 		}
-		data, ci, err := handle.ReadPacketData()
+		data, _, err := handle.ReadPacketData()
 		if err != nil {
 			// Timeout is expected — just loop
 			if err == pcap.NextErrorTimeoutExpired {
@@ -266,26 +270,25 @@ func (t *Tracker) captureDevice(device string) {
 			Lazy:   true,
 			NoCopy: true,
 		})
-		_ = ci
 		t.processPacket(pkt)
 	}
 }
 
 func (t *Tracker) processPacket(pkt gopacket.Packet) {
-	var srcIP, dstIP string
+	var srcIP, dstIP net.IP
 	var pktLen uint64
 	var ipVersion string
 
 	if ipLayer := pkt.Layer(layers.LayerTypeIPv4); ipLayer != nil {
 		ip := ipLayer.(*layers.IPv4)
-		srcIP = ip.SrcIP.String()
-		dstIP = ip.DstIP.String()
+		srcIP = ip.SrcIP
+		dstIP = ip.DstIP
 		pktLen = uint64(ip.Length)
 		ipVersion = "IPv4"
 	} else if ipLayer := pkt.Layer(layers.LayerTypeIPv6); ipLayer != nil {
 		ip := ipLayer.(*layers.IPv6)
-		srcIP = ip.SrcIP.String()
-		dstIP = ip.DstIP.String()
+		srcIP = ip.SrcIP
+		dstIP = ip.DstIP
 		pktLen = uint64(ip.Length) + 40
 		ipVersion = "IPv6"
 	} else {
@@ -303,6 +306,13 @@ func (t *Tracker) processPacket(pkt gopacket.Packet) {
 		proto = "Other"
 	}
 
+	// Classify IPs outside the lock — avoids holding the write lock
+	// while doing net.IP method calls.
+	srcLocal := isLocalIP(srcIP) || t.isLocalNet(srcIP)
+	dstLocal := isLocalIP(dstIP) || t.isLocalNet(dstIP)
+	srcStr := srcIP.String()
+	dstStr := dstIP.String()
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -310,29 +320,30 @@ func (t *Tracker) processPacket(pkt gopacket.Packet) {
 		return
 	}
 
-	for _, ip := range []string{srcIP, dstIP} {
-		if isPrivateIP(ip) || t.isLocalNet(ip) {
+	for _, entry := range []struct {
+		ip    string
+		local bool
+	}{{srcStr, srcLocal}, {dstStr, dstLocal}} {
+		if entry.local {
 			continue
 		}
-		if _, ok := t.current.hosts[ip]; !ok {
-			t.current.hosts[ip] = &hostAccum{}
+		if _, ok := t.current.hosts[entry.ip]; !ok {
+			t.current.hosts[entry.ip] = &hostAccum{}
 		}
-		t.current.hosts[ip].bytes += pktLen
-		t.current.hosts[ip].packets++
+		t.current.hosts[entry.ip].bytes += pktLen
+		t.current.hosts[entry.ip].packets++
 	}
 
 	// Direction detection for SPAN/mirror port using LOCAL_NETS
 	if len(t.localNets) > 0 {
-		srcLocal := t.isLocalNet(srcIP)
-		dstLocal := t.isLocalNet(dstIP)
 		if srcLocal && !dstLocal {
 			// Local → Remote = upload (TX from local perspective)
-			if h, ok := t.current.hosts[dstIP]; ok {
+			if h, ok := t.current.hosts[dstStr]; ok {
 				h.txBytes += pktLen
 			}
 		} else if !srcLocal && dstLocal {
 			// Remote → Local = download (RX from local perspective)
-			if h, ok := t.current.hosts[srcIP]; ok {
+			if h, ok := t.current.hosts[srcStr]; ok {
 				h.rxBytes += pktLen
 			}
 		}
@@ -372,52 +383,6 @@ func (t *Tracker) rotateBuckets() {
 			return
 		}
 	}
-}
-
-// dnsSem limits concurrent reverse DNS lookups to avoid goroutine explosion.
-var dnsSem = make(chan struct{}, 16)
-
-func (t *Tracker) resolveIP(ip string) string {
-	t.dnsCacheMu.RLock()
-	name, ok := t.dnsCache[ip]
-	t.dnsCacheMu.RUnlock()
-
-	if ok {
-		return name
-	}
-
-	// Store IP as placeholder immediately so we don't re-trigger
-	t.dnsCacheMu.Lock()
-	// Double-check after acquiring write lock
-	if name, ok := t.dnsCache[ip]; ok {
-		t.dnsCacheMu.Unlock()
-		return name
-	}
-	t.dnsCache[ip] = ip
-	t.dnsCacheMu.Unlock()
-
-	// Resolve asynchronously with bounded concurrency
-	select {
-	case dnsSem <- struct{}{}:
-		go func() {
-			defer func() { <-dnsSem }()
-			names, err := net.LookupAddr(ip)
-			if err != nil || len(names) == 0 {
-				return
-			}
-			name := names[0]
-			if len(name) > 0 && name[len(name)-1] == '.' {
-				name = name[:len(name)-1]
-			}
-			t.dnsCacheMu.Lock()
-			t.dnsCache[ip] = name
-			t.dnsCacheMu.Unlock()
-		}()
-	default:
-		// Semaphore full — skip this lookup, will retry next time
-	}
-
-	return ip
 }
 
 // GetProtocolBreakdown returns accumulated bytes per L4 protocol over the 24h window.
@@ -466,65 +431,12 @@ type CountryStat struct {
 	Connections int    `json:"connections"`
 }
 
-// GetCountryBreakdown returns traffic grouped by country over the 24h window.
-func (t *Tracker) GetCountryBreakdown() []CountryStat {
-	if t.geoDB == nil || !t.geoDB.Available() {
-		return nil
-	}
-
-	// Step 1: Copy raw data under lock
-	t.mu.RLock()
-	ipTotals := make(map[string]uint64)
-	for _, b := range t.buckets {
-		for ip, acc := range b.hosts {
-			ipTotals[ip] += acc.bytes
-		}
-	}
-	if t.current != nil {
-		for ip, acc := range t.current.hosts {
-			ipTotals[ip] += acc.bytes
-		}
-	}
-	t.mu.RUnlock()
-
-	// Step 2: GeoIP enrichment outside lock
-	type countryAcc struct {
-		name  string
-		bytes uint64
-		ips   int
-	}
-	countries := make(map[string]*countryAcc)
-	for ip, bytes := range ipTotals {
-		geo := t.geoDB.Lookup(ip)
-		cc := "XX"
-		cname := "Unknown"
-		if geo != nil && geo.Country != "" {
-			cc = geo.Country
-			cname = geo.CountryName
-		}
-		if _, ok := countries[cc]; !ok {
-			countries[cc] = &countryAcc{name: cname}
-		}
-		countries[cc].bytes += bytes
-		countries[cc].ips++
-	}
-
-	result := make([]CountryStat, 0, len(countries))
-	for cc, acc := range countries {
-		result = append(result, CountryStat{
-			Country:     cc,
-			CountryName: acc.name,
-			Bytes:       acc.bytes,
-			Connections: acc.ips,
-		})
-	}
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].Bytes > result[j].Bytes
-	})
-	if len(result) > 20 {
-		result = result[:20]
-	}
-	return result
+// ASNStat holds per-ASN traffic totals.
+type ASNStat struct {
+	ASN         uint   `json:"asn"`
+	ASOrg       string `json:"as_org"`
+	Bytes       uint64 `json:"bytes"`
+	Connections int    `json:"connections"`
 }
 
 // enrichGeo populates geo fields on a TalkerStat from the MMDB.
@@ -542,18 +454,18 @@ func (t *Tracker) enrichGeo(s *TalkerStat) {
 	s.ASOrg = geo.ASOrg
 }
 
-// ASNStat holds per-ASN traffic totals.
-type ASNStat struct {
-	ASN         uint   `json:"asn"`
-	ASOrg       string `json:"as_org"`
-	Bytes       uint64 `json:"bytes"`
-	Connections int    `json:"connections"`
+// GeoBreakdown holds both per-country and per-ASN traffic summaries,
+// computed in a single pass over the IP totals to avoid duplicate work.
+type GeoBreakdown struct {
+	Countries []CountryStat `json:"countries"`
+	ASNs      []ASNStat     `json:"asns"`
 }
 
-// GetASNBreakdown returns traffic grouped by autonomous system over the 24h window.
-func (t *Tracker) GetASNBreakdown() []ASNStat {
+// GetGeoBreakdown returns traffic grouped by country and by ASN over the
+// 24h window.  Both are computed in a single lock + GeoIP pass.
+func (t *Tracker) GetGeoBreakdown() *GeoBreakdown {
 	if t.geoDB == nil || !t.geoDB.Available() {
-		return nil
+		return &GeoBreakdown{}
 	}
 
 	// Step 1: Copy raw data under lock
@@ -571,79 +483,94 @@ func (t *Tracker) GetASNBreakdown() []ASNStat {
 	}
 	t.mu.RUnlock()
 
-	// Step 2: GeoIP enrichment outside lock
+	// Step 2: Single GeoIP enrichment pass outside lock
+	type countryAcc struct {
+		name  string
+		bytes uint64
+		ips   int
+	}
 	type asnAcc struct {
 		org   string
 		bytes uint64
 		ips   int
 	}
+	countries := make(map[string]*countryAcc)
 	asns := make(map[uint]*asnAcc)
+
 	for ip, bytes := range ipTotals {
 		geo := t.geoDB.Lookup(ip)
-		var asn uint
-		var org string
+
+		// Country aggregation
+		cc := "XX"
+		cname := "Unknown"
+		if geo != nil && geo.Country != "" {
+			cc = geo.Country
+			cname = geo.CountryName
+		}
+		if _, ok := countries[cc]; !ok {
+			countries[cc] = &countryAcc{name: cname}
+		}
+		countries[cc].bytes += bytes
+		countries[cc].ips++
+
+		// ASN aggregation
 		if geo != nil && geo.ASN != 0 {
-			asn = geo.ASN
-			org = geo.ASOrg
+			if _, ok := asns[geo.ASN]; !ok {
+				asns[geo.ASN] = &asnAcc{org: geo.ASOrg}
+			}
+			asns[geo.ASN].bytes += bytes
+			asns[geo.ASN].ips++
 		}
-		if asn == 0 {
-			continue
-		}
-		if _, ok := asns[asn]; !ok {
-			asns[asn] = &asnAcc{org: org}
-		}
-		asns[asn].bytes += bytes
-		asns[asn].ips++
 	}
 
-	result := make([]ASNStat, 0, len(asns))
+	// Build country result
+	countryResult := make([]CountryStat, 0, len(countries))
+	for cc, acc := range countries {
+		countryResult = append(countryResult, CountryStat{
+			Country:     cc,
+			CountryName: acc.name,
+			Bytes:       acc.bytes,
+			Connections: acc.ips,
+		})
+	}
+	sort.Slice(countryResult, func(i, j int) bool {
+		return countryResult[i].Bytes > countryResult[j].Bytes
+	})
+	if len(countryResult) > 20 {
+		countryResult = countryResult[:20]
+	}
+
+	// Build ASN result
+	asnResult := make([]ASNStat, 0, len(asns))
 	for asn, acc := range asns {
-		result = append(result, ASNStat{
+		asnResult = append(asnResult, ASNStat{
 			ASN:         asn,
 			ASOrg:       acc.org,
 			Bytes:       acc.bytes,
 			Connections: acc.ips,
 		})
 	}
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].Bytes > result[j].Bytes
+	sort.Slice(asnResult, func(i, j int) bool {
+		return asnResult[i].Bytes > asnResult[j].Bytes
 	})
-	if len(result) > 20 {
-		result = result[:20]
+	if len(asnResult) > 20 {
+		asnResult = asnResult[:20]
 	}
-	return result
+
+	return &GeoBreakdown{
+		Countries: countryResult,
+		ASNs:      asnResult,
+	}
 }
 
-func isPrivateIP(ipStr string) bool {
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		return false
-	}
-	privateRanges := []struct {
-		network *net.IPNet
-	}{
-		{parseCIDR("10.0.0.0/8")},
-		{parseCIDR("172.16.0.0/12")},
-		{parseCIDR("192.168.0.0/16")},
-		{parseCIDR("127.0.0.0/8")},
-		{parseCIDR("fc00::/7")},
-		{parseCIDR("::1/128")},
-		{parseCIDR("fe80::/10")},
-	}
-	for _, r := range privateRanges {
-		if r.network.Contains(ip) {
-			return true
-		}
-	}
-	return false
+// isLocalIP checks if an IP is private, loopback, or link-local.
+// Uses Go's built-in methods — zero allocations.
+func isLocalIP(ip net.IP) bool {
+	return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()
 }
 
-func (t *Tracker) isLocalNet(ipStr string) bool {
+func (t *Tracker) isLocalNet(ip net.IP) bool {
 	if len(t.localNets) == 0 {
-		return false
-	}
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
 		return false
 	}
 	for _, n := range t.localNets {
@@ -652,9 +579,4 @@ func (t *Tracker) isLocalNet(ipStr string) bool {
 		}
 	}
 	return false
-}
-
-func parseCIDR(s string) *net.IPNet {
-	_, n, _ := net.ParseCIDR(s)
-	return n
 }

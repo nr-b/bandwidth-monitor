@@ -73,7 +73,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 - **Protocol breakdown** — TCP / UDP / ICMP / Other pie chart
 - **IP version breakdown** — IPv4 vs IPv6 traffic split
 - **GeoIP enrichment** — country flags, ASN org names via MaxMind MMDB files
-- **Reverse DNS** — resolves IPs to hostnames with in-memory cache
+- **Reverse DNS** — resolves IPs to hostnames via a shared resolver with TTL-based cache expiry and bounded concurrency
 
 ### DNS Tab
 
@@ -115,7 +115,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 
 ### Debug Tab
 
-- **Traceroute** — native Go ICMP traceroute with configurable probes per hop (default 20), using raw sockets with proper TTL manipulation and ICMP ID matching; shows per-hop IP, reverse DNS hostname, avg/min/max RTT, and packet loss percentage; supports IPv4 and IPv6; streams progress via SSE
+- **Traceroute** — native Go ICMP traceroute with configurable probes per hop (default 20), using raw sockets with proper TTL manipulation and ICMP ID matching; shows per-hop IP, reverse DNS hostname (always fresh, bypasses cache), avg/min/max RTT, and packet loss percentage; supports IPv4 and IPv6; streams progress via SSE
 - **DNS Check** — queries a domain (A, AAAA, MX, TXT, NS, CNAME, SOA, PTR) against 14 DNS servers in parallel: System Resolver, FFMUC Anycast01/02 (IPv4+IPv6), Cloudflare (IPv4+IPv6), Google (IPv4+IPv6), Quad9 (IPv4+IPv6), and OpenDNS (IPv4+IPv6); shows RCode, latency, TTL, DNSSEC AD flag per server; highlights the fastest server and flags records unique to a single server
 - **Resolver leak check** — automatically detects which public IPs your system resolver uses when talking to authoritative servers, via `o-o.myaddr.l.google.com` TXT and `dnscheck.tools` TXT (including IPv4-only and IPv6-only variants); shows the configured local resolver from `/etc/resolv.conf`, upstream egress IPs, EDNS Client Subnet info, and resolver org/geo from dnscheck.tools
 
@@ -427,6 +427,7 @@ main.go                   → entry point, env config, wires all components
 collector/                → netlink-based interface stats (RTM_GETLINK/RTM_GETADDR), rates, 24h history, VPN routing
 conntrack/                → netlink-based conntrack (NAT) table reader via ti-mo/conntrack
 talkers/                  → pcap packet capture, per-IP tracking, 1-min bucket aggregation
+resolver/                 → shared reverse-DNS resolver with TTL-based cache and bounded concurrency
 speedtest/                → HTTP-based speed test client (download/upload/ping against OpenSpeedTest servers)
 debug/                    → traceroute (native ICMP), DNS checker (multi-server), resolver leak detection
 handler/                  → HTTP REST API + SSE streaming handler
