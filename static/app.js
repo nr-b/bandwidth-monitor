@@ -1082,19 +1082,31 @@
         if (topBW && topBW.length) {
             var center = proj(50, 10);
             svg += '<circle cx="' + center[0] + '" cy="' + center[1] + '" r="3" fill="' + flowColor + '" opacity="0.8"><animate attributeName="r" values="2;6;2" dur="2s" repeatCount="indefinite"/></circle>';
+            // Track how many flows per country to fan out overlapping lines
+            var ccFlowIdx = {};
             for (var i = 0; i < Math.min(topBW.length, 8); i++) {
                 var t = topBW[i];
                 if (!t.country || !countryCentroids[t.country]) continue;
-                var dest = proj(countryCentroids[t.country][0], countryCentroids[t.country][1]);
-                var mx = (center[0] + dest[0]) / 2, my = Math.min(center[1], dest[1]) - 35;
+                var cc = t.country;
+                if (!ccFlowIdx[cc]) ccFlowIdx[cc] = 0;
+                var fi = ccFlowIdx[cc]++;
+                // Offset destination so multiple flows to same country fan out
+                var baseDest = proj(countryCentroids[cc][0], countryCentroids[cc][1]);
+                var spread = 12;
+                var offsetX = (fi - (ccFlowIdx[cc] - 1) / 2) * spread;
+                var dest = [baseDest[0] + offsetX, baseDest[1]];
+                // Vary the curve height per flow so arcs don't overlap
+                var curveOffset = 35 + fi * 15;
+                var mx = (center[0] + dest[0]) / 2, my = Math.min(center[1], dest[1]) - curveOffset;
                 var pathD = 'M' + center[0] + ',' + center[1] + ' Q' + mx + ',' + my + ' ' + dest[0] + ',' + dest[1];
                 var host = t.hostname && t.hostname !== t.ip ? t.hostname + ' (' + t.ip + ')' : t.ip;
                 var asInfo = t.as_org ? ' \u00b7 AS' + (t.asn || '') + ' ' + t.as_org : '';
                 var tip = host + asInfo + ' \u2192 ' + formatRate(t.rate_bytes || 0);
                 // Invisible wide hit area for hover
                 svg += '<path d="' + pathD + '" fill="none" stroke="transparent" stroke-width="12" style="cursor:pointer"><title>' + tip + '</title></path>';
-                // Visible animated line
-                svg += '<path d="' + pathD + '" fill="none" stroke="' + flowColor + '" stroke-width="1.5" stroke-dasharray="6,4" opacity="0.5" style="pointer-events:none"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.5s" repeatCount="indefinite"/></path>';
+                // Visible animated line — vary dash speed slightly per flow
+                var dur = (1.3 + fi * 0.2).toFixed(1);
+                svg += '<path d="' + pathD + '" fill="none" stroke="' + flowColor + '" stroke-width="1.5" stroke-dasharray="6,4" opacity="' + (0.5 - fi * 0.05).toFixed(2) + '" style="pointer-events:none"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="' + dur + 's" repeatCount="indefinite"/></path>';
             }
         }
 
