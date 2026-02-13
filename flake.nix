@@ -4,48 +4,44 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+
+    # GeoIP databases — run `nix flake update` to pull fresh versions.
+    # These are from a public mirror that tracks MaxMind's weekly releases.
+    geolite2-country = {
+      url = "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb";
+      flake = false;
+    };
+    geolite2-asn = {
+      url = "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-ASN.mmdb";
+      flake = false;
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, geolite2-country, geolite2-asn }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-
-        # GeoIP databases (fetched as fixed-output derivations)
-        geolite2-country = pkgs.fetchurl {
-          url = "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb";
-          hash = "sha256-8rj7BTcc+MkfjDOFGEyRhIMr3J/zjblOVFFI1GvBDAM=";
-        };
-
-        geolite2-asn = pkgs.fetchurl {
-          url = "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-ASN.mmdb";
-          hash = "sha256-12uzwfuqh60oqs9eC5D4qTRiaMJbIEmN6kIYxYPPlk8=";
-        };
 
         bandwidth-monitor = pkgs.buildGoModule {
           pname = "bandwidth-monitor";
           version = "0.0.17";
           src = ./.;
 
-          vendorHash = null; # Uses go.sum for verification
+          vendorHash = null;
 
           buildInputs = [ pkgs.libpcap ];
           nativeBuildInputs = [ pkgs.pkg-config ];
 
-          # CGO is needed for libpcap (gopacket)
           CGO_ENABLED = 1;
-
           ldflags = [ "-s" "-w" ];
 
           postInstall = ''
-            # Install GeoIP databases alongside the binary
+            # Install GeoIP databases from flake inputs
             install -Dm644 ${geolite2-country} $out/share/bandwidth-monitor/GeoLite2-Country.mmdb
             install -Dm644 ${geolite2-asn} $out/share/bandwidth-monitor/GeoLite2-ASN.mmdb
 
-            # Install env.example
+            # Install support files
             install -Dm644 env.example $out/share/bandwidth-monitor/env.example
-
-            # Install systemd service
             install -Dm644 bandwidth-monitor.service $out/lib/systemd/system/bandwidth-monitor.service
           '';
 
@@ -69,16 +65,10 @@
         };
 
         devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [
-            go
-            gopls
-            libpcap
-            pkg-config
-          ];
+          buildInputs = with pkgs; [ go gopls libpcap pkg-config ];
         };
       }
     ) // {
-      # NixOS module for easy integration
       nixosModules.default = { config, lib, pkgs, ... }:
         let
           cfg = config.services.bandwidth-monitor;
@@ -97,6 +87,21 @@
               type = lib.types.str;
               default = ":8080";
               description = "HTTP listen address.";
+            };
+
+            geoipDir = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = ''
+                Path to directory containing GeoLite2-Country.mmdb and
+                GeoLite2-ASN.mmdb. If null, uses the databases bundled
+                in the package (from flake inputs).
+
+                Set this if you use services.geoipupdate to keep the
+                databases fresh, e.g.:
+                  geoipDir = "/var/lib/GeoIP";
+              '';
+              example = "/var/lib/GeoIP";
             };
 
             environmentFile = lib.mkOption {
@@ -122,10 +127,14 @@
               after = [ "network.target" ];
               wantedBy = [ "multi-user.target" ];
 
-              environment = {
+              environment = let
+                geoDir = if cfg.geoipDir != null
+                  then cfg.geoipDir
+                  else "${cfg.package}/share/bandwidth-monitor";
+              in {
                 LISTEN = cfg.listenAddress;
-                GEO_COUNTRY = "${cfg.package}/share/bandwidth-monitor/GeoLite2-Country.mmdb";
-                GEO_ASN = "${cfg.package}/share/bandwidth-monitor/GeoLite2-ASN.mmdb";
+                GEO_COUNTRY = "${geoDir}/GeoLite2-Country.mmdb";
+                GEO_ASN = "${geoDir}/GeoLite2-ASN.mmdb";
               } // cfg.settings;
 
               serviceConfig = {
@@ -141,6 +150,8 @@
                 RestartSec = 5;
               } // lib.optionalAttrs (cfg.environmentFile != null) {
                 EnvironmentFile = cfg.environmentFile;
+              } // lib.optionalAttrs (cfg.geoipDir != null) {
+                ReadOnlyPaths = [ cfg.geoipDir ];
               };
             };
           };
