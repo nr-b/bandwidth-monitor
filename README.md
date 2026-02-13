@@ -16,6 +16,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 - [API Endpoints](#api-endpoints)
 - [External Services Transparency](#external-services-transparency)
 - [Notes](#notes)
+- [License](#license)
 
 ---
 
@@ -523,3 +524,13 @@ If running without root, grant both `CAP_NET_RAW` and `CAP_NET_ADMIN` for full f
 - **Speed test** — runs from the router, not the client — useful for testing WAN throughput independent of local WiFi
 - **NAT per-flow counters** — require `nf_conntrack_acct=1` (see [Conntrack Configuration](#conntrack-nat-configuration))
 - All assets are embedded in the binary — single-file deployment, no runtime dependencies
+
+---
+
+## License
+
+This project is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0).
+
+You are free to use, modify, and distribute this software under the terms of the AGPL-3.0. If you modify the program and make it available over a network, you must release your modifications under the same license.
+
+Bundled third-party libraries (Chart.js, Luxon, Inter, JetBrains Mono) are distributed under their respective permissive licenses — see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for details.
