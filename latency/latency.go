@@ -323,11 +323,11 @@ func (m *Monitor) probeAll() {
 
 		// ICMPv4
 		if conn4 != nil && t.ipv4 != nil {
-			icmpV4RTT = pingOneV4(conn4, t.ipv4, i, now)
+			icmpV4RTT = pingOneV4(conn4, t.ipv4, i)
 		}
 		// ICMPv6
 		if conn6 != nil && t.ipv6 != nil {
-			icmpV6RTT = pingOneV6(conn6, t.ipv6, i, now)
+			icmpV6RTT = pingOneV6(conn6, t.ipv6, i)
 		}
 		// HTTPSv4
 		if t.ipv4 != nil {
@@ -367,7 +367,7 @@ var (
 	icmpV6Logged bool
 )
 
-func pingOneV4(conn *icmp.PacketConn, dest net.IP, seq int, now time.Time) float64 {
+func pingOneV4(conn *icmp.PacketConn, dest net.IP, seq int) float64 {
 	id := uint16(os.Getpid() & 0xFFFF)
 	msg := icmp.Message{
 		Type: ipv4.ICMPTypeEcho, Code: 0,
@@ -378,7 +378,7 @@ func pingOneV4(conn *icmp.PacketConn, dest net.IP, seq int, now time.Time) float
 		return -1
 	}
 	dst := &net.IPAddr{IP: dest}
-	conn.SetDeadline(now.Add(icmpTimeout))
+	conn.SetDeadline(time.Now().Add(icmpTimeout))
 	start := time.Now()
 	if _, err := conn.WriteTo(wb, dst); err != nil {
 		return -1
@@ -404,7 +404,7 @@ func pingOneV4(conn *icmp.PacketConn, dest net.IP, seq int, now time.Time) float
 	}
 }
 
-func pingOneV6(conn *icmp.PacketConn, dest net.IP, seq int, now time.Time) float64 {
+func pingOneV6(conn *icmp.PacketConn, dest net.IP, seq int) float64 {
 	id := uint16(os.Getpid() & 0xFFFF)
 	msg := icmp.Message{
 		Type: ipv6.ICMPTypeEchoRequest, Code: 0,
@@ -415,7 +415,7 @@ func pingOneV6(conn *icmp.PacketConn, dest net.IP, seq int, now time.Time) float
 		return -1
 	}
 	dst := &net.IPAddr{IP: dest}
-	conn.SetDeadline(now.Add(icmpTimeout))
+	conn.SetDeadline(time.Now().Add(icmpTimeout))
 	start := time.Now()
 	if _, err := conn.WriteTo(wb, dst); err != nil {
 		return -1
