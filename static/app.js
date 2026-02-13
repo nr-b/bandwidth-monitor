@@ -2040,6 +2040,97 @@
             }
         }
 
+        // ── Comparison Matrix ──
+        // Collect unique record values across all servers
+        var uniqueRecords = [];
+        var recordSeen = {};
+        for (var mi = 0; mi < servers.length; mi++) {
+            if (servers[mi].records) {
+                for (var mri = 0; mri < servers[mi].records.length; mri++) {
+                    var key = servers[mi].records[mri].type + ':' + servers[mi].records[mri].value;
+                    if (!recordSeen[key]) {
+                        recordSeen[key] = true;
+                        uniqueRecords.push({ type: servers[mi].records[mri].type, value: servers[mi].records[mri].value });
+                    }
+                }
+            }
+        }
+
+        if (servers.length > 1) {
+            // Short server labels
+            var shortNames = servers.map(function(s) {
+                return s.server.replace(/ \(.*\)/, '').replace('System Resolver', 'System');
+            });
+
+            h += '<div style="border-bottom:1px solid var(--border);padding:14px 16px;overflow-x:auto">';
+            h += '<div style="font-size:12px;font-weight:600;color:var(--text-0);margin-bottom:10px">Comparison Matrix</div>';
+            h += '<table style="width:100%;border-collapse:collapse;font-size:11px">';
+
+            // Header row: server names
+            h += '<thead><tr><th style="text-align:left;padding:4px 8px;font-weight:600;color:var(--text-2);border-bottom:1px solid var(--border);min-width:80px">Record</th>';
+            for (var ci = 0; ci < servers.length; ci++) {
+                var sColor = servers[ci].rcode === 'NOERROR' ? 'var(--success)' : 'var(--danger)';
+                h += '<th style="text-align:center;padding:4px 4px;font-weight:600;color:var(--text-0);border-bottom:1px solid var(--border);white-space:nowrap;font-size:10px">';
+                h += '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:' + sColor + ';margin-right:3px;vertical-align:middle"></span>';
+                h += shortNames[ci] + '</th>';
+            }
+            h += '</tr></thead><tbody>';
+
+            // Latency row
+            h += '<tr><td style="padding:4px 8px;font-weight:600;color:var(--text-2)">Latency</td>';
+            for (var ci = 0; ci < servers.length; ci++) {
+                var lat = servers[ci].latency;
+                var lc = lat > 0 && Math.abs(lat - fastestLatency) < 0.1 ? 'var(--success);font-weight:700' : (lat > 100 ? 'var(--warning)' : 'var(--text-0)');
+                h += '<td style="text-align:center;padding:4px;font-family:JetBrains Mono,monospace;font-size:10px;color:' + lc + '">' + (lat > 0 ? lat.toFixed(1) : '—') + '</td>';
+            }
+            h += '</tr>';
+
+            // RCODE row
+            h += '<tr style="background:var(--bg-2)"><td style="padding:4px 8px;font-weight:600;color:var(--text-2)">Status</td>';
+            for (var ci = 0; ci < servers.length; ci++) {
+                var rc = servers[ci].rcode || 'ERROR';
+                var rcc = rc === 'NOERROR' ? 'var(--success)' : (rc === 'NXDOMAIN' ? 'var(--danger)' : 'var(--warning)');
+                h += '<td style="text-align:center;padding:4px;font-size:10px;font-weight:600;color:' + rcc + '">' + rc + '</td>';
+            }
+            h += '</tr>';
+
+            // Record rows: each unique value, check which servers have it
+            for (var uri = 0; uri < uniqueRecords.length; uri++) {
+                var rec = uniqueRecords[uri];
+                var bg = uri % 2 === 0 ? '' : 'background:var(--bg-2)';
+                // Count how many servers have this record
+                var hasCount = 0;
+                for (var ci = 0; ci < servers.length; ci++) {
+                    if (servers[ci].records) {
+                        for (var rci = 0; rci < servers[ci].records.length; rci++) {
+                            if (servers[ci].records[rci].type === rec.type && servers[ci].records[rci].value === rec.value) { hasCount++; break; }
+                        }
+                    }
+                }
+                var isPartial = hasCount > 0 && hasCount < servers.length;
+                h += '<tr style="' + bg + '"><td style="padding:4px 8px;font-family:JetBrains Mono,monospace;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px" title="' + rec.value + '">';
+                h += '<span style="color:var(--text-2);margin-right:4px">' + rec.type + '</span>' + rec.value + '</td>';
+                for (var ci = 0; ci < servers.length; ci++) {
+                    var found = false;
+                    if (servers[ci].records) {
+                        for (var rci = 0; rci < servers[ci].records.length; rci++) {
+                            if (servers[ci].records[rci].type === rec.type && servers[ci].records[rci].value === rec.value) { found = true; break; }
+                        }
+                    }
+                    if (found) {
+                        h += '<td style="text-align:center;padding:4px;color:var(--success)">✓</td>';
+                    } else {
+                        h += '<td style="text-align:center;padding:4px;color:' + (isPartial ? 'var(--danger)' : 'var(--text-3)') + '">' + (isPartial ? '✗' : '—') + '</td>';
+                    }
+                }
+                h += '</tr>';
+            }
+            h += '</tbody></table></div>';
+        }
+
+        // ── Per-server detail cards ──
+        h += '<div style="font-size:12px;font-weight:600;color:var(--text-2);padding:14px 20px 6px">Server Details</div>';
+
         for (var si = 0; si < servers.length; si++) {
             var srv = servers[si];
             var srvName = srv.server;

@@ -28,10 +28,12 @@ const (
 )
 
 // DefaultTargets are used when no LATENCY_TARGETS env var is set.
+// All defaults are European-operated, privacy-friendly services.
 var DefaultTargets = []string{
 	"anycast01.ffmuc.net",
 	"anycast02.ffmuc.net",
-	"github.com",
+	"dns.quad9.net",
+	"dns3.digitalcourage.de",
 }
 
 // Point is a single latency measurement.

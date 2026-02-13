@@ -345,7 +345,7 @@ The UniFi integration auto-detects both legacy controllers (port 8443) and UniFi
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LATENCY_TARGETS` | `anycast01.ffmuc.net,anycast02.ffmuc.net,github.com` | Comma-separated hostnames/IPs to probe via ICMP and HTTPS |
+| `LATENCY_TARGETS` | `anycast01.ffmuc.net,anycast02.ffmuc.net,dns.quad9.net,dns3.digitalcourage.de` | Comma-separated hostnames/IPs to probe via ICMP and HTTPS |
 
 ### Tab Visibility
 
@@ -520,7 +520,8 @@ Every hardcoded external service that bandwidth-monitor or its components contac
 | **dnscheck.tools** | `test.dnscheck.tools`, `test-ipv4.*`, `test-ipv6.*` | Resolver leak check | Piggybacks on DNS Check | TXT query via system resolver | Resolver IP, org, geo, protocol |
 | **FFMUC Anycast01** | `anycast01.ffmuc.net` | Latency monitor | Every 2s on startup (**on by default**, configurable via `LATENCY_TARGETS`) | ICMP echo + HTTPS GET | RTT measurement |
 | **FFMUC Anycast02** | `anycast02.ffmuc.net` | Latency monitor | Every 2s on startup (**on by default**, configurable via `LATENCY_TARGETS`) | ICMP echo + HTTPS GET | RTT measurement |
-| **GitHub** | `github.com` | Latency monitor | Every 2s on startup (**on by default**, configurable via `LATENCY_TARGETS`) | ICMP echo + HTTPS GET | RTT measurement |
+| **Quad9 DNS** | `dns.quad9.net` | Latency monitor | Every 2s on startup (**on by default**, configurable via `LATENCY_TARGETS`) | ICMP echo + HTTPS GET | RTT measurement |
+| **Digitalcourage DNS** | `dns3.digitalcourage.de` | Latency monitor | Every 2s on startup (**on by default**, configurable via `LATENCY_TARGETS`) | ICMP echo + HTTPS GET | RTT measurement |
 
 All JavaScript libraries (Chart.js, Luxon) and fonts (Inter, JetBrains Mono) are **bundled in the binary** — no CDN requests are made at runtime. The world map boundary data (Natural Earth 110m, public domain) is also bundled. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for their licenses.
 
