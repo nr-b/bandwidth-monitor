@@ -52,6 +52,7 @@ type Collector struct {
 	history        map[string][]HistoryPoint
 	ifaceTypeCache map[string]string
 	vpnStatusFiles map[string]string // iface name → sentinel file path
+	allowedIfaces  map[string]bool   // nil = all; non-nil = whitelist
 	nlHandle       *vnl.Handle       // persistent netlink handle
 	addrCache      map[int][]string  // cached addresses by link index
 	addrCacheTime  time.Time         // last address refresh
@@ -74,9 +75,16 @@ type rawStat struct {
 	ts        time.Time
 }
 
-func New(vpnStatusFiles map[string]string) *Collector {
+func New(vpnStatusFiles map[string]string, allowedIfaces []string) *Collector {
 	if vpnStatusFiles == nil {
 		vpnStatusFiles = make(map[string]string)
+	}
+	var allowed map[string]bool
+	if len(allowedIfaces) > 0 {
+		allowed = make(map[string]bool, len(allowedIfaces))
+		for _, name := range allowedIfaces {
+			allowed[name] = true
+		}
 	}
 	// Create a persistent netlink handle to avoid per-poll socket creation.
 	// Falls back to package-level functions if handle creation fails.
@@ -90,6 +98,7 @@ func New(vpnStatusFiles map[string]string) *Collector {
 		history:        make(map[string][]HistoryPoint),
 		ifaceTypeCache: make(map[string]string),
 		vpnStatusFiles: vpnStatusFiles,
+		allowedIfaces:  allowed,
 		nlHandle:       nlh,
 		addrCache:      make(map[int][]string),
 		stopCh:         make(chan struct{}),
@@ -135,6 +144,9 @@ func (c *Collector) GetAll() []InterfaceStat {
 	defer c.mu.RUnlock()
 	stats := make([]InterfaceStat, 0, len(c.current))
 	for _, s := range c.current {
+		if c.allowedIfaces != nil && !c.allowedIfaces[s.Name] {
+			continue
+		}
 		stats = append(stats, *s)
 	}
 	return stats
@@ -145,6 +157,9 @@ func (c *Collector) GetHistory() map[string][]HistoryPoint {
 	defer c.mu.RUnlock()
 	result := make(map[string][]HistoryPoint, len(c.history))
 	for k, v := range c.history {
+		if c.allowedIfaces != nil && !c.allowedIfaces[k] {
+			continue
+		}
 		cp := make([]HistoryPoint, len(v))
 		copy(cp, v)
 		result[k] = cp
@@ -167,6 +182,9 @@ func (c *Collector) GetSparklines(duration time.Duration, maxPoints int) map[str
 	result := make(map[string][]SparkPoint, len(c.history))
 
 	for name, hist := range c.history {
+		if c.allowedIfaces != nil && !c.allowedIfaces[name] {
+			continue
+		}
 		start := 0
 		for start < len(hist) && hist[start].Timestamp < cutoff {
 			start++

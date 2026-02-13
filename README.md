@@ -287,6 +287,7 @@ chmod 0600 /opt/bandwidth-monitor/.env
 | `LISTEN` | `:8080` | HTTP listen address (e.g. `198.51.100.1:8080`) |
 | `DEVICE` | *(all)* | Network device for packet capture (e.g. `eth0`) |
 | `PROMISCUOUS` | `true` | Enable promiscuous mode for packet capture (`true`/`false`) |
+| `INTERFACES` | *(all)* | Comma-separated list of interfaces to display (e.g. `eth0,ppp0,wg0`). If not set, all interfaces are shown. |
 | `GEO_COUNTRY` | `GeoLite2-Country.mmdb` | Path to GeoLite2 Country MMDB |
 | `GEO_ASN` | `GeoLite2-ASN.mmdb` | Path to GeoLite2 ASN MMDB |
 

@@ -137,7 +137,20 @@ func main() {
 		}
 	}
 
-	statsCollector := collector.New(vpnStatusFiles)
+	// Parse INTERFACES: comma-separated list of interface names to display.
+	// If not set, all interfaces are shown.
+	var allowedIfaces []string
+	if raw := os.Getenv("INTERFACES"); raw != "" {
+		for _, name := range strings.Split(raw, ",") {
+			name = strings.TrimSpace(name)
+			if name != "" {
+				allowedIfaces = append(allowedIfaces, name)
+			}
+		}
+		log.Printf("INTERFACES: showing %d interface(s): %s", len(allowedIfaces), strings.Join(allowedIfaces, ", "))
+	}
+
+	statsCollector := collector.New(vpnStatusFiles, allowedIfaces)
 
 	// Shared reverse-DNS resolver — used by talkers, conntrack, and debug.
 	dnsResolver := resolver.New()
