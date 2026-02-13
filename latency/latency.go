@@ -1,8 +1,10 @@
 // Package latency provides continuous ICMP and HTTPS latency monitoring
 // against configurable targets, storing a rolling history of RTT measurements.
+// Targets with both IPv4 and IPv6 addresses are probed on both protocols.
 package latency
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"log"
@@ -15,6 +17,7 @@ import (
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
+	"golang.org/x/net/ipv6"
 )
 
 const (
@@ -40,7 +43,8 @@ type Point struct {
 // TargetStatus holds the current state of a monitored target.
 type TargetStatus struct {
 	Name    string  `json:"name"`
-	IP      string  `json:"ip"`
+	IPv4    string  `json:"ipv4,omitempty"`
+	IPv6    string  `json:"ipv6,omitempty"`
 	Alive   bool    `json:"alive"`
 	RTT     float64 `json:"rtt_ms"`
 	AvgRTT  float64 `json:"avg_rtt_ms"`
@@ -48,8 +52,13 @@ type TargetStatus struct {
 	MaxRTT  float64 `json:"max_rtt_ms"`
 	Jitter  float64 `json:"jitter_ms"`
 	LossPct float64 `json:"loss_pct"`
-	ICMP    []Point `json:"icmp"`
-	HTTPS   []Point `json:"https"`
+	ICMPv4  []Point `json:"icmp_v4,omitempty"`
+	ICMPv6  []Point `json:"icmp_v6,omitempty"`
+	HTTPSv4 []Point `json:"https_v4,omitempty"`
+	HTTPSv6 []Point `json:"https_v6,omitempty"`
+	// Legacy fields (preferred stack) for backward compat
+	ICMP  []Point `json:"icmp"`
+	HTTPS []Point `json:"https"`
 }
 
 // Monitor continuously probes a set of targets via ICMP and HTTPS.
@@ -57,18 +66,39 @@ type Monitor struct {
 	targets []resolvedTarget
 	mu      sync.RWMutex
 	state   map[string]*targetState
-	httpC   *http.Client
+	httpC4  *http.Client // forces IPv4
+	httpC6  *http.Client // forces IPv6
 	stopCh  chan struct{}
 }
 
 type resolvedTarget struct {
 	name string
-	ip   net.IP
+	ipv4 net.IP // nil if no v4
+	ipv6 net.IP // nil if no v6
 }
 
 type targetState struct {
-	icmpHist  []Point
-	httpsHist []Point
+	icmpV4Hist  []Point
+	icmpV6Hist  []Point
+	httpsV4Hist []Point
+	httpsV6Hist []Point
+}
+
+func newHTTPSClient(network string) *http.Client {
+	dialer := &net.Dialer{Timeout: httpsTimeout}
+	return &http.Client{
+		Timeout: httpsTimeout,
+		Transport: &http.Transport{
+			TLSClientConfig:   &tls.Config{InsecureSkipVerify: false},
+			DisableKeepAlives: true,
+			DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) {
+				return dialer.DialContext(ctx, network, addr)
+			},
+		},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 }
 
 // New creates a latency monitor. Pass nil or empty targets to use defaults.
@@ -79,6 +109,7 @@ func New(targets []string) *Monitor {
 
 	var resolved []resolvedTarget
 	for _, t := range targets {
+		rt := resolvedTarget{name: t}
 		ips, err := net.LookupIP(t)
 		if err != nil || len(ips) == 0 {
 			ip := net.ParseIP(t)
@@ -86,36 +117,32 @@ func New(targets []string) *Monitor {
 				fmt.Fprintf(os.Stderr, "latency: cannot resolve %q, skipping\n", t)
 				continue
 			}
-			resolved = append(resolved, resolvedTarget{name: t, ip: ip})
+			if ip.To4() != nil {
+				rt.ipv4 = ip.To4()
+			} else {
+				rt.ipv6 = ip
+			}
+			resolved = append(resolved, rt)
 			continue
 		}
-		var chosen net.IP
 		for _, ip := range ips {
-			if ip.To4() != nil {
-				chosen = ip.To4()
-				break
+			if ip.To4() != nil && rt.ipv4 == nil {
+				rt.ipv4 = ip.To4()
+			} else if ip.To4() == nil && rt.ipv6 == nil {
+				rt.ipv6 = ip
 			}
 		}
-		if chosen == nil {
-			chosen = ips[0]
+		if rt.ipv4 != nil || rt.ipv6 != nil {
+			resolved = append(resolved, rt)
 		}
-		resolved = append(resolved, resolvedTarget{name: t, ip: chosen})
 	}
 
 	m := &Monitor{
 		targets: resolved,
 		state:   make(map[string]*targetState, len(resolved)),
-		httpC: &http.Client{
-			Timeout: httpsTimeout,
-			Transport: &http.Transport{
-				TLSClientConfig:   &tls.Config{InsecureSkipVerify: false},
-				DisableKeepAlives: true,
-			},
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		},
-		stopCh: make(chan struct{}),
+		httpC4:  newHTTPSClient("tcp4"),
+		httpC6:  newHTTPSClient("tcp6"),
+		stopCh:  make(chan struct{}),
 	}
 	for _, t := range resolved {
 		m.state[t.name] = &targetState{}
@@ -130,7 +157,14 @@ func (m *Monitor) Run() {
 	}
 	log.Printf("latency: monitoring %d target(s)", len(m.targets))
 	for _, t := range m.targets {
-		log.Printf("  %s (%s)", t.name, t.ip)
+		v4s, v6s := "—", "—"
+		if t.ipv4 != nil {
+			v4s = t.ipv4.String()
+		}
+		if t.ipv6 != nil {
+			v6s = t.ipv6.String()
+		}
+		log.Printf("  %s (v4=%s, v6=%s)", t.name, v4s, v6s)
 	}
 
 	ticker := time.NewTicker(probeInterval)
@@ -163,38 +197,62 @@ func (m *Monitor) GetStatus() []TargetStatus {
 	result := make([]TargetStatus, 0, len(m.targets))
 	for _, t := range m.targets {
 		st := m.state[t.name]
-		ts := TargetStatus{
-			Name: t.name,
-			IP:   t.ip.String(),
+		ts := TargetStatus{Name: t.name}
+		if t.ipv4 != nil {
+			ts.IPv4 = t.ipv4.String()
+		}
+		if t.ipv6 != nil {
+			ts.IPv6 = t.ipv6.String()
 		}
 
-		// Use ICMP history for alive/rtt/stats
-		if len(st.icmpHist) > 0 {
-			last := st.icmpHist[len(st.icmpHist)-1]
+		// Primary stats from ICMPv4, fallback to ICMPv6
+		primary := st.icmpV4Hist
+		if len(primary) == 0 {
+			primary = st.icmpV6Hist
+		}
+		if len(primary) > 0 {
+			last := primary[len(primary)-1]
 			ts.Alive = last.RTT >= 0
 			ts.RTT = last.RTT
-			ts.AvgRTT, ts.MinRTT, ts.MaxRTT, ts.Jitter = computeStats(st.icmpHist)
-		}
-
-		// Compute loss from ICMP history window (not lifetime counters)
-		if len(st.icmpHist) > 0 {
+			ts.AvgRTT, ts.MinRTT, ts.MaxRTT, ts.Jitter = computeStats(primary)
 			var lost int
-			for _, p := range st.icmpHist {
+			for _, p := range primary {
 				if p.RTT < 0 {
 					lost++
 				}
 			}
-			ts.LossPct = float64(lost) / float64(len(st.icmpHist)) * 100
+			ts.LossPct = float64(lost) / float64(len(primary)) * 100
 		}
 
-		ts.ICMP = make([]Point, len(st.icmpHist))
-		copy(ts.ICMP, st.icmpHist)
-		ts.HTTPS = make([]Point, len(st.httpsHist))
-		copy(ts.HTTPS, st.httpsHist)
+		ts.ICMPv4 = copyPoints(st.icmpV4Hist)
+		ts.ICMPv6 = copyPoints(st.icmpV6Hist)
+		ts.HTTPSv4 = copyPoints(st.httpsV4Hist)
+		ts.HTTPSv6 = copyPoints(st.httpsV6Hist)
+
+		// Legacy: prefer v4 if available
+		if len(ts.ICMPv4) > 0 {
+			ts.ICMP = ts.ICMPv4
+		} else {
+			ts.ICMP = ts.ICMPv6
+		}
+		if len(ts.HTTPSv4) > 0 {
+			ts.HTTPS = ts.HTTPSv4
+		} else {
+			ts.HTTPS = ts.HTTPSv6
+		}
 
 		result = append(result, ts)
 	}
 	return result
+}
+
+func copyPoints(s []Point) []Point {
+	if len(s) == 0 {
+		return nil
+	}
+	c := make([]Point, len(s))
+	copy(c, s)
+	return c
 }
 
 func computeStats(pts []Point) (avg, min, max, jitter float64) {
@@ -238,40 +296,60 @@ func (m *Monitor) probeAll() {
 	now := time.Now()
 	ts := now.UnixMilli()
 
-	// ICMP: open one socket for all targets
-	conn, icmpErr := icmp.ListenPacket("ip4:icmp", "0.0.0.0")
-	if icmpErr != nil && !icmpLogged {
-		fmt.Fprintf(os.Stderr, "latency: ICMP unavailable (need root/CAP_NET_RAW): %v\n", icmpErr)
-		icmpLogged = true
+	// Open ICMP sockets for both v4 and v6
+	conn4, err4 := icmp.ListenPacket("ip4:icmp", "0.0.0.0")
+	if err4 != nil && !icmpV4Logged {
+		fmt.Fprintf(os.Stderr, "latency: ICMPv4 unavailable (need root/CAP_NET_RAW): %v\n", err4)
+		icmpV4Logged = true
 	}
-	if conn != nil {
-		defer conn.Close()
+	if conn4 != nil {
+		defer conn4.Close()
+	}
+
+	conn6, err6 := icmp.ListenPacket("ip6:ipv6-icmp", "::")
+	if err6 != nil && !icmpV6Logged {
+		fmt.Fprintf(os.Stderr, "latency: ICMPv6 unavailable: %v\n", err6)
+		icmpV6Logged = true
+	}
+	if conn6 != nil {
+		defer conn6.Close()
 	}
 
 	for i, t := range m.targets {
-		var icmpRTT float64 = -1
-		var httpsRTT float64 = -1
+		var icmpV4RTT, icmpV6RTT float64 = -1, -1
+		var httpsV4RTT, httpsV6RTT float64 = -1, -1
 
-		// ICMP probe
-		if conn != nil && t.ip.To4() != nil {
-			icmpRTT = pingOne(conn, t.ip, i, now)
+		// ICMPv4
+		if conn4 != nil && t.ipv4 != nil {
+			icmpV4RTT = pingOneV4(conn4, t.ipv4, i, now)
 		}
-
-		// HTTPS probe
-		httpsRTT = m.probeHTTPS(t.name)
+		// ICMPv6
+		if conn6 != nil && t.ipv6 != nil {
+			icmpV6RTT = pingOneV6(conn6, t.ipv6, i, now)
+		}
+		// HTTPSv4
+		if t.ipv4 != nil {
+			httpsV4RTT = m.probeHTTPS(m.httpC4, t.name)
+		}
+		// HTTPSv6
+		if t.ipv6 != nil {
+			httpsV6RTT = m.probeHTTPS(m.httpC6, t.name)
+		}
 
 		m.mu.Lock()
 		st := m.state[t.name]
-
-		st.icmpHist = appendAndTrim(st.icmpHist, Point{Timestamp: ts, RTT: icmpRTT})
-		st.httpsHist = appendAndTrim(st.httpsHist, Point{Timestamp: ts, RTT: httpsRTT})
-
+		if t.ipv4 != nil {
+			st.icmpV4Hist = appendAndTrim(st.icmpV4Hist, Point{Timestamp: ts, RTT: icmpV4RTT})
+			st.httpsV4Hist = appendAndTrim(st.httpsV4Hist, Point{Timestamp: ts, RTT: httpsV4RTT})
+		}
+		if t.ipv6 != nil {
+			st.icmpV6Hist = appendAndTrim(st.icmpV6Hist, Point{Timestamp: ts, RTT: icmpV6RTT})
+			st.httpsV6Hist = appendAndTrim(st.httpsV6Hist, Point{Timestamp: ts, RTT: httpsV6RTT})
+		}
 		m.mu.Unlock()
 	}
 }
 
-// appendAndTrim appends a point and caps the slice at maxHistory.
-// When trimming, it copies to a new slice to release the old backing array.
 func appendAndTrim(s []Point, p Point) []Point {
 	s = append(s, p)
 	if len(s) > maxHistory {
@@ -282,31 +360,27 @@ func appendAndTrim(s []Point, p Point) []Point {
 	return s
 }
 
-var icmpLogged bool
+var (
+	icmpV4Logged bool
+	icmpV6Logged bool
+)
 
-func pingOne(conn *icmp.PacketConn, dest net.IP, seq int, now time.Time) float64 {
+func pingOneV4(conn *icmp.PacketConn, dest net.IP, seq int, now time.Time) float64 {
 	id := uint16(os.Getpid() & 0xFFFF)
 	msg := icmp.Message{
-		Type: ipv4.ICMPTypeEcho,
-		Code: 0,
-		Body: &icmp.Echo{
-			ID:   int(id),
-			Seq:  seq,
-			Data: []byte("bwmon-lat"),
-		},
+		Type: ipv4.ICMPTypeEcho, Code: 0,
+		Body: &icmp.Echo{ID: int(id), Seq: seq, Data: []byte("bwmon-lat")},
 	}
 	wb, err := msg.Marshal(nil)
 	if err != nil {
 		return -1
 	}
-
 	dst := &net.IPAddr{IP: dest}
 	conn.SetDeadline(now.Add(icmpTimeout))
 	start := time.Now()
 	if _, err := conn.WriteTo(wb, dst); err != nil {
 		return -1
 	}
-
 	rb := make([]byte, 1500)
 	for {
 		n, _, err := conn.ReadFrom(rb)
@@ -328,10 +402,47 @@ func pingOne(conn *icmp.PacketConn, dest net.IP, seq int, now time.Time) float64
 	}
 }
 
-func (m *Monitor) probeHTTPS(hostname string) float64 {
+func pingOneV6(conn *icmp.PacketConn, dest net.IP, seq int, now time.Time) float64 {
+	id := uint16(os.Getpid() & 0xFFFF)
+	msg := icmp.Message{
+		Type: ipv6.ICMPTypeEchoRequest, Code: 0,
+		Body: &icmp.Echo{ID: int(id), Seq: seq, Data: []byte("bwmon-lat")},
+	}
+	wb, err := msg.Marshal(nil)
+	if err != nil {
+		return -1
+	}
+	dst := &net.IPAddr{IP: dest}
+	conn.SetDeadline(now.Add(icmpTimeout))
+	start := time.Now()
+	if _, err := conn.WriteTo(wb, dst); err != nil {
+		return -1
+	}
+	rb := make([]byte, 1500)
+	for {
+		n, _, err := conn.ReadFrom(rb)
+		if err != nil {
+			return -1
+		}
+		rtt := float64(time.Since(start).Microseconds()) / 1000.0
+		rm, err := icmp.ParseMessage(58, rb[:n])
+		if err != nil {
+			continue
+		}
+		if rm.Type == ipv6.ICMPTypeEchoReply {
+			if echo, ok := rm.Body.(*icmp.Echo); ok {
+				if uint16(echo.ID) == id {
+					return rtt
+				}
+			}
+		}
+	}
+}
+
+func (m *Monitor) probeHTTPS(client *http.Client, hostname string) float64 {
 	url := "https://" + hostname
 	start := time.Now()
-	resp, err := m.httpC.Get(url)
+	resp, err := client.Get(url)
 	if err != nil {
 		return -1
 	}

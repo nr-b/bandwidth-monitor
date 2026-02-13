@@ -1012,19 +1012,12 @@
             return [x, y];
         }
 
-        // Simplified continent outlines as [lat,lon] polylines
         var continents = [
-            // North America
             [[-10,-80],[15,-85],[20,-105],[32,-117],[49,-125],[60,-140],[65,-168],[72,-157],[71,-135],[68,-110],[58,-95],[52,-80],[47,-70],[44,-66],[30,-80],[25,-80],[18,-88],[15,-85]],
-            // South America
             [[-5,-80],[5,-77],[12,-72],[11,-62],[7,-60],[2,-50],[-5,-35],[-15,-39],[-23,-42],[-33,-52],[-42,-63],[-55,-68],[-55,-73],[-46,-75],[-37,-73],[-30,-71],[-18,-70],[-15,-76],[-5,-80]],
-            // Europe
             [[36,-10],[38,-8],[43,-9],[44,0],[46,-2],[48,5],[51,2],[54,8],[56,8],[58,12],[60,5],[62,5],[64,12],[68,16],[71,26],[70,32],[65,30],[60,30],[56,24],[55,21],[54,14],[52,14],[48,16],[47,20],[45,14],[43,17],[42,20],[41,29],[42,28],[44,40],[47,40],[55,38],[60,55],[55,55],[50,40],[44,45],[40,44],[41,29],[39,26],[38,24],[35,25],[37,15],[40,18],[42,3],[38,0],[36,-5],[36,-10]],
-            // Africa
             [[37,10],[35,0],[32,-5],[27,-13],[21,-17],[15,-17],[12,-16],[5,-5],[5,2],[4,10],[0,10],[-1,12],[-5,12],[-10,14],[-12,25],[-15,35],[-26,33],[-34,18],[-34,26],[-30,31],[-25,35],[-12,40],[-3,40],[2,42],[5,42],[10,44],[12,51],[15,43],[18,40],[20,37],[25,35],[30,33],[32,35],[37,10]],
-            // Asia
             [[42,28],[45,40],[50,40],[55,38],[60,55],[65,55],[70,60],[72,80],[75,100],[73,130],[70,140],[67,140],[60,155],[56,140],[55,135],[51,140],[46,143],[43,145],[35,140],[35,132],[30,122],[23,120],[20,110],[10,106],[1,104],[1,110],[-8,115],[-8,120],[0,130],[-3,140],[-8,132],[-8,115],[1,104],[-6,105],[5,100],[7,98],[14,100],[20,107],[22,97],[28,97],[30,80],[24,70],[25,62],[22,60],[25,56],[27,51],[30,48],[33,44],[37,36],[42,28]],
-            // Australia
             [[-12,130],[-15,141],[-18,146],[-25,153],[-28,153],[-33,152],[-37,150],[-39,146],[-38,141],[-35,137],[-32,133],[-32,127],[-22,114],[-13,127],[-12,131],[-12,130]]
         ];
 
@@ -1033,11 +1026,36 @@
             if (countries[i].bytes > maxBytes) maxBytes = countries[i].bytes;
         }
 
-        var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:100%;background:var(--bg-2);border-radius:8px">';
+        var isDark = (function() {
+            var t = document.documentElement.getAttribute('data-theme');
+            if (t === 'dark') return true;
+            if (t === 'light') return false;
+            return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        })();
 
-        // Draw grid lines
-        svg += '<g stroke="var(--text-3)" stroke-width="0.5" opacity="0.15">';
-        for (var lon = -180; lon <= 180; lon += 30) {
+        var oceanColor = isDark ? '#0a1628' : '#e8edf5';
+        var landFill = isDark ? '#1a2744' : '#c8d0dc';
+        var landStroke = isDark ? '#2a3a5c' : '#a0aab8';
+        var gridColor = isDark ? '#1e3050' : '#d0d8e4';
+        var glowColor = '#22d3ee';
+        var flowColor = '#a78bfa';
+        var textOnBubble = isDark ? '#0a1628' : '#ffffff';
+
+        var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:100%;border-radius:8px">';
+
+        // Defs: glow filter + gradients
+        svg += '<defs>';
+        svg += '<filter id="glow"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>';
+        svg += '<radialGradient id="bubbleGrad"><stop offset="0%" stop-color="' + glowColor + '" stop-opacity="0.9"/><stop offset="100%" stop-color="' + glowColor + '" stop-opacity="0.3"/></radialGradient>';
+        svg += '<linearGradient id="flowGrad" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="' + flowColor + '" stop-opacity="0.7"/><stop offset="100%" stop-color="' + glowColor + '" stop-opacity="0.7"/></linearGradient>';
+        svg += '</defs>';
+
+        // Ocean background
+        svg += '<rect width="' + W + '" height="' + H + '" fill="' + oceanColor + '" rx="8"/>';
+
+        // Subtle grid
+        svg += '<g stroke="' + gridColor + '" stroke-width="0.5" opacity="0.4">';
+        for (var lon = -150; lon <= 180; lon += 30) {
             var gx = (lon + 180) / 360 * W;
             svg += '<line x1="' + gx + '" y1="0" x2="' + gx + '" y2="' + H + '"/>';
         }
@@ -1047,8 +1065,7 @@
         }
         svg += '</g>';
 
-        // Draw continent outlines
-        svg += '<g fill="none" stroke="var(--text-2)" stroke-width="1" opacity="0.35">';
+        // Continent shapes
         for (var ci = 0; ci < continents.length; ci++) {
             var pts = continents[ci];
             var d = '';
@@ -1057,48 +1074,82 @@
                 d += (pi === 0 ? 'M' : 'L') + p[0].toFixed(1) + ',' + p[1].toFixed(1);
             }
             d += 'Z';
-            svg += '<path d="' + d + '" fill="var(--text-3)" fill-opacity="0.1"/>';
+            svg += '<path d="' + d + '" fill="' + landFill + '" stroke="' + landStroke + '" stroke-width="0.8"/>';
         }
-        svg += '</g>';
 
-        // Draw country bubbles sized by traffic volume with country code labels
+        // Flow lines (behind bubbles)
+        if (topBW && topBW.length) {
+            var center = project(50, 10);
+            // Draw origin pulse
+            svg += '<circle cx="' + center[0] + '" cy="' + center[1] + '" r="4" fill="' + flowColor + '" opacity="0.8">';
+            svg += '<animate attributeName="r" values="3;7;3" dur="2s" repeatCount="indefinite"/>';
+            svg += '<animate attributeName="opacity" values="0.8;0.3;0.8" dur="2s" repeatCount="indefinite"/>';
+            svg += '</circle>';
+            for (var i = 0; i < Math.min(topBW.length, 10); i++) {
+                var t = topBW[i];
+                if (!t.country || !countryCentroids[t.country]) continue;
+                var dest = project(countryCentroids[t.country][0], countryCentroids[t.country][1]);
+                var midX = (center[0] + dest[0]) / 2;
+                var midY = Math.min(center[1], dest[1]) - 40;
+                svg += '<path d="M' + center[0] + ',' + center[1] + ' Q' + midX + ',' + midY + ' ' + dest[0] + ',' + dest[1] + '" fill="none" stroke="url(#flowGrad)" stroke-width="1.5" stroke-dasharray="6,4" opacity="0.6">';
+                svg += '<animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.5s" repeatCount="indefinite"/>';
+                svg += '</path>';
+            }
+        }
+
+        // Glowing country bubbles with labels
+        svg += '<g filter="url(#glow)">';
         for (var i = 0; i < countries.length; i++) {
             var c = countries[i];
             var cc = c.country;
             if (!cc || !countryCentroids[cc]) continue;
             var pos = project(countryCentroids[cc][0], countryCentroids[cc][1]);
             var ratio = c.bytes / maxBytes;
-            var r = Math.max(8, Math.sqrt(ratio) * 30);
-            var opacity = 0.35 + ratio * 0.55;
-            svg += '<circle cx="' + pos[0] + '" cy="' + pos[1] + '" r="' + r + '" fill="var(--rx)" opacity="' + opacity.toFixed(2) + '" stroke="var(--rx)" stroke-width="0.5" stroke-opacity="0.6">';
+            var r = Math.max(8, Math.sqrt(ratio) * 32);
+            svg += '<circle cx="' + pos[0] + '" cy="' + pos[1] + '" r="' + r.toFixed(1) + '" fill="url(#bubbleGrad)">';
             svg += '<title>' + countryFlag(cc) + ' ' + (c.country_name || cc) + ': ' + formatBytes(c.bytes) + ' (' + c.connections + ' IPs)</title>';
             svg += '</circle>';
-            // Country code label (only if bubble is big enough to read)
-            if (r >= 10) {
-                var fontSize = Math.max(7, Math.min(12, r * 0.7));
-                svg += '<text x="' + pos[0] + '" y="' + (pos[1] + fontSize * 0.35) + '" text-anchor="middle" fill="var(--bg-1)" font-size="' + fontSize.toFixed(0) + 'px" font-weight="700" style="pointer-events:none">' + cc + '</text>';
-            }
         }
-
-        // Draw active flow lines from top bandwidth talkers
-        if (topBW && topBW.length) {
-            var center = project(50, 10);
-            svg += '<g stroke="var(--tx)" stroke-width="1.5" opacity="0.5">';
-            for (var i = 0; i < Math.min(topBW.length, 10); i++) {
-                var t = topBW[i];
-                if (!t.country || !countryCentroids[t.country]) continue;
-                var dest = project(countryCentroids[t.country][0], countryCentroids[t.country][1]);
-                var midX = (center[0] + dest[0]) / 2;
-                var midY = Math.min(center[1], dest[1]) - 30;
-                svg += '<path d="M' + center[0] + ',' + center[1] + ' Q' + midX + ',' + midY + ' ' + dest[0] + ',' + dest[1] + '" fill="none" stroke-dasharray="4,3">';
-                svg += '<animate attributeName="stroke-dashoffset" from="0" to="-14" dur="1s" repeatCount="indefinite"/>';
-                svg += '</path>';
+        svg += '</g>';
+        // Labels on top (no filter)
+        for (var i = 0; i < countries.length; i++) {
+            var c = countries[i];
+            var cc = c.country;
+            if (!cc || !countryCentroids[cc]) continue;
+            var pos = project(countryCentroids[cc][0], countryCentroids[cc][1]);
+            var ratio = c.bytes / maxBytes;
+            var r = Math.max(8, Math.sqrt(ratio) * 32);
+            if (r >= 12) {
+                var fs = Math.max(8, Math.min(13, r * 0.65));
+                svg += '<text x="' + pos[0] + '" y="' + (pos[1] + fs * 0.35) + '" text-anchor="middle" fill="' + textOnBubble + '" font-size="' + fs.toFixed(0) + 'px" font-weight="700" style="pointer-events:none;text-shadow:0 1px 2px rgba(0,0,0,0.5)">' + cc + '</text>';
             }
-            svg += '</g>';
         }
 
         svg += '</svg>';
         container.innerHTML = svg;
+
+        // Country traffic table below map
+        var tableWrap = document.getElementById('mapCountryTable');
+        var tableEl = document.getElementById('mapCountryList');
+        if (tableWrap && tableEl) {
+            tableWrap.style.display = '';
+            var total = 0;
+            for (var i = 0; i < countries.length; i++) total += countries[i].bytes;
+            var th = '';
+            for (var i = 0; i < countries.length; i++) {
+                var c = countries[i];
+                var pct = total > 0 ? (c.bytes / total * 100) : 0;
+                var barW = Math.max(2, pct);
+                th += '<div style="display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:4px;background:var(--bg-1)">';
+                th += '<span style="width:20px;text-align:center">' + countryFlag(c.country) + '</span>';
+                th += '<span style="font-weight:600;width:24px">' + c.country + '</span>';
+                th += '<div style="flex:1;height:6px;background:var(--bg-2);border-radius:3px;overflow:hidden"><div style="width:' + barW.toFixed(1) + '%;height:100%;background:' + glowColor + ';border-radius:3px;opacity:0.7"></div></div>';
+                th += '<span style="font-variant-numeric:tabular-nums;color:var(--text-2);min-width:55px;text-align:right">' + formatBytes(c.bytes) + '</span>';
+                th += '<span style="color:var(--text-3);min-width:38px;text-align:right">' + pct.toFixed(1) + '%</span>';
+                th += '</div>';
+            }
+            tableEl.innerHTML = th;
+        }
     }
 
     // ── Latency Monitor ──
@@ -1117,15 +1168,26 @@
             var statusColor = t.alive ? 'var(--success, #22c55e)' : 'var(--danger, #ef4444)';
             var statusText = t.alive ? 'UP' : 'DOWN';
 
+            // Determine if dual-stack
+            var hasV4 = t.ipv4 && t.ipv4 !== '';
+            var hasV6 = t.ipv6 && t.ipv6 !== '';
+            var dualStack = hasV4 && hasV6;
+
             h += '<div style="background:var(--bg-2);border-radius:8px;padding:16px;border:1px solid var(--border)">';
 
-            // Header: name + status
+            // Header: name + IPs + status
             h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
             h += '<div>';
             h += '<div style="font-weight:600;font-size:14px">' + t.name + '</div>';
-            h += '<div style="font-size:11px;color:var(--text-2);font-family:var(--font-mono, monospace)">' + t.ip + '</div>';
+            h += '<div style="font-size:10px;color:var(--text-2);font-family:var(--font-mono, monospace)">';
+            if (hasV4) h += '<span style="background:var(--bg-1);padding:1px 4px;border-radius:3px;margin-right:4px">v4 ' + t.ipv4 + '</span>';
+            if (hasV6) h += '<span style="background:var(--bg-1);padding:1px 4px;border-radius:3px">v6 ' + t.ipv6 + '</span>';
+            // Legacy fallback for old data
+            if (!hasV4 && !hasV6 && t.ip) h += t.ip;
+            h += '</div>';
             h += '</div>';
             h += '<div style="display:flex;align-items:center;gap:6px">';
+            if (dualStack) h += '<span style="font-size:9px;font-weight:600;color:var(--text-2);background:var(--bg-1);padding:1px 5px;border-radius:3px">DUAL</span>';
             h += '<span style="width:10px;height:10px;border-radius:50%;background:' + statusColor + ';display:inline-block"></span>';
             h += '<span style="font-size:12px;font-weight:700;color:' + statusColor + '">' + statusText + '</span>';
             h += '</div></div>';
@@ -1147,19 +1209,65 @@
             }
             h += '</div>';
 
-            // ICMP chart
-            if (t.icmp && t.icmp.length > 1) {
+            // ICMP charts — show v4 and v6 separately if dual-stack
+            var icmpV4 = t.icmp_v4 && t.icmp_v4.length > 1 ? t.icmp_v4 : null;
+            var icmpV6 = t.icmp_v6 && t.icmp_v6.length > 1 ? t.icmp_v6 : null;
+            var icmpLegacy = t.icmp && t.icmp.length > 1 ? t.icmp : null;
+
+            if (icmpV4 && icmpV6) {
+                h += '<div style="margin-bottom:10px">';
+                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">ICMP Ping <span style="color:#22d3ee">IPv4</span></div>';
+                h += renderLatencyChart(icmpV4, '#22d3ee', '#22d3ee');
+                h += '</div>';
+                h += '<div style="margin-bottom:10px">';
+                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">ICMP Ping <span style="color:#34d399">IPv6</span></div>';
+                h += renderLatencyChart(icmpV6, '#34d399', '#34d399');
+                h += '</div>';
+            } else if (icmpV4) {
+                h += '<div style="margin-bottom:10px">';
+                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">ICMP Ping (IPv4)</div>';
+                h += renderLatencyChart(icmpV4, '#22d3ee', '#22d3ee');
+                h += '</div>';
+            } else if (icmpV6) {
+                h += '<div style="margin-bottom:10px">';
+                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">ICMP Ping (IPv6)</div>';
+                h += renderLatencyChart(icmpV6, '#34d399', '#34d399');
+                h += '</div>';
+            } else if (icmpLegacy) {
                 h += '<div style="margin-bottom:10px">';
                 h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">ICMP Ping</div>';
-                h += renderLatencyChart(t.icmp, 'var(--rx)', '#22d3ee');
+                h += renderLatencyChart(icmpLegacy, '#22d3ee', '#22d3ee');
                 h += '</div>';
             }
 
-            // HTTPS chart
-            if (t.https && t.https.length > 1) {
+            // HTTPS charts — show v4 and v6 separately if dual-stack
+            var httpsV4 = t.https_v4 && t.https_v4.length > 1 ? t.https_v4 : null;
+            var httpsV6 = t.https_v6 && t.https_v6.length > 1 ? t.https_v6 : null;
+            var httpsLegacy = t.https && t.https.length > 1 ? t.https : null;
+
+            if (httpsV4 && httpsV6) {
+                h += '<div style="margin-bottom:10px">';
+                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">HTTPS <span style="color:#a78bfa">IPv4</span></div>';
+                h += renderLatencyChart(httpsV4, '#a78bfa', '#a78bfa');
+                h += '</div>';
                 h += '<div>';
-                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">HTTPS Connect</div>';
-                h += renderLatencyChart(t.https, 'var(--tx)', '#a78bfa');
+                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">HTTPS <span style="color:#fb923c">IPv6</span></div>';
+                h += renderLatencyChart(httpsV6, '#fb923c', '#fb923c');
+                h += '</div>';
+            } else if (httpsV4) {
+                h += '<div>';
+                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">HTTPS (IPv4)</div>';
+                h += renderLatencyChart(httpsV4, '#a78bfa', '#a78bfa');
+                h += '</div>';
+            } else if (httpsV6) {
+                h += '<div>';
+                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">HTTPS (IPv6)</div>';
+                h += renderLatencyChart(httpsV6, '#fb923c', '#fb923c');
+                h += '</div>';
+            } else if (httpsLegacy) {
+                h += '<div>';
+                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">HTTPS</div>';
+                h += renderLatencyChart(httpsLegacy, '#a78bfa', '#a78bfa');
                 h += '</div>';
             }
 
