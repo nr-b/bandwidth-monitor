@@ -519,7 +519,7 @@ If running without root, grant both `CAP_NET_RAW` and `CAP_NET_ADMIN` for full f
 
 ### Optional Features
 
-- **GeoIP** — without MMDB files, country/ASN columns are simply hidden
+- **GeoIP** — without MMDB files, country/ASN columns are simply hidden. Download the free GeoLite2 databases from [MaxMind](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data) (requires free account) or run `make geoip`
 - **DNS and WiFi tabs** — only appear when their respective integrations are configured
 - **Speed test** — runs from the router, not the client — useful for testing WAN throughput independent of local WiFi
 - **NAT per-flow counters** — require `nf_conntrack_acct=1` (see [Conntrack Configuration](#conntrack-nat-configuration))
