@@ -518,10 +518,13 @@ Every hardcoded external service that bandwidth-monitor or its components contac
 | **OpenDNS** | `208.67.222.222`, `2620:119:35::35` | DNS Check | User clicks "Query" | DNS query for user-entered domain | DNS records |
 | **Google Authoritative** | `o-o.myaddr.l.google.com` | Resolver leak check | Piggybacks on DNS Check | TXT query via system resolver | Resolver's public IP, ECS info |
 | **dnscheck.tools** | `test.dnscheck.tools`, `test-ipv4.*`, `test-ipv6.*` | Resolver leak check | Piggybacks on DNS Check | TXT query via system resolver | Resolver IP, org, geo, protocol |
+| **FFMUC Anycast01** | `anycast01.ffmuc.net` | Latency monitor | Every 2s on startup (**on by default**, configurable via `LATENCY_TARGETS`) | ICMP echo + HTTPS GET | RTT measurement |
+| **FFMUC Anycast02** | `anycast02.ffmuc.net` | Latency monitor | Every 2s on startup (**on by default**, configurable via `LATENCY_TARGETS`) | ICMP echo + HTTPS GET | RTT measurement |
+| **GitHub** | `github.com` | Latency monitor | Every 2s on startup (**on by default**, configurable via `LATENCY_TARGETS`) | ICMP echo + HTTPS GET | RTT measurement |
 
-All JavaScript libraries (Chart.js, Luxon) and fonts (Inter, JetBrains Mono) are **bundled in the binary** — no CDN requests are made at runtime. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for their licenses.
+All JavaScript libraries (Chart.js, Luxon) and fonts (Inter, JetBrains Mono) are **bundled in the binary** — no CDN requests are made at runtime. The world map boundary data (Natural Earth 110m, public domain) is also bundled. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for their licenses.
 
-User-configured services (AdGuard Home, NextDNS, Pi-hole, UniFi Controller) are **not** listed here — they are optional and only contacted when explicitly configured via environment variables.
+User-configured services (AdGuard Home, NextDNS, Pi-hole, UniFi Controller, Omada Controller) are **not** listed here — they are optional and only contacted when explicitly configured via environment variables.
 
 FFMUC services ([`speed.ffmuc.net`](https://speed.ffmuc.net), [`ip.ffmuc.net`](https://ip.ffmuc.net), Anycast DNS) are operated by [Freie Netze München e.V.](https://ffmuc.net/) — see their [privacy policy](https://ffmuc.net/privacy/).
 
@@ -537,7 +540,7 @@ FFMUC services ([`speed.ffmuc.net`](https://speed.ffmuc.net), [`ip.ffmuc.net`](h
 |---------|-------------------|
 | Interface stats, NAT tab | `CAP_NET_ADMIN` (or root) |
 | Top talkers, SPAN mode | `CAP_NET_RAW` (or root) |
-| Traceroute | `CAP_NET_RAW` |
+| Traceroute, Latency monitor (ICMP) | `CAP_NET_RAW` |
 | DNS check, resolver leak test | No special permissions |
 
 If running without root, grant both `CAP_NET_RAW` and `CAP_NET_ADMIN` for full functionality.
