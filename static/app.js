@@ -1120,6 +1120,13 @@
         svg += '</svg>';
         container.innerHTML = svg;
 
+        // Apply zoom/pan transform (preserve across updates)
+        var svgEl = container.querySelector('svg');
+        if (svgEl && window._mapZoom) {
+            svgEl.style.transformOrigin = '0 0';
+            svgEl.style.transform = 'scale(' + window._mapZoom.scale + ') translate(' + window._mapZoom.tx + 'px,' + window._mapZoom.ty + 'px)';
+        }
+
         // Country traffic table
         var tableWrap = document.getElementById('mapCountryTable');
         var tableEl = document.getElementById('mapCountryList');
@@ -1141,6 +1148,70 @@
             }
             tableEl.innerHTML = th;
         }
+    }
+
+    // ── Map zoom/pan ──
+    (function initMapZoom() {
+        // Default: zoomed to show mostly Northern Hemisphere (Europe/US focus)
+        window._mapZoom = { scale: 1.6, tx: -120, ty: -40 };
+        var mc = document.getElementById('worldMapContainer');
+        if (!mc) return;
+
+        var dragging = false, lastX = 0, lastY = 0;
+
+        mc.addEventListener('wheel', function(e) {
+            e.preventDefault();
+            var z = window._mapZoom;
+            var delta = e.deltaY > 0 ? 0.9 : 1.1;
+            var newScale = Math.max(1, Math.min(6, z.scale * delta));
+            // Zoom toward mouse position
+            var rect = mc.getBoundingClientRect();
+            var mx = e.clientX - rect.left;
+            var my = e.clientY - rect.top;
+            z.tx = mx - (mx - z.tx) * (newScale / z.scale);
+            z.ty = my - (my - z.ty) * (newScale / z.scale);
+            z.scale = newScale;
+            applyMapTransform(mc);
+        }, { passive: false });
+
+        mc.addEventListener('mousedown', function(e) {
+            if (e.button !== 0) return;
+            dragging = true;
+            lastX = e.clientX;
+            lastY = e.clientY;
+            mc.style.cursor = 'grabbing';
+            e.preventDefault();
+        });
+        window.addEventListener('mousemove', function(e) {
+            if (!dragging) return;
+            var z = window._mapZoom;
+            z.tx += (e.clientX - lastX) / z.scale;
+            z.ty += (e.clientY - lastY) / z.scale;
+            lastX = e.clientX;
+            lastY = e.clientY;
+            applyMapTransform(mc);
+        });
+        window.addEventListener('mouseup', function() {
+            if (dragging) {
+                dragging = false;
+                mc.style.cursor = 'grab';
+            }
+        });
+
+        // Double-click to reset
+        mc.addEventListener('dblclick', function(e) {
+            e.preventDefault();
+            window._mapZoom = { scale: 1.6, tx: -120, ty: -40 };
+            applyMapTransform(mc);
+        });
+    })();
+
+    function applyMapTransform(container) {
+        var svgEl = container.querySelector('svg');
+        if (!svgEl) return;
+        var z = window._mapZoom;
+        svgEl.style.transformOrigin = '0 0';
+        svgEl.style.transform = 'scale(' + z.scale + ') translate(' + z.tx + 'px,' + z.ty + 'px)';
     }
 
     // ── Latency Monitor ──
