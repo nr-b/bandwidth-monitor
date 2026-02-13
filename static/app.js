@@ -1113,14 +1113,12 @@
                 var cc = t.country;
                 if (!ccFlowIdx[cc]) ccFlowIdx[cc] = 0;
                 var fi = ccFlowIdx[cc]++;
-                // Offset destination so multiple flows to same country fan out
-                var baseDest = proj(countryCentroids[cc][0], countryCentroids[cc][1]);
-                var spread = 12;
-                var offsetX = (fi - (ccFlowIdx[cc] - 1) / 2) * spread;
-                var dest = [baseDest[0] + offsetX, baseDest[1]];
-                // Vary the curve height per flow so arcs don't overlap
-                var curveOffset = 35 + fi * 15;
-                var mx = (center[0] + dest[0]) / 2, my = Math.min(center[1], dest[1]) - curveOffset;
+                // Same start and end point; only the curve control point varies
+                var dest = proj(countryCentroids[cc][0], countryCentroids[cc][1]);
+                var curveOffset = 35 + fi * 18;
+                var spreadX = (fi - 0.5) * 25; // fan out the curve midpoint horizontally
+                var mx = (center[0] + dest[0]) / 2 + spreadX;
+                var my = Math.min(center[1], dest[1]) - curveOffset;
                 var pathD = 'M' + center[0] + ',' + center[1] + ' Q' + mx + ',' + my + ' ' + dest[0] + ',' + dest[1];
                 var host = t.hostname && t.hostname !== t.ip ? t.hostname + ' (' + t.ip + ')' : t.ip;
                 var asInfo = t.as_org ? ' \u00b7 AS' + (t.asn || '') + ' ' + t.as_org : '';
