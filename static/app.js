@@ -30,7 +30,7 @@
 
     // ── Tab navigation ──
     window._switchTab = function(tab) {
-        var panels = { traffic: 'tabTraffic', nat: 'tabNat', dns: 'tabDns', wifi: 'tabWifi', speedtest: 'tabSpeedtest', debug: 'tabDebug' };
+        var panels = { traffic: 'tabTraffic', nat: 'tabNat', dns: 'tabDns', wifi: 'tabWifi', monitor: 'tabMonitor', speedtest: 'tabSpeedtest', debug: 'tabDebug' };
         for (var k in panels) {
             var p = document.getElementById(panels[k]);
             if (p) p.classList.toggle('active', k === tab);
@@ -1000,19 +1000,33 @@
 
     function updateWorldMap(countries, topBW) {
         var sec = document.getElementById('worldMapSection');
-        if (!countries || !countries.length) { sec.style.display = 'none'; return; }
-        sec.style.display = '';
+        if (!countries || !countries.length) return;
 
         var container = document.getElementById('worldMapContainer');
         var W = container.clientWidth || 800;
         var H = Math.round(W / 2);
 
-        // Mercator-like projection (equirectangular)
         function project(lat, lon) {
             var x = (lon + 180) / 360 * W;
             var y = (90 - lat) / 180 * H;
             return [x, y];
         }
+
+        // Simplified continent outlines as [lat,lon] polylines
+        var continents = [
+            // North America
+            [[-10,-80],[15,-85],[20,-105],[32,-117],[49,-125],[60,-140],[65,-168],[72,-157],[71,-135],[68,-110],[58,-95],[52,-80],[47,-70],[44,-66],[30,-80],[25,-80],[18,-88],[15,-85]],
+            // South America
+            [[-5,-80],[5,-77],[12,-72],[11,-62],[7,-60],[2,-50],[-5,-35],[-15,-39],[-23,-42],[-33,-52],[-42,-63],[-55,-68],[-55,-73],[-46,-75],[-37,-73],[-30,-71],[-18,-70],[-15,-76],[-5,-80]],
+            // Europe
+            [[36,-10],[38,-8],[43,-9],[44,0],[46,-2],[48,5],[51,2],[54,8],[56,8],[58,12],[60,5],[62,5],[64,12],[68,16],[71,26],[70,32],[65,30],[60,30],[56,24],[55,21],[54,14],[52,14],[48,16],[47,20],[45,14],[43,17],[42,20],[41,29],[42,28],[44,40],[47,40],[55,38],[60,55],[55,55],[50,40],[44,45],[40,44],[41,29],[39,26],[38,24],[35,25],[37,15],[40,18],[42,3],[38,0],[36,-5],[36,-10]],
+            // Africa
+            [[37,10],[35,0],[32,-5],[27,-13],[21,-17],[15,-17],[12,-16],[5,-5],[5,2],[4,10],[0,10],[-1,12],[-5,12],[-10,14],[-12,25],[-15,35],[-26,33],[-34,18],[-34,26],[-30,31],[-25,35],[-12,40],[-3,40],[2,42],[5,42],[10,44],[12,51],[15,43],[18,40],[20,37],[25,35],[30,33],[32,35],[37,10]],
+            // Asia
+            [[42,28],[45,40],[50,40],[55,38],[60,55],[65,55],[70,60],[72,80],[75,100],[73,130],[70,140],[67,140],[60,155],[56,140],[55,135],[51,140],[46,143],[43,145],[35,140],[35,132],[30,122],[23,120],[20,110],[10,106],[1,104],[1,110],[-8,115],[-8,120],[0,130],[-3,140],[-8,132],[-8,115],[1,104],[-6,105],[5,100],[7,98],[14,100],[20,107],[22,97],[28,97],[30,80],[24,70],[25,62],[22,60],[25,56],[27,51],[30,48],[33,44],[37,36],[42,28]],
+            // Australia
+            [[-12,130],[-15,141],[-18,146],[-25,153],[-28,153],[-33,152],[-37,150],[-39,146],[-38,141],[-35,137],[-32,133],[-32,127],[-22,114],[-13,127],[-12,131],[-12,130]]
+        ];
 
         var maxBytes = 1;
         for (var i = 0; i < countries.length; i++) {
@@ -1020,8 +1034,9 @@
         }
 
         var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:100%;background:var(--bg-2);border-radius:8px">';
+
         // Draw grid lines
-        svg += '<g stroke="var(--text-3)" stroke-width="0.5" opacity="0.2">';
+        svg += '<g stroke="var(--text-3)" stroke-width="0.5" opacity="0.15">';
         for (var lon = -180; lon <= 180; lon += 30) {
             var gx = (lon + 180) / 360 * W;
             svg += '<line x1="' + gx + '" y1="0" x2="' + gx + '" y2="' + H + '"/>';
@@ -1032,30 +1047,49 @@
         }
         svg += '</g>';
 
-        // Draw country dots sized by traffic volume
+        // Draw continent outlines
+        svg += '<g fill="none" stroke="var(--text-2)" stroke-width="1" opacity="0.35">';
+        for (var ci = 0; ci < continents.length; ci++) {
+            var pts = continents[ci];
+            var d = '';
+            for (var pi = 0; pi < pts.length; pi++) {
+                var p = project(pts[pi][0], pts[pi][1]);
+                d += (pi === 0 ? 'M' : 'L') + p[0].toFixed(1) + ',' + p[1].toFixed(1);
+            }
+            d += 'Z';
+            svg += '<path d="' + d + '" fill="var(--text-3)" fill-opacity="0.1"/>';
+        }
+        svg += '</g>';
+
+        // Draw country bubbles sized by traffic volume with country code labels
         for (var i = 0; i < countries.length; i++) {
             var c = countries[i];
             var cc = c.country;
             if (!cc || !countryCentroids[cc]) continue;
             var pos = project(countryCentroids[cc][0], countryCentroids[cc][1]);
             var ratio = c.bytes / maxBytes;
-            var r = Math.max(4, Math.sqrt(ratio) * 28);
-            var opacity = 0.3 + ratio * 0.6;
-            svg += '<circle cx="' + pos[0] + '" cy="' + pos[1] + '" r="' + r + '" fill="var(--rx)" opacity="' + opacity.toFixed(2) + '">';
+            var r = Math.max(8, Math.sqrt(ratio) * 30);
+            var opacity = 0.35 + ratio * 0.55;
+            svg += '<circle cx="' + pos[0] + '" cy="' + pos[1] + '" r="' + r + '" fill="var(--rx)" opacity="' + opacity.toFixed(2) + '" stroke="var(--rx)" stroke-width="0.5" stroke-opacity="0.6">';
             svg += '<title>' + countryFlag(cc) + ' ' + (c.country_name || cc) + ': ' + formatBytes(c.bytes) + ' (' + c.connections + ' IPs)</title>';
             svg += '</circle>';
+            // Country code label (only if bubble is big enough to read)
+            if (r >= 10) {
+                var fontSize = Math.max(7, Math.min(12, r * 0.7));
+                svg += '<text x="' + pos[0] + '" y="' + (pos[1] + fontSize * 0.35) + '" text-anchor="middle" fill="var(--bg-1)" font-size="' + fontSize.toFixed(0) + 'px" font-weight="700" style="pointer-events:none">' + cc + '</text>';
+            }
         }
 
         // Draw active flow lines from top bandwidth talkers
         if (topBW && topBW.length) {
-            var center = project(50, 10); // approximate user location (Europe default)
-            svg += '<g stroke="var(--tx)" stroke-width="1" opacity="0.4">';
+            var center = project(50, 10);
+            svg += '<g stroke="var(--tx)" stroke-width="1.5" opacity="0.5">';
             for (var i = 0; i < Math.min(topBW.length, 10); i++) {
                 var t = topBW[i];
                 if (!t.country || !countryCentroids[t.country]) continue;
                 var dest = project(countryCentroids[t.country][0], countryCentroids[t.country][1]);
                 var midX = (center[0] + dest[0]) / 2;
-                var midY = Math.min(center[1], dest[1]) - 20;
+                var midY = Math.min(center[1], dest[1]) - 30;
                 svg += '<path d="M' + center[0] + ',' + center[1] + ' Q' + midX + ',' + midY + ' ' + dest[0] + ',' + dest[1] + '" fill="none" stroke-dasharray="4,3">';
                 svg += '<animate attributeName="stroke-dashoffset" from="0" to="-14" dur="1s" repeatCount="indefinite"/>';
                 svg += '</path>';
@@ -1070,47 +1104,62 @@
     // ── Latency Monitor ──
     function updateLatency(targets) {
         var sec = document.getElementById('latencySection');
-        if (!targets || !targets.length) { sec.style.display = 'none'; return; }
-        sec.style.display = '';
+        if (!targets || !targets.length) return;
 
         var el = document.getElementById('latencyTargets');
+        el.style.display = 'grid';
+        el.style.gridTemplateColumns = 'repeat(auto-fill,minmax(380px,1fr))';
+        el.style.gap = '16px';
+
         var h = '';
         for (var i = 0; i < targets.length; i++) {
             var t = targets[i];
             var statusColor = t.alive ? 'var(--success, #22c55e)' : 'var(--danger, #ef4444)';
             var statusText = t.alive ? 'UP' : 'DOWN';
 
-            h += '<div style="background:var(--bg-2);border-radius:8px;padding:12px;border:1px solid var(--border)">';
-            h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+            h += '<div style="background:var(--bg-2);border-radius:8px;padding:16px;border:1px solid var(--border)">';
+
+            // Header: name + status
+            h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
             h += '<div>';
-            h += '<div style="font-weight:600;font-size:13px">' + t.name + '</div>';
-            h += '<div style="font-size:11px;color:var(--text-2)">' + t.ip + '</div>';
+            h += '<div style="font-weight:600;font-size:14px">' + t.name + '</div>';
+            h += '<div style="font-size:11px;color:var(--text-2);font-family:var(--font-mono, monospace)">' + t.ip + '</div>';
             h += '</div>';
             h += '<div style="display:flex;align-items:center;gap:6px">';
-            h += '<span style="width:8px;height:8px;border-radius:50%;background:' + statusColor + ';display:inline-block"></span>';
-            h += '<span style="font-size:11px;font-weight:600;color:' + statusColor + '">' + statusText + '</span>';
+            h += '<span style="width:10px;height:10px;border-radius:50%;background:' + statusColor + ';display:inline-block"></span>';
+            h += '<span style="font-size:12px;font-weight:700;color:' + statusColor + '">' + statusText + '</span>';
             h += '</div></div>';
 
-            // Stats row
-            h += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:8px;font-size:11px">';
-            h += '<div><div style="color:var(--text-2)">RTT</div><div style="font-variant-numeric:tabular-nums">' + (t.rtt_ms >= 0 ? t.rtt_ms.toFixed(1) + ' ms' : '—') + '</div></div>';
-            h += '<div><div style="color:var(--text-2)">Avg</div><div style="font-variant-numeric:tabular-nums">' + (t.avg_rtt_ms > 0 ? t.avg_rtt_ms.toFixed(1) + ' ms' : '—') + '</div></div>';
-            h += '<div><div style="color:var(--text-2)">Jitter</div><div style="font-variant-numeric:tabular-nums">' + (t.jitter_ms > 0 ? t.jitter_ms.toFixed(1) + ' ms' : '—') + '</div></div>';
-            h += '<div><div style="color:var(--text-2)">Loss</div><div style="font-variant-numeric:tabular-nums;color:' + (t.loss_pct > 0 ? 'var(--danger)' : 'inherit') + '">' + t.loss_pct.toFixed(1) + '%</div></div>';
+            // Stats grid
+            h += '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:14px;text-align:center">';
+            var stats = [
+                ['RTT', t.rtt_ms >= 0 ? t.rtt_ms.toFixed(1) : '—', 'ms'],
+                ['Avg', t.avg_rtt_ms > 0 ? t.avg_rtt_ms.toFixed(1) : '—', 'ms'],
+                ['Min', t.min_rtt_ms > 0 ? t.min_rtt_ms.toFixed(1) : '—', 'ms'],
+                ['Jitter', t.jitter_ms > 0 ? t.jitter_ms.toFixed(2) : '—', 'ms'],
+                ['Loss', t.loss_pct.toFixed(1), '%']
+            ];
+            for (var si = 0; si < stats.length; si++) {
+                var lossStyle = stats[si][0] === 'Loss' && t.loss_pct > 0 ? ';color:var(--danger)' : '';
+                h += '<div><div style="font-size:10px;color:var(--text-2);margin-bottom:2px">' + stats[si][0] + '</div>';
+                h += '<div style="font-size:13px;font-weight:600;font-variant-numeric:tabular-nums' + lossStyle + '">';
+                h += stats[si][1] + '<span style="font-size:9px;color:var(--text-2);margin-left:1px">' + stats[si][2] + '</span></div></div>';
+            }
             h += '</div>';
 
-            // Mini sparkline for ICMP
+            // ICMP chart
             if (t.icmp && t.icmp.length > 1) {
-                h += '<div style="margin-bottom:4px">';
-                h += '<div style="font-size:10px;color:var(--text-2);margin-bottom:2px">ICMP</div>';
-                h += renderLatencySparkline(t.icmp, 'var(--rx)');
+                h += '<div style="margin-bottom:10px">';
+                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">ICMP Ping</div>';
+                h += renderLatencyChart(t.icmp, 'var(--rx)', '#22d3ee');
                 h += '</div>';
             }
-            // Mini sparkline for HTTPS
+
+            // HTTPS chart
             if (t.https && t.https.length > 1) {
                 h += '<div>';
-                h += '<div style="font-size:10px;color:var(--text-2);margin-bottom:2px">HTTPS</div>';
-                h += renderLatencySparkline(t.https, 'var(--tx)');
+                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">HTTPS Connect</div>';
+                h += renderLatencyChart(t.https, 'var(--tx)', '#a78bfa');
                 h += '</div>';
             }
 
@@ -1119,34 +1168,96 @@
         el.innerHTML = h;
     }
 
-    function renderLatencySparkline(points, color) {
-        var W = 280, H = 32;
+    function renderLatencyChart(points, strokeColor, fillHex) {
+        var ML = 38; // left margin for Y axis labels
+        var W = 360, H = 64;
+        var chartW = W - ML;
+
+        // Find max RTT for scale
         var maxRTT = 1;
         for (var i = 0; i < points.length; i++) {
             if (points[i].rtt > maxRTT) maxRTT = points[i].rtt;
         }
-        maxRTT = Math.max(maxRTT, 5); // minimum 5ms scale
+        maxRTT = Math.max(maxRTT * 1.15, 5); // 15% headroom, min 5ms
 
-        var path = '';
-        var dots = '';
+        // Nice Y-axis ticks
+        var yTicks = niceScale(0, maxRTT, 4);
+
+        var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:' + H + 'px;display:block">';
+
+        // Background
+        svg += '<rect x="' + ML + '" y="0" width="' + chartW + '" height="' + H + '" fill="var(--bg-1)" rx="3"/>';
+
+        // Y-axis grid lines and labels
+        for (var yi = 0; yi < yTicks.length; yi++) {
+            var yVal = yTicks[yi];
+            var yPx = H - (yVal / maxRTT) * (H - 6) - 3;
+            if (yPx < 2 || yPx > H - 2) continue;
+            svg += '<line x1="' + ML + '" y1="' + yPx.toFixed(1) + '" x2="' + W + '" y2="' + yPx.toFixed(1) + '" stroke="var(--text-3)" stroke-width="0.5" opacity="0.3"/>';
+            var label = yVal < 10 ? yVal.toFixed(1) : Math.round(yVal);
+            svg += '<text x="' + (ML - 4) + '" y="' + (yPx + 3) + '" text-anchor="end" fill="var(--text-2)" font-size="8px" style="font-variant-numeric:tabular-nums">' + label + '</text>';
+        }
+        // "ms" unit label
+        svg += '<text x="' + (ML - 4) + '" y="9" text-anchor="end" fill="var(--text-3)" font-size="7px">ms</text>';
+
+        // Build path + fill
+        var path = '', fillPath = '';
+        var lossDots = '';
+        var lastGoodX = -1;
         for (var i = 0; i < points.length; i++) {
-            var x = (i / (points.length - 1)) * W;
+            var x = ML + (i / (points.length - 1)) * chartW;
             if (points[i].rtt < 0) {
-                // Packet loss: red dot at bottom
-                dots += '<circle cx="' + x + '" cy="' + (H - 1) + '" r="1.5" fill="var(--danger, #ef4444)"/>';
+                lossDots += '<rect x="' + (x - 0.5) + '" y="0" width="1" height="' + H + '" fill="var(--danger, #ef4444)" opacity="0.15"/>';
                 continue;
             }
-            var y = H - (points[i].rtt / maxRTT) * (H - 4) - 2;
+            var y = H - (points[i].rtt / maxRTT) * (H - 6) - 3;
             path += (path ? ' L' : 'M') + x.toFixed(1) + ',' + y.toFixed(1);
+            if (!fillPath) fillPath = 'M' + x.toFixed(1) + ',' + H;
+            fillPath += ' L' + x.toFixed(1) + ',' + y.toFixed(1);
+            lastGoodX = x;
+        }
+        if (fillPath && lastGoodX >= 0) {
+            fillPath += ' L' + lastGoodX.toFixed(1) + ',' + H + ' Z';
         }
 
-        var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:' + H + 'px">';
-        if (path) {
-            svg += '<path d="' + path + '" fill="none" stroke="' + color + '" stroke-width="1.5" stroke-linejoin="round"/>';
+        // Loss indicator strips
+        svg += lossDots;
+
+        // Fill area
+        if (fillPath) {
+            svg += '<path d="' + fillPath + '" fill="' + fillHex + '" opacity="0.08"/>';
         }
-        svg += dots;
+        // Line
+        if (path) {
+            svg += '<path d="' + path + '" fill="none" stroke="' + strokeColor + '" stroke-width="1.5" stroke-linejoin="round"/>';
+        }
+
+        // Time label: "5m ago" on left, "now" on right
+        svg += '<text x="' + (ML + 2) + '" y="' + (H - 2) + '" fill="var(--text-3)" font-size="7px">5m ago</text>';
+        svg += '<text x="' + (W - 2) + '" y="' + (H - 2) + '" text-anchor="end" fill="var(--text-3)" font-size="7px">now</text>';
+
         svg += '</svg>';
         return svg;
+    }
+
+    // Generate nice Y-axis tick values
+    function niceScale(lo, hi, maxTicks) {
+        var range = hi - lo;
+        if (range <= 0) return [0];
+        var rough = range / maxTicks;
+        var mag = Math.pow(10, Math.floor(Math.log10(rough)));
+        var res = rough / mag;
+        var nice;
+        if (res <= 1.5) nice = 1;
+        else if (res <= 3) nice = 2;
+        else if (res <= 7) nice = 5;
+        else nice = 10;
+        var step = nice * mag;
+        var ticks = [];
+        for (var v = 0; v <= hi; v += step) {
+            ticks.push(Math.round(v * 1000) / 1000);
+        }
+        return ticks;
     }
 
     // ── WiFi ──

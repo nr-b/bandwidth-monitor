@@ -32,6 +32,7 @@
             <button class="main-nav-tab" data-tab="nat" onclick="window._switchTab('nat')">NAT</button>
             <button class="main-nav-tab" data-tab="dns" onclick="window._switchTab('dns')">DNS</button>
             <button class="main-nav-tab" data-tab="wifi" onclick="window._switchTab('wifi')">WiFi</button>
+            <button class="main-nav-tab" data-tab="monitor" onclick="window._switchTab('monitor')">Monitor</button>
             <button class="main-nav-tab" data-tab="speedtest" onclick="window._switchTab('speedtest')">Speed Test</button>
             <button class="main-nav-tab" data-tab="debug" onclick="window._switchTab('debug')">Debug</button>
         </div>
@@ -138,27 +139,7 @@
             </div>
         </div>
 
-        <!-- World Traffic Map -->
-        <div class="card" id="worldMapSection" style="display:none;margin-bottom:16px">
-            <div class="card-header">
-                <div>
-                    <div class="card-title">Traffic World Map</div>
-                    <div class="card-subtitle">Live traffic flows by country</div>
-                </div>
-            </div>
-            <div id="worldMapContainer" style="width:100%;aspect-ratio:2/1;position:relative;overflow:hidden"></div>
-        </div>
-
-        <!-- Latency Monitor -->
-        <div class="card" id="latencySection" style="display:none;margin-bottom:16px">
-            <div class="card-header">
-                <div>
-                    <div class="card-title">Latency Monitor</div>
-                    <div class="card-subtitle">ICMP &amp; HTTPS probes</div>
-                </div>
-            </div>
-            <div id="latencyTargets" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;padding:12px"></div>
-        </div>
+        <!-- World Traffic Map and Latency moved to Monitor tab -->
 
         <div class="two-col">
             <div class="card">
@@ -666,6 +647,36 @@
             </div>
         </div>
         </div><!-- /tabWifi -->
+
+        <div class="tab-panel" id="tabMonitor">
+
+        <!-- World Traffic Map -->
+        <div class="card" id="worldMapSection" style="margin-bottom:16px">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">Traffic World Map</div>
+                    <div class="card-subtitle">Live traffic flows by country &mdash; circle size = volume, dashed lines = active flows</div>
+                </div>
+            </div>
+            <div id="worldMapContainer" style="width:100%;aspect-ratio:2/1;position:relative;overflow:hidden">
+                <div style="text-align:center;padding:48px 16px;color:var(--text-2)">Waiting for GeoIP data&hellip;</div>
+            </div>
+        </div>
+
+        <!-- Latency Monitor -->
+        <div class="card" id="latencySection" style="margin-bottom:16px">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">Latency Monitor</div>
+                    <div class="card-subtitle">Continuous ICMP ping &amp; HTTPS connection probes &mdash; updated every 2s, 5-minute history</div>
+                </div>
+            </div>
+            <div id="latencyTargets" style="padding:12px">
+                <div style="text-align:center;padding:32px 16px;color:var(--text-2)">Waiting for latency data&hellip;<br><span style="font-size:11px">Requires CAP_NET_RAW for ICMP probes</span></div>
+            </div>
+        </div>
+
+        </div><!-- /tabMonitor -->
 
         <div class="tab-panel" id="tabSpeedtest">
         <div class="card" style="margin-bottom:16px">
