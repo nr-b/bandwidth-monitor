@@ -1160,11 +1160,12 @@
         var dragging = false, lastX = 0, lastY = 0;
 
         mc.addEventListener('wheel', function(e) {
+            // Require Ctrl/Cmd to zoom — otherwise let the page scroll normally
+            if (!e.ctrlKey && !e.metaKey) return;
             e.preventDefault();
             var z = window._mapZoom;
             var delta = e.deltaY > 0 ? 0.97 : 1.03;
             var newScale = Math.max(1, Math.min(6, z.scale * delta));
-            // Zoom toward mouse position
             var rect = mc.getBoundingClientRect();
             var mx = e.clientX - rect.left;
             var my = e.clientY - rect.top;
