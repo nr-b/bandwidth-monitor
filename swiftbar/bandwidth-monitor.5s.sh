@@ -186,7 +186,7 @@ else empty end),
 # WiFi section (only if present)
 (if .wifi then
     "---",
-    "WiFi — UniFi | size=11 color=#888888",
+    "WiFi — \(.wifi.provider_name // "WiFi") | size=11 color=#888888",
     "  APs:      \(.wifi.aps) | font=JetBrainsMono-Regular size=12",
     "  Clients:  \(.wifi.clients) | font=JetBrainsMono-Regular size=12"
 else empty end),

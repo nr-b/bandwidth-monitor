@@ -100,8 +100,9 @@ func MenuBarSummary(c *collector.Collector, t *talkers.Tracker, dp dns.Provider,
 			LatencyMs    float64 `json:"latency_ms"`
 		}
 		type wifiBrief struct {
-			APs     int `json:"aps"`
-			Clients int `json:"clients"`
+			Provider string `json:"provider_name"`
+			APs      int    `json:"aps"`
+			Clients  int    `json:"clients"`
 		}
 		type natBrief struct {
 			Total    int     `json:"total"`
@@ -161,8 +162,9 @@ func MenuBarSummary(c *collector.Collector, t *talkers.Tracker, dp dns.Provider,
 					totalClients += ap.NumClients
 				}
 				out.WiFi = &wifiBrief{
-					APs:     len(ws.APs),
-					Clients: totalClients,
+					Provider: ws.ProviderName,
+					APs:      len(ws.APs),
+					Clients:  totalClients,
 				}
 			}
 		}
