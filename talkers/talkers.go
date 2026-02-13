@@ -256,7 +256,7 @@ func (t *Tracker) captureDevice(device string) {
 			return
 		default:
 		}
-		data, ci, err := handle.ReadPacketData()
+		data, _, err := handle.ReadPacketData()
 		if err != nil {
 			// Timeout is expected — just loop
 			if err == pcap.NextErrorTimeoutExpired {
@@ -270,26 +270,25 @@ func (t *Tracker) captureDevice(device string) {
 			Lazy:   true,
 			NoCopy: true,
 		})
-		_ = ci
 		t.processPacket(pkt)
 	}
 }
 
 func (t *Tracker) processPacket(pkt gopacket.Packet) {
-	var srcIP, dstIP string
+	var srcIP, dstIP net.IP
 	var pktLen uint64
 	var ipVersion string
 
 	if ipLayer := pkt.Layer(layers.LayerTypeIPv4); ipLayer != nil {
 		ip := ipLayer.(*layers.IPv4)
-		srcIP = ip.SrcIP.String()
-		dstIP = ip.DstIP.String()
+		srcIP = ip.SrcIP
+		dstIP = ip.DstIP
 		pktLen = uint64(ip.Length)
 		ipVersion = "IPv4"
 	} else if ipLayer := pkt.Layer(layers.LayerTypeIPv6); ipLayer != nil {
 		ip := ipLayer.(*layers.IPv6)
-		srcIP = ip.SrcIP.String()
-		dstIP = ip.DstIP.String()
+		srcIP = ip.SrcIP
+		dstIP = ip.DstIP
 		pktLen = uint64(ip.Length) + 40
 		ipVersion = "IPv6"
 	} else {
@@ -307,6 +306,13 @@ func (t *Tracker) processPacket(pkt gopacket.Packet) {
 		proto = "Other"
 	}
 
+	// Classify IPs outside the lock — avoids holding the write lock
+	// while doing net.IP method calls.
+	srcLocal := isLocalIP(srcIP) || t.isLocalNet(srcIP)
+	dstLocal := isLocalIP(dstIP) || t.isLocalNet(dstIP)
+	srcStr := srcIP.String()
+	dstStr := dstIP.String()
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -314,29 +320,30 @@ func (t *Tracker) processPacket(pkt gopacket.Packet) {
 		return
 	}
 
-	for _, ip := range []string{srcIP, dstIP} {
-		if isPrivateIP(ip) || t.isLocalNet(ip) {
+	for _, entry := range []struct {
+		ip    string
+		local bool
+	}{{srcStr, srcLocal}, {dstStr, dstLocal}} {
+		if entry.local {
 			continue
 		}
-		if _, ok := t.current.hosts[ip]; !ok {
-			t.current.hosts[ip] = &hostAccum{}
+		if _, ok := t.current.hosts[entry.ip]; !ok {
+			t.current.hosts[entry.ip] = &hostAccum{}
 		}
-		t.current.hosts[ip].bytes += pktLen
-		t.current.hosts[ip].packets++
+		t.current.hosts[entry.ip].bytes += pktLen
+		t.current.hosts[entry.ip].packets++
 	}
 
 	// Direction detection for SPAN/mirror port using LOCAL_NETS
 	if len(t.localNets) > 0 {
-		srcLocal := t.isLocalNet(srcIP)
-		dstLocal := t.isLocalNet(dstIP)
 		if srcLocal && !dstLocal {
 			// Local → Remote = upload (TX from local perspective)
-			if h, ok := t.current.hosts[dstIP]; ok {
+			if h, ok := t.current.hosts[dstStr]; ok {
 				h.txBytes += pktLen
 			}
 		} else if !srcLocal && dstLocal {
 			// Remote → Local = download (RX from local perspective)
-			if h, ok := t.current.hosts[srcIP]; ok {
+			if h, ok := t.current.hosts[srcStr]; ok {
 				h.rxBytes += pktLen
 			}
 		}
@@ -556,48 +563,14 @@ func (t *Tracker) GetGeoBreakdown() *GeoBreakdown {
 	}
 }
 
-// GetCountryBreakdown returns traffic grouped by country over the 24h window.
-// Deprecated: prefer GetGeoBreakdown which computes both country and ASN in one pass.
-func (t *Tracker) GetCountryBreakdown() []CountryStat {
-	return t.GetGeoBreakdown().Countries
+// isLocalIP checks if an IP is private, loopback, or link-local.
+// Uses Go's built-in methods — zero allocations.
+func isLocalIP(ip net.IP) bool {
+	return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()
 }
 
-// GetASNBreakdown returns traffic grouped by autonomous system over the 24h window.
-// Deprecated: prefer GetGeoBreakdown which computes both country and ASN in one pass.
-func (t *Tracker) GetASNBreakdown() []ASNStat {
-	return t.GetGeoBreakdown().ASNs
-}
-
-func isPrivateIP(ipStr string) bool {
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		return false
-	}
-	privateRanges := []struct {
-		network *net.IPNet
-	}{
-		{parseCIDR("10.0.0.0/8")},
-		{parseCIDR("172.16.0.0/12")},
-		{parseCIDR("192.168.0.0/16")},
-		{parseCIDR("127.0.0.0/8")},
-		{parseCIDR("fc00::/7")},
-		{parseCIDR("::1/128")},
-		{parseCIDR("fe80::/10")},
-	}
-	for _, r := range privateRanges {
-		if r.network.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
-
-func (t *Tracker) isLocalNet(ipStr string) bool {
+func (t *Tracker) isLocalNet(ip net.IP) bool {
 	if len(t.localNets) == 0 {
-		return false
-	}
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
 		return false
 	}
 	for _, n := range t.localNets {
@@ -606,9 +579,4 @@ func (t *Tracker) isLocalNet(ipStr string) bool {
 		}
 	}
 	return false
-}
-
-func parseCIDR(s string) *net.IPNet {
-	_, n, _ := net.ParseCIDR(s)
-	return n
 }

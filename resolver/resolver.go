@@ -45,6 +45,7 @@ type Resolver struct {
 	maxTTL  time.Duration
 	timeout time.Duration
 	server  string // DNS server address (host:port)
+	stopCh  chan struct{}
 }
 
 // New creates a Resolver that reads /etc/resolv.conf for the system resolver.
@@ -57,7 +58,7 @@ func New() *Resolver {
 		fmt.Fprintf(os.Stderr, "resolver: cannot read /etc/resolv.conf, falling back to %s\n", server)
 	}
 
-	return &Resolver{
+	r := &Resolver{
 		cache:   make(map[string]cacheEntry, 256),
 		sem:     make(chan struct{}, DefaultConcurrent),
 		negTTL:  DefaultNegTTL,
@@ -65,6 +66,41 @@ func New() *Resolver {
 		maxTTL:  DefaultMaxTTL,
 		timeout: DefaultTimeout,
 		server:  server,
+		stopCh:  make(chan struct{}),
+	}
+	go r.pruneLoop()
+	return r
+}
+
+// Stop terminates the cache pruning goroutine.
+func (r *Resolver) Stop() {
+	select {
+	case <-r.stopCh:
+	default:
+		close(r.stopCh)
+	}
+}
+
+const pruneInterval = 5 * time.Minute
+
+// pruneLoop periodically removes expired entries from the cache.
+func (r *Resolver) pruneLoop() {
+	ticker := time.NewTicker(pruneInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			now := time.Now()
+			r.mu.Lock()
+			for ip, entry := range r.cache {
+				if now.After(entry.expires) {
+					delete(r.cache, ip)
+				}
+			}
+			r.mu.Unlock()
+		case <-r.stopCh:
+			return
+		}
 	}
 }
 

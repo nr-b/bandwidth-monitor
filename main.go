@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -231,20 +232,6 @@ func main() {
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		fmt.Println("\nShutting down...")
-		statsCollector.Stop()
-		talkerTracker.Stop()
-		if dnsProvider != nil {
-			dnsProvider.Stop()
-		}
-		if unifiClient != nil {
-			unifiClient.Stop()
-		}
-		conntrackTracker.Stop()
-		os.Exit(0)
-	}()
 
 	log.Printf("Bandwidth Monitor starting on %s", listenAddr)
 	if strings.HasPrefix(listenAddr, ":") {
@@ -258,9 +245,32 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	if err := srv.ListenAndServe(); err != nil {
+
+	go func() {
+		<-sigCh
+		fmt.Println("\nShutting down...")
+
+		// Gracefully shut down the HTTP server (drains active connections).
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		srv.Shutdown(ctx)
+	}()
+
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server failed: %v", err)
 	}
+
+	// Clean up all subsystems — defers (e.g. geoDB.Close) will also run.
+	statsCollector.Stop()
+	talkerTracker.Stop()
+	if dnsProvider != nil {
+		dnsProvider.Stop()
+	}
+	if unifiClient != nil {
+		unifiClient.Stop()
+	}
+	conntrackTracker.Stop()
+	dnsResolver.Stop()
 }
 
 // computeAssetVersions hashes key embedded files to produce short

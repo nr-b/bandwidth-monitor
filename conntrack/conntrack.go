@@ -119,6 +119,7 @@ type Tracker struct {
 	stopCh      chan struct{}
 	geoDB       *geoip.DB
 	dns         *resolver.Resolver
+	conn        *ct.Conn // persistent netlink connection
 }
 
 // Default and maximum netlink socket buffer sizes.
@@ -187,6 +188,10 @@ func (t *Tracker) Run() {
 // Stop terminates the polling loop.
 func (t *Tracker) Stop() {
 	close(t.stopCh)
+	if t.conn != nil {
+		t.conn.Close()
+		t.conn = nil
+	}
 }
 
 // GetSummary returns the latest conntrack summary (nil if unavailable).
@@ -201,23 +206,28 @@ func (t *Tracker) poll() {
 		return
 	}
 
-	c, err := ct.Dial(nil)
-	if err != nil {
-		if t.errCount == 0 || t.errCount%60 == 0 {
-			fmt.Fprintf(os.Stderr, "conntrack: netlink dial: %v\n", err)
+	// Reuse persistent connection; re-dial if needed.
+	if t.conn == nil {
+		c, err := ct.Dial(nil)
+		if err != nil {
+			if t.errCount == 0 || t.errCount%60 == 0 {
+				fmt.Fprintf(os.Stderr, "conntrack: netlink dial: %v\n", err)
+			}
+			t.errCount++
+			return
 		}
-		t.errCount++
-		return
-	}
-	defer c.Close()
-
-	// Set a large receive buffer — conntrack dumps can be huge on routers.
-	if err := c.SetReadBuffer(t.sockBufSize); err != nil {
-		fmt.Fprintf(os.Stderr, "conntrack: SetReadBuffer(%d): %v\n", t.sockBufSize, err)
+		if err := c.SetReadBuffer(t.sockBufSize); err != nil {
+			fmt.Fprintf(os.Stderr, "conntrack: SetReadBuffer(%d): %v\n", t.sockBufSize, err)
+		}
+		t.conn = c
 	}
 
-	flows, err := c.Dump(nil)
+	flows, err := t.conn.Dump(nil)
 	if err != nil {
+		// Close the broken connection so we re-dial next time.
+		t.conn.Close()
+		t.conn = nil
+
 		// On EINVAL / buffer-related failures, try increasing the buffer size
 		if t.sockBufSize < maxSockBuf {
 			t.sockBufSize *= 2
