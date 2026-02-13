@@ -96,7 +96,7 @@ body {
 }
 
 .container {
-    max-width: 1360px;
+    max-width: 1920px;
     margin: 0 auto;
     padding: 20px 24px;
 }
@@ -544,6 +544,13 @@ body {
 
 /* ── Tables ── */
 table { width: 100%; border-collapse: collapse; }
+
+.card > table,
+.card > div > table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
 
 thead th {
     font-size: 10px;
