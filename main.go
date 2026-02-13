@@ -243,7 +243,11 @@ func main() {
 	}()
 
 	log.Printf("Bandwidth Monitor starting on %s", listenAddr)
-	log.Printf("Open http://localhost%s in your browser", listenAddr)
+	if strings.HasPrefix(listenAddr, ":") {
+		log.Printf("Open http://localhost%s in your browser", listenAddr)
+	} else {
+		log.Printf("Open http://%s in your browser", listenAddr)
+	}
 	srv := &http.Server{
 		Addr:              listenAddr,
 		Handler:           withSignature(mux),

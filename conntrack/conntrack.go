@@ -83,6 +83,7 @@ type HostStat struct {
 	NATType     string `json:"nat_type,omitempty"`
 	Country     string `json:"country,omitempty"`
 	CountryName string `json:"country_name,omitempty"`
+	ASN         uint   `json:"asn,omitempty"`
 	ASOrg       string `json:"as_org,omitempty"`
 }
 
@@ -440,6 +441,7 @@ func (t *Tracker) enrichHosts(hosts []HostStat) {
 			if geo := t.geoDB.Lookup(ip); geo != nil {
 				hosts[i].Country = geo.Country
 				hosts[i].CountryName = geo.CountryName
+				hosts[i].ASN = geo.ASN
 				hosts[i].ASOrg = geo.ASOrg
 			}
 		}

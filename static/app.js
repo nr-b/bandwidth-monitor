@@ -912,7 +912,8 @@
             var pct = ((host.connections / mx) * 100).toFixed(1);
             var flag = host.country ? '<span title="' + (host.country_name || host.country) + '">' + countryFlag(host.country) + '</span> ' : '';
             var info = host.hostname || '';
-            if (host.as_org) info += (info ? ' <span style="color:var(--text-2);font-size:11px">(' + host.as_org + ')</span>' : '<span style="color:var(--text-2);font-size:11px">' + host.as_org + '</span>');
+            var asLabel = host.as_org ? (host.asn ? 'AS' + host.asn + ' ' + host.as_org : host.as_org) : '';
+            if (asLabel) info += (info ? ' <span style="color:var(--text-2);font-size:11px">(' + asLabel + ')</span>' : '<span style="color:var(--text-2);font-size:11px">' + asLabel + '</span>');
             h += '<tr><td><span class="' + rankClass(i) + '">' + (i + 1) + '</span></td>';
             h += '<td><span class="ip-cell">' + host.ip + '</span></td>';
             h += '<td style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px">' + flag + info + '</td>';
