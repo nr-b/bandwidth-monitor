@@ -1058,6 +1058,14 @@
             for (var pi = 0; pi < polys.length; pi++) {
                 var ring = polys[pi];
                 if (ring.length < 3) continue;
+                // Skip polygons crossing the antimeridian (lon span > 180°)
+                var minLon = 999, maxLon = -999;
+                for (var ri = 0; ri < ring.length; ri++) {
+                    var lon = ring[ri][0];
+                    if (lon < minLon) minLon = lon;
+                    if (lon > maxLon) maxLon = lon;
+                }
+                if (maxLon - minLon > 180) continue;
                 var d = '';
                 for (var ri = 0; ri < ring.length; ri++) {
                     var p = proj(ring[ri][1], ring[ri][0]);
