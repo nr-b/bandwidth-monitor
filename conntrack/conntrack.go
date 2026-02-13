@@ -312,8 +312,18 @@ func (t *Tracker) poll() {
 	t.enrichHosts(s.TopRemoteDestinations)
 
 	const maxEntries = 200
-	sort.Slice(ipv4Entries, func(i, j int) bool { return ipv4Entries[i].TTL > ipv4Entries[j].TTL })
-	sort.Slice(ipv6Entries, func(i, j int) bool { return ipv6Entries[i].TTL > ipv6Entries[j].TTL })
+	// Sort by bytes (most traffic first), fall back to packets, then TTL.
+	entryLess := func(a, b Entry) bool {
+		if a.Bytes != b.Bytes {
+			return a.Bytes > b.Bytes
+		}
+		if a.Packets != b.Packets {
+			return a.Packets > b.Packets
+		}
+		return a.TTL > b.TTL
+	}
+	sort.Slice(ipv4Entries, func(i, j int) bool { return entryLess(ipv4Entries[i], ipv4Entries[j]) })
+	sort.Slice(ipv6Entries, func(i, j int) bool { return entryLess(ipv6Entries[i], ipv6Entries[j]) })
 	if len(ipv4Entries) > maxEntries {
 		ipv4Entries = ipv4Entries[:maxEntries]
 	}

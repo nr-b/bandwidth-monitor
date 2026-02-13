@@ -813,10 +813,10 @@
         var sub = document.getElementById('natTableSubtitle');
         if (ver === 'v4') {
             title.textContent = 'IPv4 NAT Translations';
-            sub.textContent = 'Active conntrack entries (top 200 by TTL)';
+            sub.textContent = 'Active conntrack entries (top 200 by traffic volume)';
         } else {
             title.textContent = 'IPv6 NAT Translations';
-            sub.textContent = 'Active conntrack entries (top 200 by TTL)';
+            sub.textContent = 'Active conntrack entries (top 200 by traffic volume)';
         }
         if (_lastConntrack) renderNATEntries(_lastConntrack);
     };
