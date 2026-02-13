@@ -28,6 +28,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
     <th>NAT (Light)</th>
     <th>DNS (Light)</th>
     <th>WiFi (Light)</th>
+    <th>Monitor (Light)</th>
     <th>Speed Test (Light)</th>
     <th>Debug (Light)</th>
   </tr>
@@ -36,6 +37,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
     <td><img src="docs/nat-light.png" width="300" alt="NAT (light)" /></td>
     <td><img src="docs/dns-light.png" width="300" alt="DNS (light)" /></td>
     <td><img src="docs/wifi-light.png" width="300" alt="WiFi (light)" /></td>
+    <td><img src="docs/monitor-light.png" width="300" alt="Monitor (light)" /></td>
     <td><img src="docs/speedtest-light.png" width="300" alt="Speed Test (light)" /></td>
     <td><img src="docs/debug-light.png" width="300" alt="Debug (light)" /></td>
   </tr>
@@ -44,6 +46,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
     <th>NAT (Dark)</th>
     <th>DNS (Dark)</th>
     <th>WiFi (Dark)</th>
+    <th>Monitor (Dark)</th>
     <th>Speed Test (Dark)</th>
     <th>Debug (Dark)</th>
   </tr>
@@ -52,6 +55,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
     <td><img src="docs/nat-dark.png" width="300" alt="NAT (dark)" /></td>
     <td><img src="docs/dns-dark.png" width="300" alt="DNS (dark)" /></td>
     <td><img src="docs/wifi-dark.png" width="300" alt="WiFi (dark)" /></td>
+    <td><img src="docs/monitor-dark.png" width="300" alt="Monitor (dark)" /></td>
     <td><img src="docs/speedtest-dark.png" width="300" alt="Speed Test (dark)" /></td>
     <td><img src="docs/debug-dark.png" width="300" alt="Debug (dark)" /></td>
   </tr>
