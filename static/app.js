@@ -1162,7 +1162,7 @@
         mc.addEventListener('wheel', function(e) {
             e.preventDefault();
             var z = window._mapZoom;
-            var delta = e.deltaY > 0 ? 0.9 : 1.1;
+            var delta = e.deltaY > 0 ? 0.97 : 1.03;
             var newScale = Math.max(1, Math.min(6, z.scale * delta));
             // Zoom toward mouse position
             var rect = mc.getBoundingClientRect();
