@@ -2015,18 +2015,18 @@
             h += '</div>';
         }
 
-        // Sort servers: System Resolver first, then by latency
+        // Sort servers: System Resolver first, then alphabetically by name
         var servers = (data.servers || []).slice();
         servers.sort(function(a, b) {
             if (a.server === 'System Resolver') return -1;
             if (b.server === 'System Resolver') return 1;
-            return (a.latency || 9999) - (b.latency || 9999);
+            return a.server.localeCompare(b.server);
         });
 
         // Find fastest latency for highlighting
         var fastestLatency = Infinity;
         for (var fi = 0; fi < servers.length; fi++) {
-            if (servers[fi].latency > 0 && servers[fi].latency < fastestLatency) fastestLatency = servers[fi].latency;
+            if (servers[fi].latency_ms > 0 && servers[fi].latency_ms < fastestLatency) fastestLatency = servers[fi].latency_ms;
         }
 
         // Collect all unique record values across servers to highlight differences
@@ -2079,7 +2079,7 @@
             // Latency row
             h += '<tr><td style="padding:4px 8px;font-weight:600;color:var(--text-2)">Latency</td>';
             for (var ci = 0; ci < servers.length; ci++) {
-                var lat = servers[ci].latency;
+                var lat = servers[ci].latency_ms;
                 var lc = lat > 0 && Math.abs(lat - fastestLatency) < 0.1 ? 'var(--success);font-weight:700' : (lat > 100 ? 'var(--warning)' : 'var(--text-0)');
                 h += '<td style="text-align:center;padding:4px;font-family:JetBrains Mono,monospace;font-size:10px;color:' + lc + '">' + (lat > 0 ? lat.toFixed(1) : '—') + '</td>';
             }
@@ -2134,10 +2134,10 @@
         for (var si = 0; si < servers.length; si++) {
             var srv = servers[si];
             var srvName = srv.server;
-            var latencyStr = srv.latency > 0 ? srv.latency.toFixed(1) + ' ms' : '—';
-            var isFastest = srv.latency > 0 && Math.abs(srv.latency - fastestLatency) < 0.1;
+            var latencyStr = srv.latency_ms > 0 ? srv.latency_ms.toFixed(1) + ' ms' : '—';
+            var isFastest = srv.latency_ms > 0 && Math.abs(srv.latency_ms - fastestLatency) < 0.1;
             var rcodeColor = srv.rcode === 'NOERROR' ? 'var(--success)' : (srv.rcode === 'NXDOMAIN' ? 'var(--danger)' : 'var(--warning)');
-            var latencyColor = isFastest ? 'var(--success)' : (srv.latency > 100 ? 'var(--warning)' : 'var(--text-2)');
+            var latencyColor = isFastest ? 'var(--success)' : (srv.latency_ms > 100 ? 'var(--warning)' : 'var(--text-2)');
 
             h += '<div class="dns-check-server">';
 
