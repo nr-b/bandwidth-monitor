@@ -12,6 +12,7 @@ import (
 	"bandwidth-monitor/conntrack"
 	"bandwidth-monitor/debug"
 	"bandwidth-monitor/dns"
+	"bandwidth-monitor/resolver"
 	"bandwidth-monitor/speedtest"
 	"bandwidth-monitor/talkers"
 	"bandwidth-monitor/unifi"
@@ -234,7 +235,7 @@ func SpeedTestResults(st *speedtest.Tester) http.HandlerFunc {
 }
 
 // DebugTraceroute runs a native ICMP traceroute and streams progress as SSE.
-func DebugTraceroute() http.HandlerFunc {
+func DebugTraceroute(dns *resolver.Resolver) http.HandlerFunc {
 	var mu sync.Mutex
 	running := false
 
@@ -296,7 +297,7 @@ func DebugTraceroute() http.HandlerFunc {
 			return
 		}
 
-		ch := debug.RunTraceroute(target, count, maxTTL)
+		ch := debug.RunTraceroute(target, count, maxTTL, dns)
 		for p := range ch {
 			data, _ := json.Marshal(p)
 			w.Write([]byte("data: "))
@@ -351,13 +352,14 @@ func DebugDNS() http.HandlerFunc {
 
 // buildPayload assembles the JSON payload sent over the SSE stream.
 func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, uf *unifi.Client, ct *conntrack.Tracker) map[string]interface{} {
+	geo := t.GetGeoBreakdown()
 	payload := map[string]interface{}{
 		"interfaces":    c.GetAll(),
 		"sparklines":    c.GetSparklines(5*time.Minute, 50),
 		"protocols":     t.GetProtocolBreakdown(),
 		"ip_versions":   t.GetIPVersionBreakdown(),
-		"countries":     t.GetCountryBreakdown(),
-		"asns":          t.GetASNBreakdown(),
+		"countries":     geo.Countries,
+		"asns":          geo.ASNs,
 		"top_bandwidth": t.TopByBandwidth(10),
 		"top_volume":    t.TopByVolume(10),
 		"timestamp":     time.Now().UnixMilli(),

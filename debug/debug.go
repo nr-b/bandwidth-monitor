@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"bandwidth-monitor/resolver"
+
 	mdns "github.com/miekg/dns"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
@@ -74,7 +76,7 @@ type TracerouteProgress struct {
 
 // RunTraceroute performs N probes per hop from TTL 1..maxTTL using ICMP echo.
 // It streams progress updates over the returned channel.
-func RunTraceroute(target string, probesPerTTL int, maxTTL int) <-chan TracerouteProgress {
+func RunTraceroute(target string, probesPerTTL int, maxTTL int, dns *resolver.Resolver) <-chan TracerouteProgress {
 	ch := make(chan TracerouteProgress, 64)
 
 	go func() {
@@ -111,7 +113,7 @@ func RunTraceroute(target string, probesPerTTL int, maxTTL int) <-chan Tracerout
 		reachedDest := false
 
 		for ttl := 1; ttl <= maxTTL; ttl++ {
-			hop := probeHop(destIP, ttl, probesPerTTL, isV4)
+			hop := probeHop(destIP, ttl, probesPerTTL, isV4, dns)
 			hops = append(hops, hop)
 
 			ch <- TracerouteProgress{
@@ -153,7 +155,7 @@ func hopLabel(h TracerouteHop) string {
 	return h.IP
 }
 
-func probeHop(dest net.IP, ttl int, count int, isV4 bool) TracerouteHop {
+func probeHop(dest net.IP, ttl int, count int, isV4 bool, dns *resolver.Resolver) TracerouteHop {
 	hop := TracerouteHop{TTL: ttl, Sent: count}
 
 	var rtts []float64
@@ -190,12 +192,9 @@ func probeHop(dest net.IP, ttl int, count int, isV4 bool) TracerouteHop {
 		}
 		hop.AvgRTT = sum / float64(len(rtts))
 
-		// Reverse DNS (best effort, short timeout)
-		if hop.IP != "" {
-			names, err := net.LookupAddr(hop.IP)
-			if err == nil && len(names) > 0 {
-				hop.Hostname = strings.TrimSuffix(names[0], ".")
-			}
+		// Reverse DNS via shared resolver (always fresh for debug diagnostics).
+		if hop.IP != "" && dns != nil {
+			hop.Hostname = dns.LookupAddrFresh(hop.IP)
 		}
 	} else {
 		hop.MinRTT = 0

@@ -24,6 +24,7 @@ import (
 	"bandwidth-monitor/handler"
 	"bandwidth-monitor/nextdns"
 	"bandwidth-monitor/pihole"
+	"bandwidth-monitor/resolver"
 	"bandwidth-monitor/speedtest"
 	"bandwidth-monitor/talkers"
 	"bandwidth-monitor/unifi"
@@ -137,6 +138,9 @@ func main() {
 
 	statsCollector := collector.New(vpnStatusFiles)
 
+	// Shared reverse-DNS resolver — used by talkers, conntrack, and debug.
+	dnsResolver := resolver.New()
+
 	// SPAN/mirror port mode: override RX/TX direction on a specific interface
 	// using pcap-based packet inspection against LOCAL_NETS.
 	spanDevice := env("SPAN_DEVICE", "")
@@ -149,7 +153,7 @@ func main() {
 
 	go statsCollector.Run()
 
-	talkerTracker := talkers.New(captureDevice, promiscuousBool, localNets, geoDB)
+	talkerTracker := talkers.New(captureDevice, promiscuousBool, localNets, geoDB, dnsResolver)
 	go talkerTracker.Run()
 
 	// DNS provider: AdGuard Home, NextDNS, or Pi-hole (mutually exclusive; first configured wins)
@@ -178,7 +182,7 @@ func main() {
 		log.Printf("UniFi controller integration enabled: %s", unifiURL)
 	}
 
-	conntrackTracker := conntrack.New(localNets, geoDB)
+	conntrackTracker := conntrack.New(localNets, geoDB, dnsResolver)
 	go conntrackTracker.Run()
 	log.Println("Conntrack (NAT) tracking enabled")
 
@@ -196,7 +200,7 @@ func main() {
 	mux.HandleFunc("/api/conntrack", handler.ConntrackSummary(conntrackTracker))
 	mux.HandleFunc("/api/speedtest/run", handler.SpeedTestRun(speedTester))
 	mux.HandleFunc("/api/speedtest/results", handler.SpeedTestResults(speedTester))
-	mux.HandleFunc("/api/debug/traceroute", handler.DebugTraceroute())
+	mux.HandleFunc("/api/debug/traceroute", handler.DebugTraceroute(dnsResolver))
 	mux.HandleFunc("/api/debug/dns", handler.DebugDNS())
 	mux.HandleFunc("/api/summary", handler.MenuBarSummary(statsCollector, talkerTracker, dnsProvider, unifiClient, conntrackTracker))
 	mux.HandleFunc("/api/events", handler.SSE(statsCollector, talkerTracker, dnsProvider, unifiClient, conntrackTracker))
