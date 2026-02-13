@@ -30,7 +30,7 @@
 
     // ── Tab navigation ──
     window._switchTab = function(tab) {
-        var panels = { traffic: 'tabTraffic', nat: 'tabNat', dns: 'tabDns', wifi: 'tabWifi', speedtest: 'tabSpeedtest', debug: 'tabDebug' };
+        var panels = { traffic: 'tabTraffic', nat: 'tabNat', dns: 'tabDns', wifi: 'tabWifi', monitor: 'tabMonitor', speedtest: 'tabSpeedtest', debug: 'tabDebug' };
         for (var k in panels) {
             var p = document.getElementById(panels[k]);
             if (p) p.classList.toggle('active', k === tab);
@@ -994,6 +994,362 @@
         });
     });
 
+    // ── World Traffic Map ──
+    // Country centroids (ISO alpha-2 → [lat, lon]) for map visualization.
+    var countryCentroids = {"AF":[33,65],"AL":[41,20],"DZ":[28,3],"AO":[-12,17],"AR":[-34,-64],"AM":[40,45],"AU":[-25,134],"AT":[47,14],"AZ":[41,48],"BD":[24,90],"BY":[53,28],"BE":[51,4],"BJ":[9,2],"BO":[-17,-65],"BA":[44,18],"BW":[-22,24],"BR":[-10,-55],"BG":[43,25],"BF":[12,-2],"KH":[13,105],"CM":[6,12],"CA":[56,-96],"CF":[7,21],"TD":[15,19],"CL":[-30,-71],"CN":[35,105],"CO":[4,-72],"CD":[-3,24],"CG":[-1,15],"CR":[10,-84],"CI":[8,-5],"HR":[45,16],"CU":[22,-80],"CY":[35,33],"CZ":[50,15],"DK":[56,10],"DO":[19,-70],"EC":[-2,-78],"EG":[27,30],"SV":[14,-89],"EE":[59,26],"ET":[9,40],"FI":[64,26],"FR":[46,2],"GA":[0,12],"DE":[51,9],"GH":[8,-2],"GR":[39,22],"GT":[16,-90],"GN":[11,-12],"HT":[19,-72],"HN":[15,-87],"HU":[47,20],"IS":[65,-18],"IN":[21,78],"ID":[-5,120],"IR":[32,53],"IQ":[33,44],"IE":[53,-8],"IL":[31,35],"IT":[43,12],"JM":[18,-77],"JP":[36,138],"JO":[31,37],"KZ":[48,68],"KE":[-1,38],"KW":[29,48],"KG":[41,75],"LA":[18,105],"LV":[57,25],"LB":[34,36],"LY":[27,17],"LT":[56,24],"LU":[50,6],"MG":[-19,47],"MY":[4,109],"ML":[17,-4],"MX":[23,-102],"MD":[47,29],"MN":[48,106],"ME":[43,19],"MA":[32,-5],"MZ":[-18,35],"MM":[22,96],"NA":[-22,17],"NP":[28,84],"NL":[52,5],"NZ":[-41,174],"NI":[13,-85],"NE":[18,8],"NG":[10,8],"KP":[40,127],"NO":[62,10],"OM":[21,57],"PK":[30,70],"PA":[9,-80],"PY":[-23,-58],"PE":[-10,-76],"PH":[13,122],"PL":[52,20],"PT":[39,-8],"QA":[25,51],"RO":[46,25],"RU":[62,105],"RW":[-2,30],"SA":[24,45],"SN":[14,-14],"RS":[44,21],"SG":[1,104],"SK":[49,20],"SI":[46,15],"ZA":[-29,24],"KR":[36,128],"ES":[40,-4],"LK":[8,81],"SD":[13,30],"SE":[62,16],"CH":[47,8],"SY":[35,38],"TW":[24,121],"TJ":[39,69],"TZ":[-7,35],"TH":[15,101],"TN":[34,9],"TR":[39,35],"TM":[39,60],"UA":[49,32],"AE":[24,54],"GB":[54,-2],"US":[38,-97],"UY":[-33,-56],"UZ":[41,65],"VE":[8,-66],"VN":[16,108],"YE":[16,48],"ZM":[-14,28],"ZW":[-19,30]};
+
+    function updateWorldMap(countries, topBW) {
+        if (!countries || !countries.length) return;
+        var wc = window._worldCountries || {};
+
+        var container = document.getElementById('worldMapContainer');
+        var W = container.clientWidth || 800;
+        var H = Math.round(W * 0.5);
+
+        function proj(lat, lon) {
+            return [(lon + 180) / 360 * W, (90 - lat) / 180 * H];
+        }
+
+        // Build traffic lookup
+        var trafficByCC = {};
+        var maxBytes = 1;
+        for (var i = 0; i < countries.length; i++) {
+            var c = countries[i];
+            trafficByCC[c.country] = c;
+            if (c.bytes > maxBytes) maxBytes = c.bytes;
+        }
+
+        var isDark = (function() {
+            var t = document.documentElement.getAttribute('data-theme');
+            if (t === 'dark') return true;
+            if (t === 'light') return false;
+            return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        })();
+
+        var oceanBg = isDark ? '#0c1929' : '#eaeff6';
+        var landDefault = isDark ? '#1c2e4a' : '#c5cdd9';
+        var landStroke = isDark ? '#263d5e' : '#a8b2bf';
+        var activeColor = '#22d3ee';
+        var flowColor = '#a78bfa';
+        var labelColor = isDark ? '#0c1929' : '#fff';
+
+        var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:100%;border-radius:8px">';
+        svg += '<defs><filter id="glow"><feGaussianBlur stdDeviation="2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>';
+        svg += '<rect width="' + W + '" height="' + H + '" fill="' + oceanBg + '" rx="8"/>';
+
+        // Grid
+        svg += '<g stroke="' + (isDark ? '#1a2a45' : '#d5dde8') + '" stroke-width="0.5" opacity="0.5">';
+        for (var lon = -150; lon <= 180; lon += 30) { var gx = (lon + 180) / 360 * W; svg += '<line x1="' + gx + '" y1="0" x2="' + gx + '" y2="' + H + '"/>'; }
+        for (var lat = -60; lat <= 80; lat += 30) { var gy = (90 - lat) / 180 * H; svg += '<line x1="0" y1="' + gy + '" x2="' + W + '" y2="' + gy + '"/>'; }
+        svg += '</g>';
+
+        // Country shapes from embedded GeoJSON
+        var activeCCs = {};
+        for (var cc in wc) {
+            var polys = wc[cc];
+            var traffic = trafficByCC[cc];
+            var fill = landDefault, stroke = landStroke, sw = '0.3', fo = '1';
+            if (traffic) {
+                var ratio = traffic.bytes / maxBytes;
+                fill = activeColor; fo = '' + (0.3 + ratio * 0.7).toFixed(2);
+                stroke = activeColor; sw = '0.5';
+                activeCCs[cc] = { ratio: ratio, traffic: traffic };
+            }
+            for (var pi = 0; pi < polys.length; pi++) {
+                var ring = polys[pi];
+                if (ring.length < 3) continue;
+                // Skip polygons crossing the antimeridian (lon span > 180°)
+                var minLon = 999, maxLon = -999;
+                for (var ri = 0; ri < ring.length; ri++) {
+                    var lon = ring[ri][0];
+                    if (lon < minLon) minLon = lon;
+                    if (lon > maxLon) maxLon = lon;
+                }
+                if (maxLon - minLon > 180) continue;
+                var d = '';
+                for (var ri = 0; ri < ring.length; ri++) {
+                    var p = proj(ring[ri][1], ring[ri][0]);
+                    d += (ri === 0 ? 'M' : 'L') + p[0].toFixed(0) + ',' + p[1].toFixed(0);
+                }
+                d += 'Z';
+                svg += '<path d="' + d + '" fill="' + fill + '" fill-opacity="' + fo + '" stroke="' + stroke + '" stroke-width="' + sw + '"';
+                if (traffic) svg += '><title>' + countryFlag(cc) + ' ' + (traffic.country_name || cc) + ': ' + formatBytes(traffic.bytes) + ' (' + traffic.connections + ' IPs)</title></path>';
+                else svg += '/>';
+            }
+        }
+
+        // Flow lines from top bandwidth talkers
+        if (topBW && topBW.length) {
+            var center = proj(50, 10);
+            svg += '<circle cx="' + center[0] + '" cy="' + center[1] + '" r="3" fill="' + flowColor + '" opacity="0.8"><animate attributeName="r" values="2;6;2" dur="2s" repeatCount="indefinite"/></circle>';
+            for (var i = 0; i < Math.min(topBW.length, 8); i++) {
+                var t = topBW[i];
+                if (!t.country || !countryCentroids[t.country]) continue;
+                var dest = proj(countryCentroids[t.country][0], countryCentroids[t.country][1]);
+                var mx = (center[0] + dest[0]) / 2, my = Math.min(center[1], dest[1]) - 35;
+                var pathD = 'M' + center[0] + ',' + center[1] + ' Q' + mx + ',' + my + ' ' + dest[0] + ',' + dest[1];
+                var host = t.hostname && t.hostname !== t.ip ? t.hostname + ' (' + t.ip + ')' : t.ip;
+                var asInfo = t.as_org ? ' \u00b7 AS' + (t.asn || '') + ' ' + t.as_org : '';
+                var tip = host + asInfo + ' \u2192 ' + formatRate(t.rate_bytes || 0);
+                // Invisible wide hit area for hover
+                svg += '<path d="' + pathD + '" fill="none" stroke="transparent" stroke-width="12" style="cursor:pointer"><title>' + tip + '</title></path>';
+                // Visible animated line
+                svg += '<path d="' + pathD + '" fill="none" stroke="' + flowColor + '" stroke-width="1.5" stroke-dasharray="6,4" opacity="0.5" style="pointer-events:none"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.5s" repeatCount="indefinite"/></path>';
+            }
+        }
+
+        // Country code labels on active countries
+        for (var cc in activeCCs) {
+            if (!countryCentroids[cc]) continue;
+            var p = proj(countryCentroids[cc][0], countryCentroids[cc][1]);
+            var fs = Math.max(7, Math.min(12, 7 + activeCCs[cc].ratio * 8));
+            svg += '<text x="' + p[0] + '" y="' + (p[1] + fs * 0.35) + '" text-anchor="middle" fill="' + labelColor + '" font-size="' + fs.toFixed(0) + 'px" font-weight="700" style="pointer-events:none;text-shadow:0 1px 3px rgba(0,0,0,0.6)">' + cc + '</text>';
+        }
+        svg += '</svg>';
+        container.innerHTML = svg;
+
+        // Country traffic table
+        var tableWrap = document.getElementById('mapCountryTable');
+        var tableEl = document.getElementById('mapCountryList');
+        if (tableWrap && tableEl) {
+            tableWrap.style.display = '';
+            var total = 0;
+            for (var i = 0; i < countries.length; i++) total += countries[i].bytes;
+            var th = '';
+            for (var i = 0; i < countries.length; i++) {
+                var c = countries[i];
+                var pct = total > 0 ? (c.bytes / total * 100) : 0;
+                th += '<div style="display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:4px;background:var(--bg-1)">';
+                th += '<span style="width:20px;text-align:center">' + countryFlag(c.country) + '</span>';
+                th += '<span style="font-weight:600;width:24px">' + c.country + '</span>';
+                th += '<div style="flex:1;height:6px;background:var(--bg-2);border-radius:3px;overflow:hidden"><div style="width:' + Math.max(2, pct).toFixed(1) + '%;height:100%;background:' + activeColor + ';border-radius:3px;opacity:0.7"></div></div>';
+                th += '<span style="font-variant-numeric:tabular-nums;color:var(--text-2);min-width:55px;text-align:right">' + formatBytes(c.bytes) + '</span>';
+                th += '<span style="color:var(--text-3);min-width:38px;text-align:right">' + pct.toFixed(1) + '%</span>';
+                th += '</div>';
+            }
+            tableEl.innerHTML = th;
+        }
+    }
+
+    // ── Latency Monitor ──
+    function updateLatency(targets) {
+        var sec = document.getElementById('latencySection');
+        if (!targets || !targets.length) return;
+
+        var el = document.getElementById('latencyTargets');
+        el.style.display = 'grid';
+        el.style.gridTemplateColumns = 'repeat(auto-fill,minmax(380px,1fr))';
+        el.style.gap = '16px';
+
+        var h = '';
+        for (var i = 0; i < targets.length; i++) {
+            var t = targets[i];
+            var statusColor = t.alive ? 'var(--success, #22c55e)' : 'var(--danger, #ef4444)';
+            var statusText = t.alive ? 'UP' : 'DOWN';
+
+            // Determine if dual-stack
+            var hasV4 = t.ipv4 && t.ipv4 !== '';
+            var hasV6 = t.ipv6 && t.ipv6 !== '';
+            var dualStack = hasV4 && hasV6;
+
+            h += '<div style="background:var(--bg-2);border-radius:8px;padding:16px;border:1px solid var(--border)">';
+
+            // Header: name + IPs + status
+            h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
+            h += '<div>';
+            h += '<div style="font-weight:600;font-size:14px">' + t.name + '</div>';
+            h += '<div style="font-size:10px;color:var(--text-2);font-family:var(--font-mono, monospace)">';
+            if (hasV4) h += '<span style="background:var(--bg-1);padding:1px 4px;border-radius:3px;margin-right:4px">v4 ' + t.ipv4 + '</span>';
+            if (hasV6) h += '<span style="background:var(--bg-1);padding:1px 4px;border-radius:3px">v6 ' + t.ipv6 + '</span>';
+            // Legacy fallback for old data
+            if (!hasV4 && !hasV6 && t.ip) h += t.ip;
+            h += '</div>';
+            h += '</div>';
+            h += '<div style="display:flex;align-items:center;gap:6px">';
+            if (dualStack) h += '<span style="font-size:9px;font-weight:600;color:var(--text-2);background:var(--bg-1);padding:1px 5px;border-radius:3px">DUAL</span>';
+            h += '<span style="width:10px;height:10px;border-radius:50%;background:' + statusColor + ';display:inline-block"></span>';
+            h += '<span style="font-size:12px;font-weight:700;color:' + statusColor + '">' + statusText + '</span>';
+            h += '</div></div>';
+
+            // Stats grid
+            h += '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:14px;text-align:center">';
+            var stats = [
+                ['RTT', t.rtt_ms >= 0 ? t.rtt_ms.toFixed(1) : '—', 'ms'],
+                ['Avg', t.avg_rtt_ms > 0 ? t.avg_rtt_ms.toFixed(1) : '—', 'ms'],
+                ['Min', t.min_rtt_ms > 0 ? t.min_rtt_ms.toFixed(1) : '—', 'ms'],
+                ['Jitter', t.jitter_ms > 0 ? t.jitter_ms.toFixed(2) : '—', 'ms'],
+                ['Loss', t.loss_pct.toFixed(1), '%']
+            ];
+            for (var si = 0; si < stats.length; si++) {
+                var lossStyle = stats[si][0] === 'Loss' && t.loss_pct > 0 ? ';color:var(--danger)' : '';
+                h += '<div><div style="font-size:10px;color:var(--text-2);margin-bottom:2px">' + stats[si][0] + '</div>';
+                h += '<div style="font-size:13px;font-weight:600;font-variant-numeric:tabular-nums' + lossStyle + '">';
+                h += stats[si][1] + '<span style="font-size:9px;color:var(--text-2);margin-left:1px">' + stats[si][2] + '</span></div></div>';
+            }
+            h += '</div>';
+
+            // ICMP charts — show v4 and v6 separately if dual-stack
+            var icmpV4 = t.icmp_v4 && t.icmp_v4.length > 1 ? t.icmp_v4 : null;
+            var icmpV6 = t.icmp_v6 && t.icmp_v6.length > 1 ? t.icmp_v6 : null;
+            var icmpLegacy = t.icmp && t.icmp.length > 1 ? t.icmp : null;
+
+            if (icmpV4 && icmpV6) {
+                h += '<div style="margin-bottom:10px">';
+                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">ICMP Ping <span style="color:#22d3ee">IPv4</span></div>';
+                h += renderLatencyChart(icmpV4, '#22d3ee', '#22d3ee');
+                h += '</div>';
+                h += '<div style="margin-bottom:10px">';
+                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">ICMP Ping <span style="color:#34d399">IPv6</span></div>';
+                h += renderLatencyChart(icmpV6, '#34d399', '#34d399');
+                h += '</div>';
+            } else if (icmpV4) {
+                h += '<div style="margin-bottom:10px">';
+                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">ICMP Ping (IPv4)</div>';
+                h += renderLatencyChart(icmpV4, '#22d3ee', '#22d3ee');
+                h += '</div>';
+            } else if (icmpV6) {
+                h += '<div style="margin-bottom:10px">';
+                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">ICMP Ping (IPv6)</div>';
+                h += renderLatencyChart(icmpV6, '#34d399', '#34d399');
+                h += '</div>';
+            } else if (icmpLegacy) {
+                h += '<div style="margin-bottom:10px">';
+                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">ICMP Ping</div>';
+                h += renderLatencyChart(icmpLegacy, '#22d3ee', '#22d3ee');
+                h += '</div>';
+            }
+
+            // HTTPS charts — show v4 and v6 separately if dual-stack
+            var httpsV4 = t.https_v4 && t.https_v4.length > 1 ? t.https_v4 : null;
+            var httpsV6 = t.https_v6 && t.https_v6.length > 1 ? t.https_v6 : null;
+            var httpsLegacy = t.https && t.https.length > 1 ? t.https : null;
+
+            if (httpsV4 && httpsV6) {
+                h += '<div style="margin-bottom:10px">';
+                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">HTTPS <span style="color:#a78bfa">IPv4</span></div>';
+                h += renderLatencyChart(httpsV4, '#a78bfa', '#a78bfa');
+                h += '</div>';
+                h += '<div>';
+                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">HTTPS <span style="color:#fb923c">IPv6</span></div>';
+                h += renderLatencyChart(httpsV6, '#fb923c', '#fb923c');
+                h += '</div>';
+            } else if (httpsV4) {
+                h += '<div>';
+                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">HTTPS (IPv4)</div>';
+                h += renderLatencyChart(httpsV4, '#a78bfa', '#a78bfa');
+                h += '</div>';
+            } else if (httpsV6) {
+                h += '<div>';
+                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">HTTPS (IPv6)</div>';
+                h += renderLatencyChart(httpsV6, '#fb923c', '#fb923c');
+                h += '</div>';
+            } else if (httpsLegacy) {
+                h += '<div>';
+                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">HTTPS</div>';
+                h += renderLatencyChart(httpsLegacy, '#a78bfa', '#a78bfa');
+                h += '</div>';
+            }
+
+            h += '</div>';
+        }
+        el.innerHTML = h;
+    }
+
+    function renderLatencyChart(points, strokeColor, fillHex) {
+        var ML = 42; // left margin for Y axis labels
+        var W = 360, H = 72;
+        var chartW = W - ML;
+        var PT = 4, PB = 12; // padding top/bottom inside chart
+
+        // Find max RTT for scale
+        var maxRTT = 1;
+        for (var i = 0; i < points.length; i++) {
+            if (points[i].rtt > maxRTT) maxRTT = points[i].rtt;
+        }
+        maxRTT = Math.max(maxRTT * 1.2, 5); // 20% headroom, min 5ms
+
+        // Nice Y-axis ticks
+        var yTicks = niceScale(0, maxRTT, 3);
+
+        function yPx(val) { return PT + (1 - val / maxRTT) * (H - PT - PB); }
+
+        var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:' + H + 'px;display:block">';
+
+        // Chart background
+        svg += '<rect x="' + ML + '" y="0" width="' + chartW + '" height="' + H + '" fill="var(--bg-1)" rx="4"/>';
+
+        // Y-axis grid lines and labels
+        for (var yi = 0; yi < yTicks.length; yi++) {
+            var yVal = yTicks[yi];
+            var y = yPx(yVal);
+            if (y < PT || y > H - PB) continue;
+            svg += '<line x1="' + ML + '" y1="' + y.toFixed(1) + '" x2="' + W + '" y2="' + y.toFixed(1) + '" stroke="var(--text-3)" stroke-width="0.5" opacity="0.25"/>';
+            var label = yVal < 10 ? yVal.toFixed(1) : Math.round(yVal);
+            svg += '<text x="' + (ML - 3) + '" y="' + (y + 3) + '" text-anchor="end" fill="var(--text-2)" font-size="9px" style="font-variant-numeric:tabular-nums">' + label + '</text>';
+        }
+        // "ms" unit label — positioned at top-left, clear of tick values
+        svg += '<text x="2" y="9" fill="var(--text-3)" font-size="8px" font-weight="600">ms</text>';
+
+        // Build path + fill
+        var path = '', fillPath = '';
+        var lossDots = '';
+        var firstGoodX = -1, lastGoodX = -1;
+        for (var i = 0; i < points.length; i++) {
+            var x = ML + (i / Math.max(points.length - 1, 1)) * chartW;
+            if (points[i].rtt < 0) {
+                lossDots += '<line x1="' + x.toFixed(1) + '" y1="' + PT + '" x2="' + x.toFixed(1) + '" y2="' + (H - PB) + '" stroke="var(--danger, #ef4444)" stroke-width="1" opacity="0.12"/>';
+                continue;
+            }
+            var y = yPx(points[i].rtt);
+            path += (path ? ' L' : 'M') + x.toFixed(1) + ',' + y.toFixed(1);
+            if (firstGoodX < 0) { firstGoodX = x; fillPath = 'M' + x.toFixed(1) + ',' + (H - PB); }
+            fillPath += ' L' + x.toFixed(1) + ',' + y.toFixed(1);
+            lastGoodX = x;
+        }
+        if (fillPath && lastGoodX >= 0) {
+            fillPath += ' L' + lastGoodX.toFixed(1) + ',' + (H - PB) + ' Z';
+        }
+
+        // Loss strips
+        svg += lossDots;
+
+        // Fill area — very subtle
+        if (fillPath) {
+            svg += '<path d="' + fillPath + '" fill="' + fillHex + '" opacity="0.06"/>';
+        }
+        // Line
+        if (path) {
+            svg += '<path d="' + path + '" fill="none" stroke="' + strokeColor + '" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>';
+        }
+
+        // Time labels
+        svg += '<text x="' + (ML + 3) + '" y="' + (H - 1) + '" fill="var(--text-3)" font-size="8px">15m ago</text>';
+        svg += '<text x="' + (W - 3) + '" y="' + (H - 1) + '" text-anchor="end" fill="var(--text-3)" font-size="8px">now</text>';
+
+        svg += '</svg>';
+        return svg;
+    }
+
+    // Generate nice Y-axis tick values
+    function niceScale(lo, hi, maxTicks) {
+        var range = hi - lo;
+        if (range <= 0) return [0];
+        var rough = range / maxTicks;
+        var mag = Math.pow(10, Math.floor(Math.log10(rough)));
+        var res = rough / mag;
+        var nice;
+        if (res <= 1.5) nice = 1;
+        else if (res <= 3) nice = 2;
+        else if (res <= 7) nice = 5;
+        else nice = 10;
+        var step = nice * mag;
+        var ticks = [];
+        for (var v = 0; v <= hi; v += step) {
+            ticks.push(Math.round(v * 1000) / 1000);
+        }
+        return ticks;
+    }
+
     // ── WiFi ──
     function updateWiFi(wifi) {
         if (!wifi) return;
@@ -1232,6 +1588,16 @@
         updateIPVersions(d.ip_versions);
         updateCountries(d.countries);
         updateASNs(d.asns);
+        // Throttle map (5s) and latency (2s) to allow tooltip hover and reduce DOM churn
+        var now = Date.now();
+        if (!window._lastMapUpdate || now - window._lastMapUpdate > 5000) {
+            updateWorldMap(d.countries, d.top_bandwidth);
+            window._lastMapUpdate = now;
+        }
+        if (!window._lastLatUpdate || now - window._lastLatUpdate > 2000) {
+            updateLatency(d.latency);
+            window._lastLatUpdate = now;
+        }
         renderTalkers('bwTable', bw, 'rate_bytes', formatRate, 'bw');
         renderTalkers('volTable', vol, 'total_bytes', formatBytes, 'vol');
         updateDNS(d.dns || null);
@@ -1650,18 +2016,18 @@
             h += '</div>';
         }
 
-        // Sort servers: System Resolver first, then by latency
+        // Sort servers: System Resolver first, then alphabetically by name
         var servers = (data.servers || []).slice();
         servers.sort(function(a, b) {
             if (a.server === 'System Resolver') return -1;
             if (b.server === 'System Resolver') return 1;
-            return (a.latency || 9999) - (b.latency || 9999);
+            return a.server.localeCompare(b.server);
         });
 
         // Find fastest latency for highlighting
         var fastestLatency = Infinity;
         for (var fi = 0; fi < servers.length; fi++) {
-            if (servers[fi].latency > 0 && servers[fi].latency < fastestLatency) fastestLatency = servers[fi].latency;
+            if (servers[fi].latency_ms > 0 && servers[fi].latency_ms < fastestLatency) fastestLatency = servers[fi].latency_ms;
         }
 
         // Collect all unique record values across servers to highlight differences
@@ -1675,13 +2041,104 @@
             }
         }
 
+        // ── Comparison Matrix ──
+        // Collect unique record values across all servers
+        var uniqueRecords = [];
+        var recordSeen = {};
+        for (var mi = 0; mi < servers.length; mi++) {
+            if (servers[mi].records) {
+                for (var mri = 0; mri < servers[mi].records.length; mri++) {
+                    var key = servers[mi].records[mri].type + ':' + servers[mi].records[mri].value;
+                    if (!recordSeen[key]) {
+                        recordSeen[key] = true;
+                        uniqueRecords.push({ type: servers[mi].records[mri].type, value: servers[mi].records[mri].value });
+                    }
+                }
+            }
+        }
+
+        if (servers.length > 1) {
+            // Short server labels
+            var shortNames = servers.map(function(s) {
+                return s.server.replace(/ \(.*\)/, '').replace('System Resolver', 'System');
+            });
+
+            h += '<div style="border-bottom:1px solid var(--border);padding:14px 16px;overflow-x:auto">';
+            h += '<div style="font-size:12px;font-weight:600;color:var(--text-0);margin-bottom:10px">Comparison Matrix</div>';
+            h += '<table style="width:100%;border-collapse:collapse;font-size:11px">';
+
+            // Header row: server names
+            h += '<thead><tr><th style="text-align:left;padding:4px 8px;font-weight:600;color:var(--text-2);border-bottom:1px solid var(--border);min-width:80px">Record</th>';
+            for (var ci = 0; ci < servers.length; ci++) {
+                var sColor = servers[ci].rcode === 'NOERROR' ? 'var(--success)' : 'var(--danger)';
+                h += '<th style="text-align:center;padding:4px 4px;font-weight:600;color:var(--text-0);border-bottom:1px solid var(--border);white-space:nowrap;font-size:10px">';
+                h += '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:' + sColor + ';margin-right:3px;vertical-align:middle"></span>';
+                h += shortNames[ci] + '</th>';
+            }
+            h += '</tr></thead><tbody>';
+
+            // Latency row
+            h += '<tr><td style="padding:4px 8px;font-weight:600;color:var(--text-2)">Latency</td>';
+            for (var ci = 0; ci < servers.length; ci++) {
+                var lat = servers[ci].latency_ms;
+                var lc = lat > 0 && Math.abs(lat - fastestLatency) < 0.1 ? 'var(--success);font-weight:700' : (lat > 100 ? 'var(--warning)' : 'var(--text-0)');
+                h += '<td style="text-align:center;padding:4px;font-family:JetBrains Mono,monospace;font-size:10px;color:' + lc + '">' + (lat > 0 ? lat.toFixed(1) : '—') + '</td>';
+            }
+            h += '</tr>';
+
+            // RCODE row
+            h += '<tr style="background:var(--bg-2)"><td style="padding:4px 8px;font-weight:600;color:var(--text-2)">Status</td>';
+            for (var ci = 0; ci < servers.length; ci++) {
+                var rc = servers[ci].rcode || 'ERROR';
+                var rcc = rc === 'NOERROR' ? 'var(--success)' : (rc === 'NXDOMAIN' ? 'var(--danger)' : 'var(--warning)');
+                h += '<td style="text-align:center;padding:4px;font-size:10px;font-weight:600;color:' + rcc + '">' + rc + '</td>';
+            }
+            h += '</tr>';
+
+            // Record rows: each unique value, check which servers have it
+            for (var uri = 0; uri < uniqueRecords.length; uri++) {
+                var rec = uniqueRecords[uri];
+                var bg = uri % 2 === 0 ? '' : 'background:var(--bg-2)';
+                // Count how many servers have this record
+                var hasCount = 0;
+                for (var ci = 0; ci < servers.length; ci++) {
+                    if (servers[ci].records) {
+                        for (var rci = 0; rci < servers[ci].records.length; rci++) {
+                            if (servers[ci].records[rci].type === rec.type && servers[ci].records[rci].value === rec.value) { hasCount++; break; }
+                        }
+                    }
+                }
+                var isPartial = hasCount > 0 && hasCount < servers.length;
+                h += '<tr style="' + bg + '"><td style="padding:4px 8px;font-family:JetBrains Mono,monospace;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px" title="' + rec.value + '">';
+                h += '<span style="color:var(--text-2);margin-right:4px">' + rec.type + '</span>' + rec.value + '</td>';
+                for (var ci = 0; ci < servers.length; ci++) {
+                    var found = false;
+                    if (servers[ci].records) {
+                        for (var rci = 0; rci < servers[ci].records.length; rci++) {
+                            if (servers[ci].records[rci].type === rec.type && servers[ci].records[rci].value === rec.value) { found = true; break; }
+                        }
+                    }
+                    if (found) {
+                        h += '<td style="text-align:center;padding:4px;color:var(--success)">✓</td>';
+                    } else {
+                        h += '<td style="text-align:center;padding:4px;color:' + (isPartial ? 'var(--danger)' : 'var(--text-3)') + '">' + (isPartial ? '✗' : '—') + '</td>';
+                    }
+                }
+                h += '</tr>';
+            }
+            h += '</tbody></table></div>';
+        }
+
+        // ── Per-server detail cards ──
+        h += '<div style="font-size:12px;font-weight:600;color:var(--text-2);padding:14px 20px 6px">Server Details</div>';
+
         for (var si = 0; si < servers.length; si++) {
             var srv = servers[si];
             var srvName = srv.server;
-            var latencyStr = srv.latency > 0 ? srv.latency.toFixed(1) + ' ms' : '—';
-            var isFastest = srv.latency > 0 && Math.abs(srv.latency - fastestLatency) < 0.1;
+            var latencyStr = srv.latency_ms > 0 ? srv.latency_ms.toFixed(1) + ' ms' : '—';
+            var isFastest = srv.latency_ms > 0 && Math.abs(srv.latency_ms - fastestLatency) < 0.1;
             var rcodeColor = srv.rcode === 'NOERROR' ? 'var(--success)' : (srv.rcode === 'NXDOMAIN' ? 'var(--danger)' : 'var(--warning)');
-            var latencyColor = isFastest ? 'var(--success)' : (srv.latency > 100 ? 'var(--warning)' : 'var(--text-2)');
+            var latencyColor = isFastest ? 'var(--success)' : (srv.latency_ms > 100 ? 'var(--warning)' : 'var(--text-2)');
 
             h += '<div class="dns-check-server">';
 

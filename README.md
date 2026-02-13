@@ -2,7 +2,7 @@
 
 A real-time network monitoring dashboard for Linux, written in Go.
 
-Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Home, NextDNS, or Pi-hole), UniFi wireless monitoring, GeoIP enrichment, and a macOS menu bar plugin.
+Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Home, NextDNS, or Pi-hole), WiFi monitoring (UniFi or Omada), GeoIP enrichment, continuous latency monitoring, and a macOS menu bar plugin.
 
 ## Table of Contents
 
@@ -28,6 +28,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
     <th>NAT (Light)</th>
     <th>DNS (Light)</th>
     <th>WiFi (Light)</th>
+    <th>Monitor (Light)</th>
     <th>Speed Test (Light)</th>
     <th>Debug (Light)</th>
   </tr>
@@ -36,6 +37,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
     <td><img src="docs/nat-light.png" width="300" alt="NAT (light)" /></td>
     <td><img src="docs/dns-light.png" width="300" alt="DNS (light)" /></td>
     <td><img src="docs/wifi-light.png" width="300" alt="WiFi (light)" /></td>
+    <td><img src="docs/monitor-light.png" width="300" alt="Monitor (light)" /></td>
     <td><img src="docs/speedtest-light.png" width="300" alt="Speed Test (light)" /></td>
     <td><img src="docs/debug-light.png" width="300" alt="Debug (light)" /></td>
   </tr>
@@ -44,6 +46,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
     <th>NAT (Dark)</th>
     <th>DNS (Dark)</th>
     <th>WiFi (Dark)</th>
+    <th>Monitor (Dark)</th>
     <th>Speed Test (Dark)</th>
     <th>Debug (Dark)</th>
   </tr>
@@ -52,6 +55,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
     <td><img src="docs/nat-dark.png" width="300" alt="NAT (dark)" /></td>
     <td><img src="docs/dns-dark.png" width="300" alt="DNS (dark)" /></td>
     <td><img src="docs/wifi-dark.png" width="300" alt="WiFi (dark)" /></td>
+    <td><img src="docs/monitor-dark.png" width="300" alt="Monitor (dark)" /></td>
     <td><img src="docs/speedtest-dark.png" width="300" alt="Speed Test (dark)" /></td>
     <td><img src="docs/debug-dark.png" width="300" alt="Debug (dark)" /></td>
   </tr>
@@ -74,6 +78,8 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 - **IP version breakdown** — IPv4 vs IPv6 traffic split
 - **GeoIP enrichment** — country flags, ASN org names via MaxMind MMDB files
 - **Reverse DNS** — resolves IPs to hostnames via a shared resolver with TTL-based cache expiry and bounded concurrency
+- **Traffic world map** — live SVG map showing traffic flows by country, sized by volume, with animated flow lines to active destinations
+- **Latency monitor** — continuous ICMP + HTTPS probes against configurable targets (default: FFMUC anycast, Quad9, Digitalcourage) with rolling sparklines, RTT, jitter, and packet loss; dual-stack IPv4+IPv6; 15-minute history
 
 ### DNS Tab
 
@@ -116,7 +122,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 ### Debug Tab
 
 - **Traceroute** — native Go ICMP traceroute with configurable probes per hop (default 20), using raw sockets with proper TTL manipulation and ICMP ID matching; shows per-hop IP, reverse DNS hostname (always fresh, bypasses cache), avg/min/max RTT, and packet loss percentage; supports IPv4 and IPv6; streams progress via SSE
-- **DNS Check** — queries a domain (A, AAAA, MX, TXT, NS, CNAME, SOA, PTR) against 14 DNS servers in parallel: System Resolver, FFMUC Anycast01/02 (IPv4+IPv6), Cloudflare (IPv4+IPv6), Google (IPv4+IPv6), Quad9 (IPv4+IPv6), and OpenDNS (IPv4+IPv6); shows RCode, latency, TTL, DNSSEC AD flag per server; highlights the fastest server and flags records unique to a single server
+- **DNS Check** — queries a domain (A, AAAA, MX, TXT, NS, CNAME, SOA, PTR) against 14 DNS servers in parallel: System Resolver, FFMUC Anycast01/02 (IPv4+IPv6), Cloudflare (IPv4+IPv6), Google (IPv4+IPv6), Quad9 (IPv4+IPv6), and OpenDNS (IPv4+IPv6); shows comparison matrix, RCode, latency, TTL, DNSSEC AD flag per server; highlights the fastest server and flags records unique to a single server
 - **Resolver leak check** — automatically detects which public IPs your system resolver uses when talking to authoritative servers, via `o-o.myaddr.l.google.com` TXT and `dnscheck.tools` TXT (including IPv4-only and IPv6-only variants); shows the configured local resolver from `/etc/resolv.conf`, upstream egress IPs, EDNS Client Subnet info, and resolver org/geo from dnscheck.tools
 
 ### General
@@ -339,6 +345,12 @@ The UniFi integration auto-detects both legacy controllers (port 8443) and UniFi
 |----------|---------|-------------|
 | `SPEEDTEST_SERVER` | `https://speed.ffmuc.net` | Target server URL for the speed test tab |
 
+#### Latency
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LATENCY_TARGETS` | `anycast01.ffmuc.net,anycast02.ffmuc.net,dns.quad9.net,dns3.digitalcourage.de` | Comma-separated hostnames/IPs to probe via ICMP and HTTPS |
+
 ### Tab Visibility
 
 - **DNS tab** — shown when AdGuard Home, NextDNS, or Pi-hole is configured
@@ -440,6 +452,7 @@ collector/                → netlink-based interface stats (RTM_GETLINK/RTM_GET
 conntrack/                → netlink-based conntrack (NAT) table reader via ti-mo/conntrack
 talkers/                  → pcap packet capture, per-IP tracking, 1-min bucket aggregation
 resolver/                 → shared reverse-DNS resolver with TTL-based cache and bounded concurrency
+latency/                  → continuous ICMP + HTTPS latency monitoring with rolling history
 speedtest/                → HTTP-based speed test client (download/upload/ping against OpenSpeedTest servers)
 debug/                    → traceroute (native ICMP), DNS checker (multi-server), resolver leak detection
 handler/                  → HTTP REST API + SSE streaming handler
@@ -452,7 +465,7 @@ unifi/                    → UniFi controller API client (APs, SSIDs, clients, 
 omada/                    → TP-Link Omada controller API client (APs, SSIDs, clients, live rates)
 geoip/                    → MaxMind MMDB GeoIP lookups (country, ASN)
 static/
-  index.html              → HTML shell with six tabs (Traffic, NAT, DNS, WiFi, Speed Test, Debug)
+  index.html              → HTML shell with seven tabs (Traffic, NAT, DNS, WiFi, Monitor, Speed Test, Debug)
   app.js                  → all frontend JavaScript (charts, tables, SSE client)
   style.css               → full stylesheet (dark/light themes)
 swiftbar/                 → macOS menu bar plugin
@@ -481,7 +494,8 @@ Makefile                  → build, install, GeoIP download targets
 | `/api/talkers/bandwidth` | GET | Top 10 by current bandwidth |
 | `/api/talkers/volume` | GET | Top 10 by 24h volume |
 | `/api/dns` | GET | DNS summary (AdGuard Home, NextDNS, or Pi-hole) |
-| `/api/wifi` | GET | UniFi WiFi summary |
+| `/api/wifi` | GET | WiFi summary (UniFi or Omada) |
+| `/api/latency` | GET | Latency monitoring status (ICMP + HTTPS probes) |
 | `/api/conntrack` | GET | NAT / conntrack summary (connections, states, NAT types, entries) |
 | `/api/speedtest/run` | POST | Start a speed test; streams progress as SSE (Server-Sent Events) |
 | `/api/speedtest/results` | GET | Speed test history (last 50 results) and running status |
@@ -508,10 +522,14 @@ Every hardcoded external service that bandwidth-monitor or its components contac
 | **OpenDNS** | `208.67.222.222`, `2620:119:35::35` | DNS Check | User clicks "Query" | DNS query for user-entered domain | DNS records |
 | **Google Authoritative** | `o-o.myaddr.l.google.com` | Resolver leak check | Piggybacks on DNS Check | TXT query via system resolver | Resolver's public IP, ECS info |
 | **dnscheck.tools** | `test.dnscheck.tools`, `test-ipv4.*`, `test-ipv6.*` | Resolver leak check | Piggybacks on DNS Check | TXT query via system resolver | Resolver IP, org, geo, protocol |
+| **FFMUC Anycast01** | `anycast01.ffmuc.net` | Latency monitor | Every 2s on startup (**on by default**, configurable via `LATENCY_TARGETS`) | ICMP echo + HTTPS GET | RTT measurement |
+| **FFMUC Anycast02** | `anycast02.ffmuc.net` | Latency monitor | Every 2s on startup (**on by default**, configurable via `LATENCY_TARGETS`) | ICMP echo + HTTPS GET | RTT measurement |
+| **Quad9 DNS** | `dns.quad9.net` | Latency monitor | Every 2s on startup (**on by default**, configurable via `LATENCY_TARGETS`) | ICMP echo + HTTPS GET | RTT measurement |
+| **Digitalcourage DNS** | `dns3.digitalcourage.de` | Latency monitor | Every 2s on startup (**on by default**, configurable via `LATENCY_TARGETS`) | ICMP echo + HTTPS GET | RTT measurement |
 
-All JavaScript libraries (Chart.js, Luxon) and fonts (Inter, JetBrains Mono) are **bundled in the binary** — no CDN requests are made at runtime. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for their licenses.
+All JavaScript libraries (Chart.js, Luxon) and fonts (Inter, JetBrains Mono) are **bundled in the binary** — no CDN requests are made at runtime. The world map boundary data (Natural Earth 110m, public domain) is also bundled. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for their licenses.
 
-User-configured services (AdGuard Home, NextDNS, Pi-hole, UniFi Controller) are **not** listed here — they are optional and only contacted when explicitly configured via environment variables.
+User-configured services (AdGuard Home, NextDNS, Pi-hole, UniFi Controller, Omada Controller) are **not** listed here — they are optional and only contacted when explicitly configured via environment variables.
 
 FFMUC services ([`speed.ffmuc.net`](https://speed.ffmuc.net), [`ip.ffmuc.net`](https://ip.ffmuc.net), Anycast DNS) are operated by [Freie Netze München e.V.](https://ffmuc.net/) — see their [privacy policy](https://ffmuc.net/privacy/).
 
@@ -527,7 +545,7 @@ FFMUC services ([`speed.ffmuc.net`](https://speed.ffmuc.net), [`ip.ffmuc.net`](h
 |---------|-------------------|
 | Interface stats, NAT tab | `CAP_NET_ADMIN` (or root) |
 | Top talkers, SPAN mode | `CAP_NET_RAW` (or root) |
-| Traceroute | `CAP_NET_RAW` |
+| Traceroute, Latency monitor (ICMP) | `CAP_NET_RAW` |
 | DNS check, resolver leak test | No special permissions |
 
 If running without root, grant both `CAP_NET_RAW` and `CAP_NET_ADMIN` for full functionality.
