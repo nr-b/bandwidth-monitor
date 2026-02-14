@@ -2,7 +2,7 @@
 
 A real-time network monitoring dashboard for Linux, written in Go.
 
-Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Home, NextDNS, or Pi-hole), WiFi monitoring (UniFi or Omada), GeoIP enrichment, continuous latency monitoring, and a macOS menu bar plugin.
+Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Home, NextDNS, or Pi-hole), WiFi monitoring (UniFi or Omada), GeoIP enrichment, continuous latency monitoring, a macOS menu bar plugin, and a Windows system-tray widget.
 
 ## Table of Contents
 
@@ -12,6 +12,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [macOS Menu Bar Plugin](#macos-menu-bar-plugin)
+- [Windows System Tray Widget](#windows-system-tray-widget)
 - [Architecture](#architecture)
 - [API Endpoints](#api-endpoints)
 - [External Services Transparency](#external-services-transparency)
@@ -131,6 +132,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 - **Dark/light/auto theme** — saved to localStorage
 - **Fully embedded UI** — all HTML/CSS/JS baked into the binary via `go:embed`
 - **macOS menu bar plugin** — SwiftBar/xbar script showing live stats
+- **Windows system tray widget** — PowerShell script showing live stats in the notification area
 
 ---
 
@@ -481,6 +483,61 @@ The plugin tries each server in order with a 1-second timeout. The preferred int
 
 ---
 
+## Windows System Tray Widget
+
+A PowerShell system-tray widget is included at `windows/bandwidth-monitor-tray.ps1`. It creates a notification area (system tray) icon that polls the bandwidth-monitor API every 5 seconds, showing live RX/TX rates in the tooltip and full details (interfaces, DNS, WiFi, NAT) in the right-click context menu.
+
+**Dependencies:** PowerShell 5.1+ (built into Windows 10/11), .NET Framework (for `System.Windows.Forms`)
+
+**Setup:**
+1. Double-click `windows/bandwidth-monitor-tray.vbs` for a silent launch (no console window)
+2. Or use `windows/bandwidth-monitor-tray.bat` to launch with a visible console (useful for debugging)
+3. Or run directly in PowerShell: `powershell -ExecutionPolicy Bypass -File bandwidth-monitor-tray.ps1`
+4. The icon auto-detects the server from the Windows default gateway, or set it explicitly
+
+**Configuration via parameters or environment variables:**
+
+| Parameter | Env Variable | Default | Description |
+|-----------|-------------|---------|-------------|
+| `-Server` | `BW_SERVER` | *(auto-detect from default gateway)* | Base URL of the bandwidth-monitor server |
+| `-Port` | `BW_PORT` | `8080` | Port used when auto-detecting from the gateway |
+| `-PreferIface` | `BW_PREFER_IFACE` | *(auto)* | Preferred interface name for the tooltip |
+| `-RefreshSeconds` | — | `5` | Polling interval in seconds |
+| `-ShowExternalIP` | `BW_SHOW_EXTERNAL_IP` | `true` | Show public IPs by querying [`anycast-v4.ffmuc.net`](https://anycast-v4.ffmuc.net) / [`anycast-v6.ffmuc.net`](https://anycast-v6.ffmuc.net); set to `false` to disable |
+
+**Example:**
+```powershell
+.\bandwidth-monitor-tray.ps1 -Server http://198.51.100.1:8080 -PreferIface eth0
+```
+
+**Features:**
+- **Tooltip** shows current download/upload rates for the primary interface (e.g. `eth0: down 12.3 Mb/s / up 4.5 Mb/s`)
+- **Live icon** renders compact down/up rates with coloured arrows (green ↓, orange ↑) directly on the tray icon
+- **DPI-aware** icon scales with Windows display scaling (125%, 150%, 200%)
+- **Right-click menu** shows all interfaces, external IPs, DNS stats, WiFi clients, NAT table info
+- **Double-click** opens the web dashboard in the default browser
+- Shows `[VPN]` in the tooltip when VPN routing is active
+
+**Auto-start on login:**
+
+1. Copy the `windows` folder to your user directory (e.g. `%USERPROFILE%\bandwidth-monitor\`):
+   ```powershell
+   Copy-Item -Recurse .\windows "$env:USERPROFILE\bandwidth-monitor"
+   ```
+2. Create a startup shortcut (copy-paste this as-is into PowerShell):
+   ```powershell
+   $ws = New-Object -ComObject WScript.Shell
+   $sc = $ws.CreateShortcut("$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\bandwidth-monitor-tray.lnk")
+   $sc.TargetPath = "$env:USERPROFILE\bandwidth-monitor\bandwidth-monitor-tray.vbs"
+   $sc.WindowStyle = 7  # minimized
+   $sc.Save()
+   ```
+Or manually: press `Win+R`, type `shell:startup`, and copy `bandwidth-monitor-tray.bat` (or a shortcut to it) into that folder.
+
+> **Tip:** Windows may hide new tray icons in the overflow area. Click the **^** arrow near the clock to find it, then drag the icon onto the taskbar to keep it visible.
+
+---
+
 ## Architecture
 
 ```
@@ -506,6 +563,7 @@ static/
   app.js                  → all frontend JavaScript (charts, tables, SSE client)
   style.css               → full stylesheet (dark/light themes)
 swiftbar/                 → macOS menu bar plugin
+windows/                  → Windows system tray widget
 packaging/
   openwrt-Makefile        → OpenWrt package definition
   openwrt-files/
@@ -552,6 +610,7 @@ Every hardcoded external service that bandwidth-monitor or its components contac
 |---------|---------|-----------|---------|-----------|---------------|
 | **FFMUC Speed Test** | [`speed.ffmuc.net`](https://speed.ffmuc.net) | Speed Test tab | User clicks "Start Test" | HTTP GET `/downloading`, POST `/upload` (random payload) | Download payload, upload ack |
 | **FFMUC IP Check** | [`ip.ffmuc.net`](https://ip.ffmuc.net) | SwiftBar plugin | Every ~5 min (cached), **on by default** (`BW_SHOW_EXTERNAL_IP=false` to disable) | HTTPS GET (IPv4 + IPv6) | Router's public IPv4 and IPv6 address |
+| **FFMUC IP Check** | [`anycast-v4.ffmuc.net`](https://anycast-v4.ffmuc.net), [`anycast-v6.ffmuc.net`](https://anycast-v6.ffmuc.net) | Windows tray widget | Every ~5 min (cached), **on by default** (`BW_SHOW_EXTERNAL_IP=false` to disable) | HTTPS GET (one per address family) | Router's public IPv4 and IPv6 address |
 | **FFMUC Anycast01** | `5.1.66.255`, `2001:678:e68:f000::` | DNS Check | User clicks "Query" | DNS query for user-entered domain | DNS records |
 | **FFMUC Anycast02** | `185.150.99.255`, `2001:678:ed0:f000::` | DNS Check | User clicks "Query" | DNS query for user-entered domain | DNS records |
 | **Cloudflare DNS** | `1.1.1.1`, `2606:4700:4700::1111` | DNS Check | User clicks "Query" | DNS query for user-entered domain | DNS records |
