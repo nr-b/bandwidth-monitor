@@ -1634,6 +1634,7 @@
         sse.onmessage = function(e) {
             try {
                 var d = JSON.parse(e.data);
+                if (d.timestamp && (Date.now() - d.timestamp) > 5000) return;
                 process(d);
             } catch(ex) { console.error(ex); }
         };
