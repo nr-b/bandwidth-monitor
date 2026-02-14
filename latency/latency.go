@@ -68,8 +68,6 @@ type Monitor struct {
 	targets []resolvedTarget
 	mu      sync.RWMutex
 	state   map[string]*targetState
-	httpC4  *http.Client // forces IPv4
-	httpC6  *http.Client // forces IPv6
 	stopCh  chan struct{}
 }
 
@@ -84,17 +82,32 @@ type targetState struct {
 	icmpV6Hist  []Point
 	httpsV4Hist []Point
 	httpsV6Hist []Point
+	httpC4      *http.Client // direct-IP HTTPS client for IPv4 (nil if no v4)
+	httpC6      *http.Client // direct-IP HTTPS client for IPv6 (nil if no v6)
 }
 
-func newHTTPSClient(network string) *http.Client {
+// newDirectHTTPSClient returns an HTTP client that connects directly to the
+// given IP address, bypassing DNS resolution entirely.  The TLS ServerName
+// is set to hostname so certificate validation works correctly.
+func newDirectHTTPSClient(ip net.IP, hostname string) *http.Client {
+	network := "tcp4"
+	ipStr := ip.String()
+	if ip.To4() == nil {
+		network = "tcp6"
+		ipStr = "[" + ipStr + "]"
+	}
 	dialer := &net.Dialer{Timeout: httpsTimeout}
 	return &http.Client{
 		Timeout: httpsTimeout,
 		Transport: &http.Transport{
-			TLSClientConfig:   &tls.Config{InsecureSkipVerify: false},
+			TLSClientConfig: &tls.Config{
+				ServerName: hostname,
+			},
 			DisableKeepAlives: true,
 			DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) {
-				return dialer.DialContext(ctx, network, addr)
+				// Replace the hostname in addr with the resolved IP.
+				_, port, _ := net.SplitHostPort(addr)
+				return dialer.DialContext(ctx, network, ipStr+":"+port)
 			},
 		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -142,12 +155,17 @@ func New(targets []string) *Monitor {
 	m := &Monitor{
 		targets: resolved,
 		state:   make(map[string]*targetState, len(resolved)),
-		httpC4:  newHTTPSClient("tcp4"),
-		httpC6:  newHTTPSClient("tcp6"),
 		stopCh:  make(chan struct{}),
 	}
 	for _, t := range resolved {
-		m.state[t.name] = &targetState{}
+		st := &targetState{}
+		if t.ipv4 != nil {
+			st.httpC4 = newDirectHTTPSClient(t.ipv4, t.name)
+		}
+		if t.ipv6 != nil {
+			st.httpC6 = newDirectHTTPSClient(t.ipv6, t.name)
+		}
+		m.state[t.name] = st
 	}
 	return m
 }
@@ -329,13 +347,13 @@ func (m *Monitor) probeAll() {
 		if conn6 != nil && t.ipv6 != nil {
 			icmpV6RTT = pingOneV6(conn6, t.ipv6, i)
 		}
-		// HTTPSv4
+		// HTTPSv4 -- connect directly to the resolved IPv4 address (no DNS)
 		if t.ipv4 != nil {
-			httpsV4RTT = m.probeHTTPS(m.httpC4, t.name)
+			httpsV4RTT = m.probeHTTPS(m.state[t.name].httpC4, t.name)
 		}
-		// HTTPSv6
+		// HTTPSv6 -- connect directly to the resolved IPv6 address (no DNS)
 		if t.ipv6 != nil {
-			httpsV6RTT = m.probeHTTPS(m.httpC6, t.name)
+			httpsV6RTT = m.probeHTTPS(m.state[t.name].httpC6, t.name)
 		}
 
 		m.mu.Lock()
