@@ -1248,3 +1248,43 @@ canvas { outline: none; }
     text-align: right;
     font-variant-numeric: tabular-nums;
 }
+
+/* Host Detail Modal */
+.host-modal-backdrop {
+    position: fixed; inset: 0; z-index: 10000;
+    background: rgba(0,0,0,0.75); backdrop-filter: blur(8px);
+    display: flex; align-items: center; justify-content: center;
+    animation: hostFadeIn 0.15s ease;
+}
+@keyframes hostFadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.host-modal {
+    background: var(--bg-1); border: 1px solid var(--border);
+    border-radius: 12px; width: 90%; max-width: 800px;
+    max-height: 90vh; box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    animation: hostSlideUp 0.2s ease;
+    display: flex; flex-direction: column;
+}
+@keyframes hostSlideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+.host-modal-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 20px 24px; border-bottom: 1px solid var(--border);
+}
+.host-modal-title { font-size: 18px; font-weight: 700; }
+.host-modal-subtitle { font-size: 13px; color: var(--text-2); margin-top: 4px; font-family: var(--font-mono, monospace); }
+.host-modal-close {
+    background: none; border: none; font-size: 24px; color: var(--text-2);
+    cursor: pointer; padding: 4px 8px; border-radius: 6px; line-height: 1;
+}
+.host-modal-close:hover { background: var(--bg-2); color: var(--text-0); }
+
+.host-modal-stats {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 12px; margin-bottom: 16px;
+}
+.host-modal-stat-label { font-size: 10px; color: var(--text-2); margin-bottom: 2px; }
+.host-modal-stat-value { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.ip-clickable { cursor: pointer; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 2px; }
+.ip-clickable:hover { color: var(--accent); }

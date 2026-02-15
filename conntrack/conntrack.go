@@ -209,6 +209,23 @@ func (t *Tracker) GetSummary() *Summary {
 	return t.summary
 }
 
+// HostFlows returns all conntrack entries involving the given IP address.
+func (t *Tracker) HostFlows(ip string) []Entry {
+	s := t.GetSummary()
+	if s == nil {
+		return nil
+	}
+	var result []Entry
+	for _, entries := range [][]Entry{s.IPv4Entries, s.IPv6Entries} {
+		for _, e := range entries {
+			if e.OrigSrc == ip || e.OrigDst == ip || e.ReplSrc == ip || e.ReplDst == ip {
+				result = append(result, e)
+			}
+		}
+	}
+	return result
+}
+
 func (t *Tracker) poll() {
 	if !t.available {
 		return

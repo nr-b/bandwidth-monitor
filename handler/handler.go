@@ -14,6 +14,7 @@ import (
 	"bandwidth-monitor/conntrack"
 	"bandwidth-monitor/debug"
 	"bandwidth-monitor/dns"
+	"bandwidth-monitor/geoip"
 	"bandwidth-monitor/latency"
 	"bandwidth-monitor/resolver"
 	"bandwidth-monitor/speedtest"
@@ -91,6 +92,90 @@ func LatencyStatus(lm *latency.Monitor) http.HandlerFunc {
 			return
 		}
 		json.NewEncoder(w).Encode(lm.GetStatus())
+	}
+}
+
+// HostDetail returns detailed information about a specific IP address,
+// aggregating data from talkers (bandwidth history), conntrack (active flows),
+// DNS (hostname), and GeoIP (country/ASN).
+func HostDetail(t *talkers.Tracker, ct *conntrack.Tracker, geoDB *geoip.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ip := r.URL.Query().Get("ip")
+		if ip == "" {
+			http.Error(w, "ip parameter required", http.StatusBadRequest)
+			return
+		}
+		if len(ip) > 45 {
+			http.Error(w, "invalid ip", http.StatusBadRequest)
+			return
+		}
+
+		type hostDetail struct {
+			IP          string               `json:"ip"`
+			Hostname    string               `json:"hostname,omitempty"`
+			Country     string               `json:"country,omitempty"`
+			CountryName string               `json:"country_name,omitempty"`
+			City        string               `json:"city,omitempty"`
+			ASN         uint                 `json:"asn,omitempty"`
+			ASOrg       string               `json:"as_org,omitempty"`
+			TotalBytes  uint64               `json:"total_bytes"`
+			RxBytes     uint64               `json:"rx_bytes"`
+			TxBytes     uint64               `json:"tx_bytes"`
+			Packets     uint64               `json:"packets"`
+			RateBytes   float64              `json:"rate_bytes"`
+			RxRate      float64              `json:"rx_rate"`
+			TxRate      float64              `json:"tx_rate"`
+			History     []talkers.BucketPoint `json:"history"`
+			Connections []conntrack.Entry     `json:"connections"`
+			Timestamp   int64                `json:"timestamp"`
+		}
+
+		detail := hostDetail{
+			IP:        ip,
+			Timestamp: time.Now().UnixMilli(),
+		}
+
+		// Talker data
+		if totals := t.HostTotals(ip); totals != nil {
+			detail.Hostname = totals.Hostname
+			detail.Country = totals.Country
+			detail.CountryName = totals.CountryName
+			detail.ASN = totals.ASN
+			detail.ASOrg = totals.ASOrg
+			detail.TotalBytes = totals.TotalBytes
+			detail.RxBytes = totals.RxBytes
+			detail.TxBytes = totals.TxBytes
+			detail.Packets = totals.Packets
+			detail.RateBytes = totals.RateBytes
+			detail.RxRate = totals.RxRate
+			detail.TxRate = totals.TxRate
+		}
+
+		// GeoIP city (not in TalkerStat)
+		if geoDB != nil && geoDB.Available() {
+			if geo := geoDB.Lookup(ip); geo != nil {
+				detail.City = geo.City
+				if detail.Country == "" {
+					detail.Country = geo.Country
+					detail.CountryName = geo.CountryName
+				}
+				if detail.ASN == 0 {
+					detail.ASN = geo.ASN
+					detail.ASOrg = geo.ASOrg
+				}
+			}
+		}
+
+		// Bandwidth history
+		detail.History = t.HostHistory(ip)
+
+		// Conntrack flows
+		if ct != nil {
+			detail.Connections = ct.HostFlows(ip)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(detail)
 	}
 }
 
