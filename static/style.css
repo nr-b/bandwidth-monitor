@@ -70,7 +70,7 @@
 .theme-btn svg { width: 14px; height: 14px; }
 
 /* ── Main navigation tabs ── */
-.main-nav { display: flex; gap: 4px; margin-bottom: 20px; }
+.main-nav {\n    display: flex; gap: 4px; margin-bottom: 20px;\n    overflow-x: auto; -webkit-overflow-scrolling: touch;\n    scrollbar-width: none;\n}
 .main-nav-tab {
     padding: 6px 16px; border-radius: 6px; font-size: 13px; font-weight: 500;
     cursor: pointer; color: var(--text-2); background: transparent;
