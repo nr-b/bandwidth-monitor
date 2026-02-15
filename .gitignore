@@ -10,6 +10,7 @@ bandwidth-monitor
 *.deb
 *.rpm
 *.ipk
+*.apk
 
 # Runtime / secrets
 *.env

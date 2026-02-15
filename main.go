@@ -48,7 +48,6 @@ func env(key, fallback string) string {
 
 func main() {
 	listenAddr := env("LISTEN", ":8080")
-	captureDevice := env("DEVICE", "")
 	promiscuous := env("PROMISCUOUS", "true")
 	promiscuousBool, _ := strconv.ParseBool(promiscuous)
 
@@ -174,7 +173,7 @@ func main() {
 
 	go statsCollector.Run()
 
-	talkerTracker := talkers.New(captureDevice, promiscuousBool, localNets, geoDB, dnsResolver)
+	talkerTracker := talkers.New(allowedIfaces, promiscuousBool, localNets, geoDB, dnsResolver)
 	go talkerTracker.Run()
 
 	// DNS provider: AdGuard Home, NextDNS, or Pi-hole (mutually exclusive; first configured wins)
