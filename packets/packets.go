@@ -2,6 +2,7 @@ package packets
 
 import (
 	"encoding/binary"
+	"fmt"
 	"log"
 	"net"
 	"unsafe"
@@ -12,16 +13,27 @@ import (
 
 var (
 	SnapLen int32 = 128
-	// Setup BPF filter here to capture ipv4/ipv6 traffic.
+	// Setup BPF filter here to capture ipv4/ipv6 traffic, including 802.1Q VLAN-tagged frames.
 	AnyIpFilter = []bpf.Instruction{
-		// 12 bytes is offset for frame type, which is 2 bytes long.
+		// Load EtherType at standard Ethernet header offset (12 bytes).
 		bpf.LoadAbsolute{Off: 12, Size: 2},
-		// Snag Ether type IPv4/v6
-		bpf.JumpIf{Cond: bpf.JumpEqual, Val: unix.ETH_P_IP, SkipTrue: 2},
-		bpf.JumpIf{Cond: bpf.JumpEqual, Val: unix.ETH_P_IPV6, SkipTrue: 1},
+		// If EtherType is IPv4, accept.
+		bpf.JumpIf{Cond: bpf.JumpEqual, Val: unix.ETH_P_IP, SkipTrue: 5},
+		// If EtherType is IPv6, accept.
+		bpf.JumpIf{Cond: bpf.JumpEqual, Val: unix.ETH_P_IPV6, SkipTrue: 4},
+		// If EtherType is 802.1Q VLAN, check inner EtherType at offset 16.
+		bpf.JumpIf{Cond: bpf.JumpEqual, Val: unix.ETH_P_8021Q, SkipTrue: 1},
+		// Not IP and not VLAN: drop.
 		bpf.RetConstant{Val: 0},
-		// Return snaplen
+		// One level of VLAN: load inner EtherType at offset 16.
+		bpf.LoadAbsolute{Off: 16, Size: 2},
+		// If inner EtherType is IPv4 or IPv6, accept; otherwise drop.
+		bpf.JumpIf{Cond: bpf.JumpEqual, Val: unix.ETH_P_IP, SkipTrue: 1},
+		bpf.JumpIf{Cond: bpf.JumpEqual, Val: unix.ETH_P_IPV6, SkipTrue: 0, SkipFalse: 1},
+		// Accept: return snaplen.
 		bpf.RetConstant{Val: uint32(SnapLen)},
+		// Drop.
+		bpf.RetConstant{Val: 0},
 	}
 )
 
@@ -88,8 +100,10 @@ func ParseIPPacket(pkt []byte) Packet {
 	return Packet{}
 }
 
-// FetchPcapSock creates a new socket for capturing traffic on.
-func FetchPcapSock(dev string) (int, error) {
+// FetchPcapSock creates a new AF_PACKET socket for capturing traffic on the
+// given interface. When promisc is true it enables PACKET_MR_PROMISC so that
+// the NIC delivers all frames (required for SPAN/mirror ports).
+func FetchPcapSock(dev string, promisc bool) (int, error) {
 	protocol := uint16(unix.ETH_P_ALL)
 	iface, err := net.InterfaceByName(dev)
 	if err != nil {
@@ -106,6 +120,16 @@ func FetchPcapSock(dev string) (int, error) {
 	if err := unix.Bind(fd, addr); err != nil {
 		_ = unix.Close(fd)
 		return -1, err
+	}
+	if promisc {
+		mreq := unix.PacketMreq{
+			Ifindex: int32(iface.Index),
+			Type:    unix.PACKET_MR_PROMISC,
+		}
+		if err := unix.SetsockoptPacketMreq(fd, unix.SOL_PACKET, unix.PACKET_ADD_MEMBERSHIP, &mreq); err != nil {
+			_ = unix.Close(fd)
+			return -1, fmt.Errorf("enable promiscuous mode on %s: %w", dev, err)
+		}
 	}
 	return fd, nil
 }
@@ -143,9 +167,4 @@ func CreateEpoller(sockFD int) (int, error) {
 
 func htons(i uint16) uint16 {
 	return (i<<8)&0xff00 | i>>8
-}
-
-func parseCIDR(s string) *net.IPNet {
-	_, n, _ := net.ParseCIDR(s)
-	return n
 }

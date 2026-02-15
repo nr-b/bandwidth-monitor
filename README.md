@@ -414,7 +414,7 @@ LOCAL_NETS=192.0.2.0/24,2001:db8::/48
 
 ### SPAN / Mirror Port Mode
 
-On a SPAN or mirror port, the kernel reports all mirrored traffic as RX on the interface, making the normal RX/TX split meaningless. Setting `SPAN_DEVICE` activates a pcap-based overlay that inspects IP headers and classifies direction using `LOCAL_NETS`:
+On a SPAN or mirror port, the kernel reports all mirrored traffic as RX on the interface, making the normal RX/TX split meaningless. Setting `SPAN_DEVICE` activates a raw-socket overlay that inspects IP headers and classifies direction using `LOCAL_NETS`:
 
 - **src in LOCAL_NETS → remote** = upload (TX)
 - **remote → dst in LOCAL_NETS** = download (RX)
@@ -592,7 +592,7 @@ Or for the current user only, symlink the script and edit the `Exec=` path in th
 main.go                   → entry point, env config, wires all components
 collector/                → netlink-based interface stats (RTM_GETLINK/RTM_GETADDR), rates, 24h history, VPN routing
 conntrack/                → netlink-based conntrack (NAT) table reader via ti-mo/conntrack
-talkers/                  → pcap packet capture, per-IP tracking, 1-min bucket aggregation
+talkers/                  → AF_PACKET raw-socket capture, per-IP tracking, 1-min bucket aggregation
 resolver/                 → shared reverse-DNS resolver with TTL-based cache and bounded concurrency
 latency/                  → continuous ICMP + HTTPS latency monitoring with rolling history
 speedtest/                → HTTP-based speed test client (download/upload/ping against OpenSpeedTest servers)

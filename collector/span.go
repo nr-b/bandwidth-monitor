@@ -45,7 +45,7 @@ func newSpanOverlay(device string, promisc bool, localNets []*net.IPNet) *spanOv
 
 // run opens the capture device and classifies packets until stopped.
 func (s *spanOverlay) run() {
-	handle, err := packets.FetchPcapSock(s.device)
+	handle, err := packets.FetchPcapSock(s.device, s.promisc)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "span: cannot open %s: %v\n", s.device, err)
 		fmt.Fprintln(os.Stderr, "span: pcap requires root or CAP_NET_RAW")
@@ -57,8 +57,18 @@ func (s *spanOverlay) run() {
 		fmt.Fprintf(os.Stderr, "span: BPF filter error: %v\n", err)
 	}
 
+	epfd, err := packets.CreateEpoller(handle)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "span: failed to setup epoller on %s: %v\n", s.device, err)
+		return
+	}
+	defer unix.Close(epfd)
+
 	fmt.Fprintf(os.Stderr, "span: capturing on %s (promiscuous=%v, %d local nets)\n",
 		s.device, s.promisc, len(s.localNets))
+
+	events := make([]unix.EpollEvent, 128)
+	data := make([]byte, packets.SnapLen)
 
 	for {
 		select {
@@ -66,13 +76,20 @@ func (s *spanOverlay) run() {
 			return
 		default:
 		}
-		data := make([]byte, packets.SnapLen)
-		numRead, _, err := unix.Recvfrom(handle, data, 0)
+		n, err := unix.EpollWait(epfd, events, 100)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "span: read error on %s: %v\n", s.device, err)
-			return
+			continue
 		}
-		s.processPacket(data[:numRead])
+		for i := 0; i < n; i++ {
+			if int(events[i].Fd) == handle {
+				numRead, _, err := unix.Recvfrom(handle, data, 0)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "span: read error on %s: %v\n", s.device, err)
+					return
+				}
+				s.processPacket(data[:numRead])
+			}
+		}
 	}
 }
 
@@ -93,6 +110,9 @@ func (s *spanOverlay) snapshot() (rxBytes, txBytes, rxPackets, txPackets uint64)
 
 func (s *spanOverlay) processPacket(pkt []byte) {
 	ipPacket := packets.ParseIPPacket(pkt)
+	if ipPacket.Version == 0 {
+		return // unparseable packet
+	}
 
 	srcLocal := s.isLocal(ipPacket.SrcIP)
 	dstLocal := s.isLocal(ipPacket.DstIP)

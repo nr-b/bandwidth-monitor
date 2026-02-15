@@ -246,7 +246,7 @@ func (t *Tracker) getDevices() ([]string, error) {
 }
 
 func (t *Tracker) captureDevice(device string) {
-	handle, err := packets.FetchPcapSock(device)
+	handle, err := packets.FetchPcapSock(device, t.promiscuous)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "talkers: cannot open %s: %v\n", device, err)
 		return
@@ -259,10 +259,12 @@ func (t *Tracker) captureDevice(device string) {
 	// Use epoll to read from the socket.
 	epfd, err := packets.CreateEpoller(handle)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "talkers: failed to setup epoller on FD %s: %v\n", device, err)
+		fmt.Fprintf(os.Stderr, "talkers: failed to setup epoller on %s: %v\n", device, err)
+		return
 	}
 	defer unix.Close(epfd)
 	events := make([]unix.EpollEvent, epollBuffer)
+	data := make([]byte, snapshotLen)
 
 	for {
 		select {
@@ -277,7 +279,6 @@ func (t *Tracker) captureDevice(device string) {
 		}
 		for i := 0; i < n; i++ {
 			if int(events[i].Fd) == handle {
-				data := make([]byte, snapshotLen)
 				numRead, _, err := unix.Recvfrom(handle, data, 0)
 				if err != nil {
 					log.Printf("talkers: read error on %s: %v\n", device, err)
@@ -290,9 +291,12 @@ func (t *Tracker) captureDevice(device string) {
 }
 
 func (t *Tracker) processPacket(pkt []byte, capDev string) {
-	ipVersion := "IPv4"
 	ipPacket := packets.ParseIPPacket(pkt)
+	if ipPacket.Version == 0 {
+		return // unparseable packet (too short or unknown EtherType)
+	}
 	ipPacket.SrcInterface = capDev
+	ipVersion := "IPv4"
 	if ipPacket.Version != 4 {
 		ipVersion = "IPv6"
 	}
