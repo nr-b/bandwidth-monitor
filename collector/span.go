@@ -110,7 +110,7 @@ func (s *spanOverlay) snapshot() (rxBytes, txBytes, rxPackets, txPackets uint64)
 }
 
 func (s *spanOverlay) processPacket(pkt []byte) {
-	ipPacket := packets.ParseIPPacket(pkt)
+	ipPacket := packets.ParseIPPacket(pkt, packets.IsL3Device(s.device))
 	if ipPacket.Version == 0 {
 		return // unparseable packet
 	}
