@@ -1123,8 +1123,8 @@
                     }
                     d += 'Z';
                     svg += '<path d="' + d + '" fill="' + fill + '" fill-opacity="' + fo + '" stroke="' + stroke + '" stroke-width="' + sw + '"';
-                    if (traffic) svg += '><title>' + countryFlag(cc) + ' ' + (traffic.country_name || cc) + ': ' + formatBytes(traffic.bytes) + ' (' + traffic.connections + ' IPs)</title></path>';
-                    else svg += '/>';
+                    if (traffic) svg += ' class="map-tip" data-tip="' + countryFlag(cc) + ' ' + (traffic.country_name || cc) + ': ' + formatBytes(traffic.bytes) + ' (' + traffic.connections + ' IPs)"';
+                    svg += '/>';
                 }
             }
         }
@@ -1133,6 +1133,11 @@
         if (topBW && topBW.length) {
             var center = proj(50, 10);
             svg += '<circle cx="' + center[0] + '" cy="' + center[1] + '" r="3" fill="' + flowColor + '" opacity="0.8"><animate attributeName="r" values="2;6;2" dur="2s" repeatCount="indefinite"/></circle>';
+            // Find max rate for relative line thickness
+            var maxRate = 1;
+            for (var i = 0; i < Math.min(topBW.length, 8); i++) {
+                if ((topBW[i].rate_bytes || 0) > maxRate) maxRate = topBW[i].rate_bytes;
+            }
             // Track how many flows per country to fan out overlapping lines
             var ccFlowIdx = {};
             for (var i = 0; i < Math.min(topBW.length, 8); i++) {
@@ -1141,6 +1146,11 @@
                 var cc = t.country;
                 if (!ccFlowIdx[cc]) ccFlowIdx[cc] = 0;
                 var fi = ccFlowIdx[cc]++;
+                var rateRatio = (t.rate_bytes || 0) / maxRate;
+                // Line thickness: 0.8px min, 4px max, scaled by rate
+                var sw = (0.8 + rateRatio * 3.2).toFixed(1);
+                // Opacity: higher rate = more visible
+                var lineOpacity = (0.25 + rateRatio * 0.55).toFixed(2);
                 // Same start and end point; only the curve control point varies
                 var dest = proj(countryCentroids[cc][0], countryCentroids[cc][1]);
                 var curveOffset = 35 + fi * 18;
@@ -1152,10 +1162,13 @@
                 var asInfo = t.as_org ? ' \u00b7 AS' + (t.asn || '') + ' ' + t.as_org : '';
                 var tip = host + asInfo + ' \u2192 ' + formatRate(t.rate_bytes || 0);
                 // Invisible wide hit area for hover
-                svg += '<path d="' + pathD + '" fill="none" stroke="transparent" stroke-width="12" style="cursor:pointer"><title>' + tip + '</title></path>';
-                // Visible animated line — vary dash speed slightly per flow
+                svg += '<path d="' + pathD + '" fill="none" stroke="transparent" stroke-width="14" style="cursor:pointer" class="map-tip" data-tip="' + tip + '"/>';
+                // Visible animated line — thickness and opacity by rate, dash speed by rank
                 var dur = (1.3 + fi * 0.2).toFixed(1);
-                svg += '<path d="' + pathD + '" fill="none" stroke="' + flowColor + '" stroke-width="1.5" stroke-dasharray="6,4" opacity="' + (0.5 - fi * 0.05).toFixed(2) + '" style="pointer-events:none"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="' + dur + 's" repeatCount="indefinite"/></path>';
+                svg += '<path d="' + pathD + '" fill="none" stroke="' + flowColor + '" stroke-width="' + sw + '" stroke-dasharray="6,4" opacity="' + lineOpacity + '" stroke-linecap="round" style="pointer-events:none"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="' + dur + 's" repeatCount="indefinite"/></path>';
+                // Destination dot — size by rate
+                var dotR = (2 + rateRatio * 4).toFixed(1);
+                svg += '<circle cx="' + dest[0] + '" cy="' + dest[1] + '" r="' + dotR + '" fill="' + flowColor + '" opacity="' + lineOpacity + '" style="pointer-events:none"/>';
             }
         }
 
@@ -1168,6 +1181,29 @@
         }
         svg += '</svg>';
         container.innerHTML = svg;
+
+        // Custom tooltip for map elements (native <title> mispositions on transformed SVG)
+        var tipEl = document.getElementById('mapTooltip');
+        if (!tipEl) {
+            tipEl = document.createElement('div');
+            tipEl.id = 'mapTooltip';
+            tipEl.style.cssText = 'position:fixed;pointer-events:none;background:var(--card);color:var(--text-0);border:1px solid var(--border);padding:6px 10px;border-radius:6px;font-size:12px;font-family:Inter,sans-serif;z-index:9999;display:none;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.15)';
+            document.body.appendChild(tipEl);
+        }
+        container.addEventListener('mousemove', function(e) {
+            var el = e.target.closest('.map-tip');
+            if (el) {
+                tipEl.textContent = el.getAttribute('data-tip');
+                tipEl.style.display = '';
+                tipEl.style.left = (e.clientX + 12) + 'px';
+                tipEl.style.top = (e.clientY - 28) + 'px';
+            } else {
+                tipEl.style.display = 'none';
+            }
+        });
+        container.addEventListener('mouseleave', function() {
+            tipEl.style.display = 'none';
+        });
 
         // Apply zoom/pan transform (preserve across updates)
         var svgEl = container.querySelector('svg');
