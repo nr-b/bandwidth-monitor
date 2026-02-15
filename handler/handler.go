@@ -3,6 +3,9 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -111,23 +114,23 @@ func HostDetail(t *talkers.Tracker, ct *conntrack.Tracker, geoDB *geoip.DB) http
 		}
 
 		type hostDetail struct {
-			IP          string               `json:"ip"`
-			Hostname    string               `json:"hostname,omitempty"`
-			Country     string               `json:"country,omitempty"`
-			CountryName string               `json:"country_name,omitempty"`
-			City        string               `json:"city,omitempty"`
-			ASN         uint                 `json:"asn,omitempty"`
-			ASOrg       string               `json:"as_org,omitempty"`
-			TotalBytes  uint64               `json:"total_bytes"`
-			RxBytes     uint64               `json:"rx_bytes"`
-			TxBytes     uint64               `json:"tx_bytes"`
-			Packets     uint64               `json:"packets"`
-			RateBytes   float64              `json:"rate_bytes"`
-			RxRate      float64              `json:"rx_rate"`
-			TxRate      float64              `json:"tx_rate"`
+			IP          string                `json:"ip"`
+			Hostname    string                `json:"hostname,omitempty"`
+			Country     string                `json:"country,omitempty"`
+			CountryName string                `json:"country_name,omitempty"`
+			City        string                `json:"city,omitempty"`
+			ASN         uint                  `json:"asn,omitempty"`
+			ASOrg       string                `json:"as_org,omitempty"`
+			TotalBytes  uint64                `json:"total_bytes"`
+			RxBytes     uint64                `json:"rx_bytes"`
+			TxBytes     uint64                `json:"tx_bytes"`
+			Packets     uint64                `json:"packets"`
+			RateBytes   float64               `json:"rate_bytes"`
+			RxRate      float64               `json:"rx_rate"`
+			TxRate      float64               `json:"tx_rate"`
 			History     []talkers.BucketPoint `json:"history"`
 			Connections []conntrack.Entry     `json:"connections"`
-			Timestamp   int64                `json:"timestamp"`
+			Timestamp   int64                 `json:"timestamp"`
 		}
 
 		detail := hostDetail{
@@ -452,8 +455,142 @@ func DebugDNS() http.HandlerFunc {
 	}
 }
 
+// originResolver determines the WAN's geographic country code for the map
+// origin point.  It caches the result and refreshes periodically.
+type originResolver struct {
+	mu      sync.RWMutex
+	country string
+	last    time.Time
+	ttl     time.Duration
+	geoDB   *geoip.DB
+}
+
+func newOriginResolver(geoDB *geoip.DB) *originResolver {
+	return &originResolver{
+		geoDB: geoDB,
+		ttl:   10 * time.Minute,
+	}
+}
+
+// cgnatNet is RFC 6598 (100.64.0.0/10) used by Carrier-Grade NAT.
+var cgnatNet = func() *net.IPNet {
+	_, n, _ := net.ParseCIDR("100.64.0.0/10")
+	return n
+}()
+
+// isGlobalUnicast returns true if the IP is a globally routable unicast address.
+// Returns false for private, loopback, link-local, CGNAT, ULA (fc00::/7), etc.
+func isGlobalUnicast(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() {
+		return false
+	}
+	if cgnatNet.Contains(ip) {
+		return false
+	}
+	// IPv6 ULA (fc00::/7) — IsPrivate covers this in Go 1.17+, but be safe
+	if len(ip) == net.IPv6len && ip[0]&0xfe == 0xfc {
+		return false
+	}
+	return ip.IsGlobalUnicast()
+}
+
+// resolve determines the origin country from the WAN interface IPs.
+// Priority: global IPv4 > global IPv6 > ip.ffmuc.net fallback.
+func (o *originResolver) resolve(c *collector.Collector) string {
+	o.mu.RLock()
+	if o.country != "" && time.Since(o.last) < o.ttl {
+		cc := o.country
+		o.mu.RUnlock()
+		return cc
+	}
+	o.mu.RUnlock()
+
+	cc := o.doResolve(c)
+
+	o.mu.Lock()
+	o.country = cc
+	o.last = time.Now()
+	o.mu.Unlock()
+
+	return cc
+}
+
+func (o *originResolver) doResolve(c *collector.Collector) string {
+	if o.geoDB == nil || !o.geoDB.Available() {
+		return ""
+	}
+
+	// Find WAN interface IPs
+	var wanIPv4, wanIPv6 string
+	for _, iface := range c.GetAll() {
+		if !iface.WAN {
+			continue
+		}
+		for _, addrStr := range iface.Addrs {
+			ip, _, err := net.ParseCIDR(addrStr)
+			if err != nil {
+				continue
+			}
+			if ip.To4() != nil && wanIPv4 == "" {
+				if isGlobalUnicast(ip) {
+					wanIPv4 = ip.String()
+				}
+			} else if ip.To4() == nil && wanIPv6 == "" {
+				if isGlobalUnicast(ip) {
+					wanIPv6 = ip.String()
+				}
+			}
+		}
+	}
+
+	// Try IPv4 first, then IPv6
+	for _, ipStr := range []string{wanIPv4, wanIPv6} {
+		if ipStr == "" {
+			continue
+		}
+		if r := o.geoDB.Lookup(ipStr); r != nil && r.Country != "" {
+			log.Printf("geo origin: %s -> %s", ipStr, r.Country)
+			return r.Country
+		}
+	}
+
+	// Fallback: no globally routable WAN IP found, query ip.ffmuc.net
+	log.Printf("geo origin: no globally routable WAN IP, trying ip.ffmuc.net")
+	if extIP := fetchExternalIP(); extIP != "" {
+		if r := o.geoDB.Lookup(extIP); r != nil && r.Country != "" {
+			log.Printf("geo origin: ip.ffmuc.net %s -> %s", extIP, r.Country)
+			return r.Country
+		}
+	}
+
+	return ""
+}
+
+// fetchExternalIP queries ip.ffmuc.net to get the public IP when all
+// WAN addresses are behind CGNAT or not globally routable.
+func fetchExternalIP() string {
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("https://ip.ffmuc.net")
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 256))
+	if err != nil {
+		return ""
+	}
+	ip := strings.TrimSpace(string(body))
+	if net.ParseIP(ip) == nil {
+		return ""
+	}
+	return ip
+}
+
 // buildPayload assembles the JSON payload sent over the SSE stream.
-func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Provider, ct *conntrack.Tracker, lm *latency.Monitor) map[string]interface{} {
+func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Provider, ct *conntrack.Tracker, lm *latency.Monitor, origin *originResolver) map[string]interface{} {
 	geo := t.GetGeoBreakdown()
 	payload := map[string]interface{}{
 		"interfaces":    c.GetAll(),
@@ -469,6 +606,11 @@ func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, w
 		"load_avg":      readLoadAvg(),
 		"processes":     func() map[string]int { r, t := readProcessCount(); return map[string]int{"running": r, "total": t} }(),
 		"timestamp":     time.Now().UnixMilli(),
+	}
+	if origin != nil {
+		if cc := origin.resolve(c); cc != "" {
+			payload["origin_country"] = cc
+		}
 	}
 	if dp != nil {
 		payload["dns"] = dp.GetSummary()
@@ -495,7 +637,8 @@ func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, w
 // backed up (e.g. hibernating laptop, congested link), only the most recent
 // payload is kept — preventing kernel send-buffer buildup (same backpressure
 // logic that PR #18 added to the old WebSocket handler).
-func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Provider, ct *conntrack.Tracker, lm *latency.Monitor) http.HandlerFunc {
+func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Provider, ct *conntrack.Tracker, lm *latency.Monitor, geoDB *geoip.DB) http.HandlerFunc {
+	origin := newOriginResolver(geoDB)
 	return func(w http.ResponseWriter, r *http.Request) {
 		flusher, ok := w.(http.Flusher)
 		if !ok {
@@ -526,7 +669,7 @@ func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Pr
 		}()
 
 		// Send initial payload immediately.
-		data, err := json.Marshal(buildPayload(c, t, dp, wp, ct, lm))
+		data, err := json.Marshal(buildPayload(c, t, dp, wp, ct, lm, origin))
 		if err != nil {
 			close(sendCh)
 			return
@@ -545,7 +688,7 @@ func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Pr
 			case <-writerDone:
 				return
 			case <-ticker.C:
-				data, err := json.Marshal(buildPayload(c, t, dp, wp, ct, lm))
+				data, err := json.Marshal(buildPayload(c, t, dp, wp, ct, lm, origin))
 				if err != nil {
 					continue
 				}
