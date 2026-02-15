@@ -53,6 +53,9 @@ type TargetStatus struct {
 	MaxRTT  float64 `json:"max_rtt_ms"`
 	Jitter  float64 `json:"jitter_ms"`
 	LossPct float64 `json:"loss_pct"`
+	// Per-protocol summary stats
+	ICMPStats  *ProbeStats `json:"icmp_stats,omitempty"`
+	HTTPSStats *ProbeStats `json:"https_stats,omitempty"`
 	ICMPv4  []Point `json:"icmp_v4,omitempty"`
 	ICMPv6  []Point `json:"icmp_v6,omitempty"`
 	HTTPSv4 []Point `json:"https_v4,omitempty"`
@@ -60,6 +63,16 @@ type TargetStatus struct {
 	// Legacy fields (preferred stack) for backward compat
 	ICMP  []Point `json:"icmp"`
 	HTTPS []Point `json:"https"`
+}
+
+// ProbeStats holds summary statistics for a single probe type.
+type ProbeStats struct {
+	RTT     float64 `json:"rtt_ms"`
+	AvgRTT  float64 `json:"avg_rtt_ms"`
+	MinRTT  float64 `json:"min_rtt_ms"`
+	MaxRTT  float64 `json:"max_rtt_ms"`
+	Jitter  float64 `json:"jitter_ms"`
+	LossPct float64 `json:"loss_pct"`
 }
 
 // Monitor continuously probes a set of targets via ICMP and HTTPS.
@@ -248,6 +261,22 @@ func (m *Monitor) GetStatus() []TargetStatus {
 		ts.HTTPSv4 = copyPoints(st.httpsV4Hist)
 		ts.HTTPSv6 = copyPoints(st.httpsV6Hist)
 
+		// Per-protocol summary stats (ICMP uses v4 with v6 fallback, same for HTTPS)
+		icmpHist := st.icmpV4Hist
+		if len(icmpHist) == 0 {
+			icmpHist = st.icmpV6Hist
+		}
+		if len(icmpHist) > 0 {
+			ts.ICMPStats = buildProbeStats(icmpHist)
+		}
+		httpsHist := st.httpsV4Hist
+		if len(httpsHist) == 0 {
+			httpsHist = st.httpsV6Hist
+		}
+		if len(httpsHist) > 0 {
+			ts.HTTPSStats = buildProbeStats(httpsHist)
+		}
+
 		// Legacy: prefer v4 if available
 		if len(ts.ICMPv4) > 0 {
 			ts.ICMP = ts.ICMPv4
@@ -272,6 +301,24 @@ func copyPoints(s []Point) []Point {
 	c := make([]Point, len(s))
 	copy(c, s)
 	return c
+}
+
+func buildProbeStats(pts []Point) *ProbeStats {
+	if len(pts) == 0 {
+		return nil
+	}
+	s := &ProbeStats{}
+	last := pts[len(pts)-1]
+	s.RTT = last.RTT
+	s.AvgRTT, s.MinRTT, s.MaxRTT, s.Jitter = computeStats(pts)
+	var lost int
+	for _, p := range pts {
+		if p.RTT < 0 {
+			lost++
+		}
+	}
+	s.LossPct = float64(lost) / float64(len(pts)) * 100
+	return s
 }
 
 func computeStats(pts []Point) (avg, min, max, jitter float64) {

@@ -29,7 +29,11 @@
     })();
 
     // ── Tab navigation ──
+    var _activeTab = 'traffic';
+    var _lastPayload = null; // cached latest SSE data for immediate render on tab switch
+
     window._switchTab = function(tab) {
+        _activeTab = tab;
         var panels = { traffic: 'tabTraffic', nat: 'tabNat', dns: 'tabDns', wifi: 'tabWifi', monitor: 'tabMonitor', speedtest: 'tabSpeedtest', debug: 'tabDebug' };
         for (var k in panels) {
             var p = document.getElementById(panels[k]);
@@ -38,8 +42,61 @@
         document.querySelectorAll('.main-nav-tab').forEach(function(t) {
             t.classList.toggle('active', t.getAttribute('data-tab') === tab);
         });
+        // Update URL hash without scrolling
+        if (history.replaceState) {
+            history.replaceState(null, '', '#' + tab);
+        } else {
+            location.hash = tab;
+        }
         if (tab === 'speedtest' && !_stHistoryLoaded) loadSpeedTestHistory();
+        // Immediately render the newly active tab with cached data
+        if (_lastPayload) _renderTab(tab, _lastPayload, true);
     };
+
+    function _renderTab(tab, d, force) {
+        var bw = d.top_bandwidth || [], vol = d.top_volume || [];
+        if (tab === 'traffic') {
+            updateProtoChart(d.protocols);
+            updateIPVersions(d.ip_versions);
+            updateCountries(d.countries);
+            updateASNs(d.asns);
+            renderTalkers('bwTable', bw, 'rate_bytes', formatRate, 'bw');
+            renderTalkers('volTable', vol, 'total_bytes', formatBytes, 'vol');
+        } else if (tab === 'monitor') {
+            var now = Date.now();
+            if (force || !window._lastMapUpdate || now - window._lastMapUpdate > 5000) {
+                updateWorldMap(d.countries, bw);
+                window._lastMapUpdate = now;
+            }
+            if (force || !window._lastLatUpdate || now - window._lastLatUpdate > 2000) {
+                updateLatency(d.latency);
+                window._lastLatUpdate = now;
+            }
+        } else if (tab === 'dns') {
+            updateDNS(d.dns || null);
+        } else if (tab === 'wifi') {
+            updateWiFi(d.wifi || null);
+        } else if (tab === 'nat') {
+            updateNAT(d.conntrack || null);
+        }
+    }
+
+    // Restore tab from URL hash on load
+    (function() {
+        var hash = location.hash.replace('#', '');
+        var validTabs = ['traffic', 'nat', 'dns', 'wifi', 'monitor', 'speedtest', 'debug'];
+        if (hash && validTabs.indexOf(hash) !== -1) {
+            // Defer to ensure DOM is ready
+            setTimeout(function() { window._switchTab(hash); }, 0);
+        }
+        // Handle browser back/forward
+        window.addEventListener('hashchange', function() {
+            var h = location.hash.replace('#', '');
+            if (h && validTabs.indexOf(h) !== -1 && h !== _activeTab) {
+                window._switchTab(h);
+            }
+        });
+    })();
 
     function formatBytes(bytes, dec) {
         if (dec === undefined) dec = 1;
@@ -102,7 +159,7 @@
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            animation: false,
+            animation: { duration: 300 },
             interaction: { mode: 'index', intersect: false },
             plugins: {
                 legend: {
@@ -136,7 +193,8 @@
                 y: {
                     grid: { color: '#1f1f23' },
                     ticks: { color: '#52525b', font: { size: 10 }, callback: function(v) { return formatRate(Math.abs(v)); } },
-                    border: { color: '#27272a' }
+                    border: { color: '#27272a' },
+                    grace: '15%'
                 }
             }
         }
@@ -429,13 +487,25 @@
         for (var i = 0; i < points.length; i++) { if (points[i].rx > maxVal) maxVal = points[i].rx; if (points[i].tx > maxVal) maxVal = points[i].tx; }
         if (maxVal === 0) return;
         var stepX = dw / (points.length - 1), pad = 2, usableH = dh - pad * 2;
+        function getY(val) { return dh - pad - (val / maxVal) * usableH; }
         function drawArea(key, fill, stroke) {
+            var pts = [];
+            for (var j = 0; j < points.length; j++) pts.push({ x: j * stepX, y: getY(points[j][key]) });
+            // Smooth filled area
             c.beginPath(); c.moveTo(0, dh);
-            for (var j = 0; j < points.length; j++) c.lineTo(j * stepX, dh - pad - (points[j][key] / maxVal) * usableH);
-            c.lineTo((points.length - 1) * stepX, dh); c.closePath(); c.fillStyle = fill; c.fill();
-            c.beginPath();
-            for (var j = 0; j < points.length; j++) { var y = dh - pad - (points[j][key] / maxVal) * usableH; j === 0 ? c.moveTo(0, y) : c.lineTo(j * stepX, y); }
-            c.strokeStyle = stroke; c.lineWidth = 1; c.stroke();
+            c.lineTo(pts[0].x, pts[0].y);
+            for (var j = 1; j < pts.length; j++) {
+                var cx = (pts[j-1].x + pts[j].x) / 2;
+                c.bezierCurveTo(cx, pts[j-1].y, cx, pts[j].y, pts[j].x, pts[j].y);
+            }
+            c.lineTo(pts[pts.length-1].x, dh); c.closePath(); c.fillStyle = fill; c.fill();
+            // Smooth line
+            c.beginPath(); c.moveTo(pts[0].x, pts[0].y);
+            for (var j = 1; j < pts.length; j++) {
+                var cx = (pts[j-1].x + pts[j].x) / 2;
+                c.bezierCurveTo(cx, pts[j-1].y, cx, pts[j].y, pts[j].x, pts[j].y);
+            }
+            c.strokeStyle = stroke; c.lineWidth = 1.5; c.stroke();
         }
         drawArea('tx', 'rgba(167,139,250,0.15)', 'rgba(167,139,250,0.5)');
         drawArea('rx', 'rgba(34,211,238,0.15)', 'rgba(34,211,238,0.5)');
@@ -1340,21 +1410,31 @@
             h += '<span style="font-size:12px;font-weight:700;color:' + statusColor + '">' + statusText + '</span>';
             h += '</div></div>';
 
-            // Stats grid
-            h += '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:14px;text-align:center">';
-            var stats = [
-                ['RTT', t.rtt_ms >= 0 ? t.rtt_ms.toFixed(1) : '—', 'ms'],
-                ['Avg', t.avg_rtt_ms > 0 ? t.avg_rtt_ms.toFixed(1) : '—', 'ms'],
-                ['Min', t.min_rtt_ms > 0 ? t.min_rtt_ms.toFixed(1) : '—', 'ms'],
-                ['Jitter', t.jitter_ms > 0 ? t.jitter_ms.toFixed(2) : '—', 'ms'],
-                ['Loss', t.loss_pct.toFixed(1), '%']
-            ];
-            for (var si = 0; si < stats.length; si++) {
-                var lossStyle = stats[si][0] === 'Loss' && t.loss_pct > 0 ? ';color:var(--danger)' : '';
-                h += '<div><div style="font-size:10px;color:var(--text-2);margin-bottom:2px">' + stats[si][0] + '</div>';
-                h += '<div style="font-size:13px;font-weight:600;font-variant-numeric:tabular-nums' + lossStyle + '">';
-                h += stats[si][1] + '<span style="font-size:9px;color:var(--text-2);margin-left:1px">' + stats[si][2] + '</span></div></div>';
+            // Stats grid — per protocol
+            function statsRow(label, labelColor, s) {
+                if (!s) return '';
+                var r = '<div style="display:grid;grid-template-columns:auto repeat(5,1fr);gap:8px;text-align:center;align-items:center">';
+                r += '<div style="text-align:left;font-size:11px;font-weight:700;color:' + labelColor + '">' + label + '</div>';
+                var items = [
+                    ['RTT', s.rtt_ms >= 0 ? s.rtt_ms.toFixed(1) : '—', 'ms'],
+                    ['Avg', s.avg_rtt_ms > 0 ? s.avg_rtt_ms.toFixed(1) : '—', 'ms'],
+                    ['Min', s.min_rtt_ms > 0 ? s.min_rtt_ms.toFixed(1) : '—', 'ms'],
+                    ['Jitter', s.jitter_ms > 0 ? s.jitter_ms.toFixed(2) : '—', 'ms'],
+                    ['Loss', s.loss_pct.toFixed(1), '%']
+                ];
+                for (var si = 0; si < items.length; si++) {
+                    var lossStyle = items[si][0] === 'Loss' && s.loss_pct > 0 ? ';color:var(--danger)' : '';
+                    r += '<div><div style="font-size:9px;color:var(--text-2);margin-bottom:1px">' + items[si][0] + '</div>';
+                    r += '<div style="font-size:12px;font-weight:600;font-variant-numeric:tabular-nums' + lossStyle + '">';
+                    r += items[si][1] + '<span style="font-size:8px;color:var(--text-2);margin-left:1px">' + items[si][2] + '</span></div></div>';
+                }
+                r += '</div>';
+                return r;
             }
+
+            h += '<div style="margin-bottom:14px;display:flex;flex-direction:column;gap:6px">';
+            h += statsRow('ICMP', '#22d3ee', t.icmp_stats);
+            h += statsRow('HTTPS', '#a78bfa', t.https_stats);
             h += '</div>';
 
             // ICMP charts — show v4 and v6 separately if dual-stack
@@ -1459,32 +1539,41 @@
         // "ms" unit label — positioned at top-left, clear of tick values
         svg += '<text x="2" y="9" fill="var(--text-3)" font-size="8px" font-weight="600">ms</text>';
 
-        // Build path + fill
-        var path = '', fillPath = '';
+        // Build path + fill using smooth cubic bezier curves
+        var pathPts = [];
         var lossDots = '';
-        var firstGoodX = -1, lastGoodX = -1;
         for (var i = 0; i < points.length; i++) {
             var x = ML + (i / Math.max(points.length - 1, 1)) * chartW;
             if (points[i].rtt < 0) {
                 lossDots += '<line x1="' + x.toFixed(1) + '" y1="' + PT + '" x2="' + x.toFixed(1) + '" y2="' + (H - PB) + '" stroke="var(--danger, #ef4444)" stroke-width="1" opacity="0.12"/>';
                 continue;
             }
-            var y = yPx(points[i].rtt);
-            path += (path ? ' L' : 'M') + x.toFixed(1) + ',' + y.toFixed(1);
-            if (firstGoodX < 0) { firstGoodX = x; fillPath = 'M' + x.toFixed(1) + ',' + (H - PB); }
-            fillPath += ' L' + x.toFixed(1) + ',' + y.toFixed(1);
-            lastGoodX = x;
+            pathPts.push({ x: x, y: yPx(points[i].rtt) });
         }
-        if (fillPath && lastGoodX >= 0) {
-            fillPath += ' L' + lastGoodX.toFixed(1) + ',' + (H - PB) + ' Z';
+        var path = '', fillPath = '';
+        if (pathPts.length > 1) {
+            path = 'M' + pathPts[0].x.toFixed(1) + ',' + pathPts[0].y.toFixed(1);
+            for (var pi = 1; pi < pathPts.length; pi++) {
+                var cx = (pathPts[pi-1].x + pathPts[pi].x) / 2;
+                path += ' C' + cx.toFixed(1) + ',' + pathPts[pi-1].y.toFixed(1) + ' ' + cx.toFixed(1) + ',' + pathPts[pi].y.toFixed(1) + ' ' + pathPts[pi].x.toFixed(1) + ',' + pathPts[pi].y.toFixed(1);
+            }
+            fillPath = 'M' + pathPts[0].x.toFixed(1) + ',' + (H - PB);
+            fillPath += ' L' + pathPts[0].x.toFixed(1) + ',' + pathPts[0].y.toFixed(1);
+            for (var pi = 1; pi < pathPts.length; pi++) {
+                var cx = (pathPts[pi-1].x + pathPts[pi].x) / 2;
+                fillPath += ' C' + cx.toFixed(1) + ',' + pathPts[pi-1].y.toFixed(1) + ' ' + cx.toFixed(1) + ',' + pathPts[pi].y.toFixed(1) + ' ' + pathPts[pi].x.toFixed(1) + ',' + pathPts[pi].y.toFixed(1);
+            }
+            fillPath += ' L' + pathPts[pathPts.length-1].x.toFixed(1) + ',' + (H - PB) + ' Z';
+        } else if (pathPts.length === 1) {
+            path = 'M' + pathPts[0].x.toFixed(1) + ',' + pathPts[0].y.toFixed(1);
         }
 
         // Loss strips
         svg += lossDots;
 
-        // Fill area — very subtle
+        // Fill area
         if (fillPath) {
-            svg += '<path d="' + fillPath + '" fill="' + fillHex + '" opacity="0.06"/>';
+            svg += '<path d="' + fillPath + '" fill="' + fillHex + '" opacity="0.1"/>';
         }
         // Line
         if (path) {
@@ -1714,6 +1803,7 @@
     });
 
     function process(d) {
+        _lastPayload = d;
         var ifaces = d.interfaces || [], bw = d.top_bandwidth || [], vol = d.top_volume || [];
         var rx = 0, tx = 0;
         for (var f of ifaces) { rx += f.rx_rate || 0; tx += f.tx_rate || 0; knownIfaces.add(f.name); }
@@ -1753,25 +1843,10 @@
         drawAllSparklines();
         renderIfaceTabs();
         updateChart();
-        updateProtoChart(d.protocols);
-        updateIPVersions(d.ip_versions);
-        updateCountries(d.countries);
-        updateASNs(d.asns);
-        // Throttle map (5s) and latency (2s) to allow tooltip hover and reduce DOM churn
-        var now = Date.now();
-        if (!window._lastMapUpdate || now - window._lastMapUpdate > 5000) {
-            updateWorldMap(d.countries, d.top_bandwidth);
-            window._lastMapUpdate = now;
-        }
-        if (!window._lastLatUpdate || now - window._lastLatUpdate > 2000) {
-            updateLatency(d.latency);
-            window._lastLatUpdate = now;
-        }
-        renderTalkers('bwTable', bw, 'rate_bytes', formatRate, 'bw');
-        renderTalkers('volTable', vol, 'total_bytes', formatBytes, 'vol');
-        updateDNS(d.dns || null);
-        updateWiFi(d.wifi || null);
-        updateNAT(d.conntrack || null);
+
+        // Only update data for the active tab to reduce DOM thrashing.
+        // _renderTab handles all tab-specific rendering.
+        _renderTab(_activeTab, d);
     }
 
     function tick() { document.getElementById('clock').textContent = new Date().toLocaleTimeString(); }
