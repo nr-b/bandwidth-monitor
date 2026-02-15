@@ -22,16 +22,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - goos: linux
-            goarch: amd64
+          - goarch: amd64
             pkg_arch: amd64
-            cc: gcc
-            libpcap_pkg: libpcap-dev
-          - goos: linux
-            goarch: arm64
+          - goarch: arm64
             pkg_arch: arm64
-            cc: aarch64-linux-gnu-gcc
-            libpcap_pkg: libpcap-dev:arm64
 
     runs-on: ubuntu-latest
     steps:
@@ -41,46 +35,15 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Install cross-compilation tools
-        if: matrix.goarch == 'arm64'
-        run: |
-          sudo dpkg --add-architecture arm64
-          # Pin ALL existing apt sources to amd64 only
-          # Handle .list files
-          for f in /etc/apt/sources.list.d/*.list; do
-            [ -f "$f" ] && sudo sed -i '/^deb /{/\[/!s|^deb |deb [arch=amd64] |}' "$f" 2>/dev/null || true
-          done
-          [ -f /etc/apt/sources.list ] && sudo sed -i '/^deb /{/\[/!s|^deb |deb [arch=amd64] |}' /etc/apt/sources.list 2>/dev/null || true
-          # Handle DEB822 .sources files (Ubuntu 24.04+)
-          for f in /etc/apt/sources.list.d/*.sources; do
-            [ -f "$f" ] && sudo sed -i '/^Architectures:/!{/^Types:/a Architectures: amd64}' "$f" 2>/dev/null || true
-            [ -f "$f" ] && grep -q '^Architectures:' "$f" || sudo sed -i '/^Types:/a Architectures: amd64' "$f" 2>/dev/null || true
-          done
-          # Add arm64 ports (covers main, updates, security, backports)
-          CODENAME=$(lsb_release -cs)
-          printf '%s\n' \
-            "deb [arch=arm64] http://ports.ubuntu.com/ ${CODENAME} main restricted universe" \
-            "deb [arch=arm64] http://ports.ubuntu.com/ ${CODENAME}-updates main restricted universe" \
-            "deb [arch=arm64] http://ports.ubuntu.com/ ${CODENAME}-security main restricted universe" \
-            "deb [arch=arm64] http://ports.ubuntu.com/ ${CODENAME}-backports main restricted universe" \
-            | sudo tee /etc/apt/sources.list.d/arm64-ports.list
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu libpcap-dev:arm64
-
-      - name: Install libpcap (native)
-        if: matrix.goarch == 'amd64'
-        run: sudo apt-get install -y libpcap-dev
-
       - name: Install nfpm
         run: |
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
 
       - name: Build binary
         env:
-          GOOS: ${{ matrix.goos }}
+          GOOS: linux
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "1"
-          CC: ${{ matrix.cc }}
+          CGO_ENABLED: "0"
         run: |
           VERSION="${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || github.sha }}"
           go build -ldflags="-s -w -X main.version=${VERSION}" -o bandwidth-monitor .
@@ -122,66 +85,34 @@ jobs:
     strategy:
       matrix:
         include:
-          # ── OpenWrt 23.05 (stable) ──
-          - sdk_url_suffix: x86/64
-            arch: x86_64
+          # ── OpenWrt 23.05 (stable, ipk) ──
+          - arch: x86_64
             goarch: amd64
-            cc_prefix: x86_64-openwrt-linux-musl
-            release: "23.05.5"
             pkg_format: ipk
-            base_url: "https://downloads.openwrt.org/releases/23.05.5/targets"
-          - sdk_url_suffix: rockchip/armv8
-            arch: aarch64_generic
+          - arch: aarch64_generic
             goarch: arm64
-            cc_prefix: aarch64-openwrt-linux-musl
-            release: "23.05.5"
             pkg_format: ipk
-            base_url: "https://downloads.openwrt.org/releases/23.05.5/targets"
-          - sdk_url_suffix: ath79/generic
-            arch: mips_24kc
+          - arch: mips_24kc
             goarch: mips
             gomips: softfloat
-            cc_prefix: mips-openwrt-linux-musl
-            release: "23.05.5"
             pkg_format: ipk
-            base_url: "https://downloads.openwrt.org/releases/23.05.5/targets"
-          - sdk_url_suffix: ramips/mt7621
-            arch: mipsel_24kc
+          - arch: mipsel_24kc
             goarch: mipsle
             gomips: softfloat
-            cc_prefix: mipsel-openwrt-linux-musl
-            release: "23.05.5"
             pkg_format: ipk
-            base_url: "https://downloads.openwrt.org/releases/23.05.5/targets"
-          - sdk_url_suffix: mediatek/filogic
-            arch: aarch64_cortex-a53
+          - arch: aarch64_cortex-a53
             goarch: arm64
-            cc_prefix: aarch64-openwrt-linux-musl
-            release: "23.05.5"
             pkg_format: ipk
-            base_url: "https://downloads.openwrt.org/releases/23.05.5/targets"
-          # ── OpenWrt SNAPSHOT (nightly, uses apk) ──
-          - sdk_url_suffix: x86/64
-            arch: x86_64-snapshot
+          # ── OpenWrt SNAPSHOT (nightly, apk) ──
+          - arch: x86_64-snapshot
             goarch: amd64
-            cc_prefix: x86_64-openwrt-linux-musl
-            release: "snapshot"
             pkg_format: apk
-            base_url: "https://downloads.openwrt.org/snapshots/targets"
-          - sdk_url_suffix: rockchip/armv8
-            arch: aarch64_generic-snapshot
+          - arch: aarch64_generic-snapshot
             goarch: arm64
-            cc_prefix: aarch64-openwrt-linux-musl
-            release: "snapshot"
             pkg_format: apk
-            base_url: "https://downloads.openwrt.org/snapshots/targets"
-          - sdk_url_suffix: mediatek/filogic
-            arch: aarch64_cortex-a53-snapshot
+          - arch: aarch64_cortex-a53-snapshot
             goarch: arm64
-            cc_prefix: aarch64-openwrt-linux-musl
-            release: "snapshot"
             pkg_format: apk
-            base_url: "https://downloads.openwrt.org/snapshots/targets"
 
     runs-on: ubuntu-latest
 
@@ -192,72 +123,13 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Install build dependencies
+      - name: Build binary
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          GOMIPS: ${{ matrix.gomips }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential file wget fakeroot
-
-      - name: Download and extract OpenWrt SDK
-        run: |
-          SDK_URL="${{ matrix.base_url }}/${{ matrix.sdk_url_suffix }}"
-          SDK_FILE=$(curl -sf "$SDK_URL/sha256sums" | grep 'openwrt-sdk-' | grep -oP 'openwrt-sdk-[^\s*]+\.tar\.\w+' | head -1)
-          echo "Downloading $SDK_URL/$SDK_FILE"
-          wget -q "$SDK_URL/$SDK_FILE"
-          tar xf "$SDK_FILE"
-          rm -f "$SDK_FILE"
-          echo "SDK_DIR=$(cd $(find . -maxdepth 1 -type d -name 'openwrt-sdk-*' | head -1) && pwd)" >> $GITHUB_ENV
-
-      - name: Prepare libpcap for cross-compilation
-        run: |
-          TOOLCHAIN_DIR=$(find "$SDK_DIR/staging_dir" -maxdepth 1 -name 'toolchain-*' -type d | head -1)
-          TOOLCHAIN_DIR=$(cd "$TOOLCHAIN_DIR" && pwd)
-          TARGET_DIR=$(find "$SDK_DIR/staging_dir" -maxdepth 1 -name 'target-*' -type d | head -1)
-          TARGET_DIR=$(cd "$TARGET_DIR" && pwd)
-
-          export PATH="$TOOLCHAIN_DIR/bin:$PATH"
-          export STAGING_DIR="$SDK_DIR/staging_dir"
-
-          # Build libpcap from source for the target
-          if [ ! -f "$TARGET_DIR/usr/include/pcap.h" ]; then
-            echo "Building libpcap from source..."
-            PCAP_VER="1.10.5"
-            wget -q "https://www.tcpdump.org/release/libpcap-${PCAP_VER}.tar.xz"
-            tar xf "libpcap-${PCAP_VER}.tar.xz"
-            cd "libpcap-${PCAP_VER}"
-            CC=${{ matrix.cc_prefix }}-gcc \
-            AR=${{ matrix.cc_prefix }}-ar \
-            RANLIB=${{ matrix.cc_prefix }}-ranlib \
-            ./configure \
-              --host=${{ matrix.cc_prefix }} \
-              --prefix="$TARGET_DIR/usr" \
-              --with-pcap=linux \
-              --without-libnl \
-              --disable-shared \
-              --enable-static
-            make -j$(nproc)
-            make install
-            cd "${{ github.workspace }}"
-            rm -rf "libpcap-${PCAP_VER}" "libpcap-${PCAP_VER}.tar.xz"
-          fi
-
-          echo "pcap.h location:"
-          find "$TARGET_DIR" -name 'pcap.h' -type f 2>/dev/null | head -3
-          echo "TOOLCHAIN_DIR=$TOOLCHAIN_DIR" >> $GITHUB_ENV
-          echo "TARGET_DIR=$TARGET_DIR" >> $GITHUB_ENV
-          echo "$TOOLCHAIN_DIR/bin" >> $GITHUB_PATH
-
-      - name: Build binary with SDK toolchain
-        run: |
-          export STAGING_DIR="$SDK_DIR/staging_dir"
-          export CGO_ENABLED=1
-          export GOOS=linux
-          export GOARCH=${{ matrix.goarch }}
-          export GOMIPS=${{ matrix.gomips }}
-          export CC=${{ matrix.cc_prefix }}-gcc
-          export CXX=${{ matrix.cc_prefix }}-g++
-          export CGO_CFLAGS="-I$TARGET_DIR/usr/include -I$TOOLCHAIN_DIR/usr/include -I$TOOLCHAIN_DIR/include"
-          export CGO_LDFLAGS="-L$TARGET_DIR/usr/lib -L$TOOLCHAIN_DIR/usr/lib -L$TOOLCHAIN_DIR/lib"
-
           VERSION="${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || github.sha }}"
           go build -ldflags="-s -w -X main.version=${VERSION}" -o bandwidth-monitor .
           file bandwidth-monitor
@@ -298,10 +170,8 @@ jobs:
             cd /tmp && tar xzf apk-static.apk sbin/apk.static && cd "$WORKSPACE"
             APK=/tmp/sbin/apk.static
 
-            BINSIZE=$(stat -c%s "$BINARY")
             BUILDDATE=$(date +%s)
 
-            # apk mkpkg uses -I key:value for info, -F dir for files, -o for output
             APK_FILE="$WORKSPACE/pkg-out/bandwidth-monitor-${VERSION}-r1_${ARCH}.apk"
             cd "$PKG_DIR"
             $APK mkpkg \
@@ -312,7 +182,6 @@ jobs:
               -I "build-time:${BUILDDATE}" \
               -I "arch:${ARCH}" \
               -I "license:ISC" \
-              -I "depends:libpcap" \
               -I "maintainer:Annika Wickert <awlx@users.noreply.github.com>" \
               -F "$PKG_DIR" \
               -o "$APK_FILE"
@@ -324,7 +193,6 @@ jobs:
               "Package: bandwidth-monitor" \
               "Version: ${VERSION}" \
               "Architecture: ${ARCH}" \
-              "Depends: libpcap" \
               "Maintainer: Annika Wickert <awlx@users.noreply.github.com>" \
               "Section: net" \
               "Description: Real-time network monitoring dashboard with embedded web UI" \
