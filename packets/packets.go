@@ -13,7 +13,8 @@ import (
 
 var (
 	SnapLen int32 = 128
-	// Setup BPF filter here to capture ipv4/ipv6 traffic, including 802.1Q VLAN-tagged frames.
+	// AnyIpFilter is a BPF program for Layer 2 (Ethernet) interfaces.
+	// It accepts IPv4, IPv6, and 802.1Q VLAN-tagged IP frames.
 	AnyIpFilter = []bpf.Instruction{
 		// Load EtherType at standard Ethernet header offset (12 bytes).
 		bpf.LoadAbsolute{Off: 12, Size: 2},
@@ -35,6 +36,24 @@ var (
 		// Drop.
 		bpf.RetConstant{Val: 0},
 	}
+
+	// RawIpFilter is a BPF program for Layer 3 (raw IP) interfaces such as
+	// WireGuard, tun, or PPP. There is no Ethernet header; the first byte
+	// contains the IP version nibble.
+	RawIpFilter = []bpf.Instruction{
+		// Load the first byte (IP version + IHL for v4, or version + traffic class for v6).
+		bpf.LoadAbsolute{Off: 0, Size: 1},
+		// Shift right 4 to isolate the version nibble.
+		bpf.ALUOpConstant{Op: bpf.ALUOpShiftRight, Val: 4},
+		// If version == 4 (IPv4), accept.
+		bpf.JumpIf{Cond: bpf.JumpEqual, Val: 4, SkipTrue: 1},
+		// If version == 6 (IPv6), accept; otherwise drop.
+		bpf.JumpIf{Cond: bpf.JumpEqual, Val: 6, SkipTrue: 0, SkipFalse: 1},
+		// Accept.
+		bpf.RetConstant{Val: uint32(SnapLen)},
+		// Drop.
+		bpf.RetConstant{Val: 0},
+	}
 )
 
 const (
@@ -52,10 +71,6 @@ type Packet struct {
 	Version      int
 	SrcInterface string
 	Dot1qTag     int
-}
-
-func extractUint16(a uint32, offset, n uint) uint16 {
-	return uint16((a >> offset) & (1<<n - 1))
 }
 
 // ParseIPPacket attempts to parse an IP packet from a slice of bytes.
@@ -118,29 +133,29 @@ func parseEthernetFrame(pkt []byte) Packet {
 		headerOffsets := EthHeaderSize + offset
 		pktType := binary.BigEndian.Uint16(pkt[headerOffsets-2 : headerOffsets])
 		if offset != 0 {
-			dot1QTag := pkt[12+offset : 16+offset]
-			// Take the last 12 bits from
-			ret.Dot1qTag = int(extractUint16(binary.BigEndian.Uint32(dot1QTag), 22, 12))
+			// The VLAN TCI sits right after the 802.1Q EtherType marker.
+			// For offset=4 (single tag): TCI is at pkt[14:16].
+			// For offset=8 (QinQ inner): TCI is at pkt[18:20].
+			tciStart := EthHeaderSize + offset - 4
+			tci := binary.BigEndian.Uint16(pkt[tciStart : tciStart+2])
+			ret.Dot1qTag = int(tci & 0x0FFF)
 		}
 		switch pktType {
 		case unix.ETH_P_IP:
 			ret.Version = 4
-			headerSize := pkt[headerOffsets : headerOffsets+2]
-			headerSizeBits := uint64(extractUint16(uint32(binary.BigEndian.Uint16(headerSize)), 8, 4) * 8)
-			// Src IP is the range of 16 to 20 bytes into IP header, which starts 14 bytes into ethernet header
 			ret.SrcIP = net.IP(pkt[headerOffsets+12 : headerOffsets+16])
 			ret.DstIP = net.IP(pkt[headerOffsets+16 : headerOffsets+20])
 			ret.Proto = uint8(pkt[v4ProtoOffset+offset])
-			ret.Len = uint64(binary.BigEndian.Uint16(pkt[headerOffsets+2:headerOffsets+4])) + uint64(headerOffsets) + headerSizeBits
+			// IPv4 Total Length field already includes the IP header.
+			ret.Len = uint64(binary.BigEndian.Uint16(pkt[headerOffsets+2 : headerOffsets+4]))
 			return ret
 		case unix.ETH_P_IPV6:
 			ret.Version = 6
-			// Src IP is the range of 8 to 24 bytes into IP header, which starts 14 bytes into ethernet header
 			ret.SrcIP = net.IP(pkt[headerOffsets+8 : headerOffsets+24])
 			ret.DstIP = net.IP(pkt[headerOffsets+24 : headerOffsets+40])
 			ret.Proto = uint8(pkt[v6ProtoOffset+offset])
-			// Include the header length AND ethernet header size itself in the calculation.
-			ret.Len = uint64(binary.BigEndian.Uint16(pkt[headerOffsets+4:headerOffsets+6])) + uint64(headerOffsets) + v6HeaderSize
+			// IPv6 Payload Length excludes the 40-byte fixed header.
+			ret.Len = uint64(binary.BigEndian.Uint16(pkt[headerOffsets+4:headerOffsets+6])) + v6HeaderSize
 			return ret
 		}
 	}
@@ -215,4 +230,34 @@ func CreateEpoller(sockFD int) (int, error) {
 
 func htons(i uint16) uint16 {
 	return (i<<8)&0xff00 | i>>8
+}
+
+// IsL3Device returns true if the named interface is a Layer 3 (point-to-point,
+// no Ethernet header) device such as WireGuard, tun, or PPP. This is detected
+// via the interface's ARPHRD type: ARPHRD_NONE (0xFFFE) or ARPHRD_PPP (512)
+// indicate L3, while ARPHRD_ETHER (1) indicates L2.
+func IsL3Device(dev string) bool {
+	iface, err := net.InterfaceByName(dev)
+	if err != nil {
+		return false
+	}
+	// net.Interface doesn't expose ARPHRD directly, but point-to-point
+	// L3 interfaces (wg, tun, ppp) have the PointToPoint flag set and
+	// a zero HardwareAddr (no MAC address).
+	if iface.Flags&net.FlagPointToPoint != 0 {
+		return true
+	}
+	if len(iface.HardwareAddr) == 0 {
+		return true
+	}
+	return false
+}
+
+// BPFFilterForDevice returns the appropriate BPF filter for the given device:
+// RawIpFilter for L3 interfaces, AnyIpFilter for L2 (Ethernet) interfaces.
+func BPFFilterForDevice(dev string) []bpf.Instruction {
+	if IsL3Device(dev) {
+		return RawIpFilter
+	}
+	return AnyIpFilter
 }

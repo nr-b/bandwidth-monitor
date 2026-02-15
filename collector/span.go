@@ -54,7 +54,7 @@ func (s *spanOverlay) run() {
 	}
 	defer unix.Close(handle)
 
-	if err := packets.ApplyBPFFilter(handle, packets.AnyIpFilter); err != nil {
+	if err := packets.ApplyBPFFilter(handle, packets.BPFFilterForDevice(s.device)); err != nil {
 		fmt.Fprintf(os.Stderr, "span: BPF filter error: %v\n", err)
 	}
 
