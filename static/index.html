@@ -869,6 +869,22 @@
         <div class="footer"><span id="clock"></span></div>
     </div>
 
+    <!-- Host Detail Modal -->
+    <div id="hostModal" class="host-modal-backdrop" style="display:none" onclick="if(event.target===this)window._closeHostModal()">
+        <div class="host-modal">
+            <div class="host-modal-header">
+                <div>
+                    <div class="host-modal-title" id="hostModalTitle">Host Detail</div>
+                    <div class="host-modal-subtitle" id="hostModalSubtitle"></div>
+                </div>
+                <button class="host-modal-close" onclick="window._closeHostModal()">&times;</button>
+            </div>
+            <div id="hostModalBody" style="padding:20px 24px;overflow-y:auto;max-height:calc(90vh - 80px)">
+                <div style="text-align:center;padding:32px;color:var(--text-2)">Loading…</div>
+            </div>
+        </div>
+    </div>
+
     <script src="app.js" defer></script>
 </body>
 </html>

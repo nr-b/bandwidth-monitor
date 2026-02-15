@@ -20,6 +20,7 @@ const (
 	bucketSize                = 1 * time.Minute
 	maxAge                    = 24 * time.Hour
 	epollBuffer               = 128
+	maxHostsPerBucket         = 10000 // cap to bound memory on busy routers
 )
 
 type TalkerKey struct {
@@ -141,8 +142,13 @@ func (t *Tracker) TopByVolume(n int) []TalkerStat {
 	t.mu.RUnlock()
 
 	// Step 2: Sort + trim before enrichment to avoid unnecessary work
+	// Only include external IPs in the top talkers list
 	list := make([]TalkerStat, 0, len(totals))
 	for _, s := range totals {
+		ip := net.ParseIP(s.IP)
+		if ip != nil && (ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()) {
+			continue
+		}
 		list = append(list, *s)
 	}
 	sort.Slice(list, func(i, j int) bool {
@@ -189,8 +195,13 @@ func (t *Tracker) TopByBandwidth(n int) []TalkerStat {
 	t.mu.RUnlock()
 
 	// Step 2: Build stats, sort, and trim before enrichment
+	// Only include external IPs in the top talkers list
 	list := make([]TalkerStat, 0, len(raw))
 	for _, r := range raw {
+		ip := net.ParseIP(r.ip)
+		if ip != nil && (ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()) {
+			continue
+		}
 		list = append(list, TalkerStat{
 			IP:         r.ip,
 			TotalBytes: r.bytes,
@@ -328,10 +339,22 @@ func (t *Tracker) processPacket(pkt []byte, capDev string) {
 		ip    string
 		local bool
 	}{{srcStr, srcLocal}, {dstStr, dstLocal}} {
-		if entry.local {
-			continue
+		// Skip loopback and link-local (noise), but keep LAN IPs
+		if ipPacket.SrcIP.IsLoopback() || ipPacket.SrcIP.IsLinkLocalUnicast() {
+			if entry.ip == srcStr {
+				continue
+			}
+		}
+		if ipPacket.DstIP.IsLoopback() || ipPacket.DstIP.IsLinkLocalUnicast() {
+			if entry.ip == dstStr {
+				continue
+			}
 		}
 		if _, ok := t.current.hosts[entry.ip]; !ok {
+			// Cap hosts per bucket to bound memory
+			if len(t.current.hosts) >= maxHostsPerBucket {
+				continue
+			}
 			t.current.hosts[entry.ip] = &hostAccum{}
 		}
 		t.current.hosts[entry.ip].bytes += ipPacket.Len
@@ -583,4 +606,92 @@ func (t *Tracker) isLocalNet(ip net.IP) bool {
 		}
 	}
 	return false
+}
+
+// BucketPoint is a single 1-minute data point for a host.
+type BucketPoint struct {
+	Timestamp int64  `json:"ts"`
+	Bytes     uint64 `json:"bytes"`
+	RxBytes   uint64 `json:"rx_bytes"`
+	TxBytes   uint64 `json:"tx_bytes"`
+	Packets   uint64 `json:"packets"`
+}
+
+// HostHistory returns the per-minute bandwidth history for a single IP
+// over the 24h window. Returns nil if the IP has never been seen.
+func (t *Tracker) HostHistory(ip string) []BucketPoint {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	var points []BucketPoint
+	for _, b := range t.buckets {
+		if acc, ok := b.hosts[ip]; ok {
+			points = append(points, BucketPoint{
+				Timestamp: b.timestamp.UnixMilli(),
+				Bytes:     acc.bytes,
+				RxBytes:   acc.rxBytes,
+				TxBytes:   acc.txBytes,
+				Packets:   acc.packets,
+			})
+		}
+	}
+	if t.current != nil {
+		if acc, ok := t.current.hosts[ip]; ok {
+			points = append(points, BucketPoint{
+				Timestamp: t.current.timestamp.UnixMilli(),
+				Bytes:     acc.bytes,
+				RxBytes:   acc.rxBytes,
+				TxBytes:   acc.txBytes,
+				Packets:   acc.packets,
+			})
+		}
+	}
+	return points
+}
+
+// HostTotals returns the aggregate traffic stats for a single IP.
+// Returns nil if the IP has never been seen.
+func (t *Tracker) HostTotals(ip string) *TalkerStat {
+	t.mu.RLock()
+	var found bool
+	stat := &TalkerStat{IP: ip}
+	for _, b := range t.buckets {
+		if acc, ok := b.hosts[ip]; ok {
+			found = true
+			stat.TotalBytes += acc.bytes
+			stat.RxBytes += acc.rxBytes
+			stat.TxBytes += acc.txBytes
+			stat.Packets += acc.packets
+		}
+	}
+	if t.current != nil {
+		if acc, ok := t.current.hosts[ip]; ok {
+			found = true
+			stat.TotalBytes += acc.bytes
+			stat.RxBytes += acc.rxBytes
+			stat.TxBytes += acc.txBytes
+			stat.Packets += acc.packets
+		}
+		elapsed := time.Since(t.current.timestamp).Seconds()
+		if elapsed < 1 {
+			elapsed = 1
+		}
+		if acc, ok := t.current.hosts[ip]; ok {
+			stat.RateBytes = float64(acc.bytes) / elapsed
+			stat.RxRate = float64(acc.rxBytes) / elapsed
+			stat.TxRate = float64(acc.txBytes) / elapsed
+		}
+	}
+	t.mu.RUnlock()
+
+	if !found {
+		return nil
+	}
+
+	// Enrich outside lock
+	if t.dns != nil {
+		stat.Hostname = t.dns.LookupAddr(ip)
+	}
+	t.enrichGeo(stat)
+	return stat
 }
