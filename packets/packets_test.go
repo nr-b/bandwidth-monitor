@@ -25,7 +25,7 @@ func TestParseIPPacket(t *testing.T) {
 			want: packets.Packet{
 				SrcIP:   net.ParseIP("192.0.2.1"),
 				DstIP:   net.ParseIP("192.0.2.0"),
-				Len:     1514,
+				Len:     1460,
 				Proto:   6,
 				Version: 4,
 			},
@@ -36,7 +36,7 @@ func TestParseIPPacket(t *testing.T) {
 			want: packets.Packet{
 				SrcIP:   net.ParseIP("dead:beef:dead:beef:dead:beef:dead:beef"),
 				DstIP:   net.ParseIP("dead:beef:dead:beef:dead:beef:dead:beef"),
-				Len:     1294,
+				Len:     1280,
 				Proto:   6,
 				Version: 6,
 			},
@@ -47,10 +47,51 @@ func TestParseIPPacket(t *testing.T) {
 			want: packets.Packet{
 				SrcIP:    net.ParseIP("131.151.32.21"),
 				DstIP:    net.ParseIP("131.151.32.129"),
-				Len:      678,
+				Len:      620,
 				Proto:    6,
 				Version:  4,
 				Dot1qTag: 32,
+			},
+		},
+		{
+			name: "test success - dot1q v6 packet",
+			// 802.1Q-tagged IPv6: dst MAC, src MAC, 0x8100, VLAN 100, 0x86dd, IPv6 header
+			pkt: []byte{
+				// Ethernet: dst MAC
+				0x00, 0x11, 0x22, 0x33, 0x44, 0x55,
+				// Ethernet: src MAC
+				0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+				// 802.1Q EtherType
+				0x81, 0x00,
+				// TCI: VLAN ID 100 (0x0064)
+				0x00, 0x64,
+				// Inner EtherType: IPv6
+				0x86, 0xdd,
+				// IPv6 header: version=6, traffic class=0, flow label=0
+				0x60, 0x00, 0x00, 0x00,
+				// Payload length: 32
+				0x00, 0x20,
+				// Next header: TCP (6), Hop limit: 64
+				0x06, 0x40,
+				// Src IP: 2001:db8::1
+				0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+				// Dst IP: 2001:db8::2
+				0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+				// 32 bytes TCP payload (padding)
+				0x00, 0x50, 0x00, 0x51, 0x00, 0x00, 0x00, 0x01,
+				0x00, 0x00, 0x00, 0x00, 0x50, 0x02, 0xff, 0xff,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			},
+			want: packets.Packet{
+				SrcIP:    net.ParseIP("2001:db8::1"),
+				DstIP:    net.ParseIP("2001:db8::2"),
+				Len:      72, // payload 32 + IPv6 header 40
+				Proto:    6,
+				Version:  6,
+				Dot1qTag: 100,
 			},
 		},
 		{

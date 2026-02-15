@@ -253,7 +253,7 @@ func (t *Tracker) captureDevice(device string) {
 	}
 	defer unix.Close(handle)
 	log.Printf("Applying BPF filter %s \n", device)
-	if err := packets.ApplyBPFFilter(handle, packets.AnyIpFilter); err != nil {
+	if err := packets.ApplyBPFFilter(handle, packets.BPFFilterForDevice(device)); err != nil {
 		fmt.Fprintf(os.Stderr, "talkers: BPF filter error on %s: %v\n", device, err)
 	}
 	// Use epoll to read from the socket.
