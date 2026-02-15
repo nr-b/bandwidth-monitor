@@ -268,11 +268,15 @@
                     <div class="card-header">
                         <div>
                             <div class="card-title">Top LAN Clients</div>
-                            <div class="card-subtitle">By connection count</div>
+                            <div class="card-subtitle" id="natSrcSubtitle">By traffic volume</div>
+                        </div>
+                        <div class="toggle-group">
+                            <button class="toggle-btn active" data-target="natSrc" data-mode="bytes" onclick="window._toggleHostSort(this)">Traffic</button>
+                            <button class="toggle-btn" data-target="natSrc" data-mode="conns" onclick="window._toggleHostSort(this)">Connections</button>
                         </div>
                     </div>
                     <table>
-                        <thead><tr><th>#</th><th>LAN Host</th><th>Connections</th><th style="width:28%"></th></tr></thead>
+                        <thead><tr><th>#</th><th>LAN Host</th><th id="natSrcMetricHeader">Traffic</th><th style="width:28%"></th></tr></thead>
                         <tbody id="natSrcTable">
                             <tr><td colspan="4" class="empty-state">Waiting for data</td></tr>
                         </tbody>
@@ -282,11 +286,15 @@
                     <div class="card-header">
                         <div>
                             <div class="card-title">Top Remote Destinations</div>
-                            <div class="card-subtitle">By connection count</div>
+                            <div class="card-subtitle" id="natDstSubtitle">By traffic volume</div>
+                        </div>
+                        <div class="toggle-group">
+                            <button class="toggle-btn active" data-target="natDst" data-mode="bytes" onclick="window._toggleHostSort(this)">Traffic</button>
+                            <button class="toggle-btn" data-target="natDst" data-mode="conns" onclick="window._toggleHostSort(this)">Connections</button>
                         </div>
                     </div>
                     <table>
-                        <thead><tr><th>#</th><th>Remote Host</th><th>Connections</th><th style="width:28%"></th></tr></thead>
+                        <thead><tr><th>#</th><th>Remote Host</th><th id="natDstMetricHeader">Traffic</th><th style="width:28%"></th></tr></thead>
                         <tbody id="natDstTable">
                             <tr><td colspan="4" class="empty-state">Waiting for data</td></tr>
                         </tbody>
@@ -302,7 +310,7 @@
                 <div class="card-header">
                     <div>
                         <div class="card-title" id="natTableTitle">IPv4 NAT Translations</div>
-                        <div class="card-subtitle" id="natTableSubtitle">Active conntrack entries (top 200 by TTL)</div>
+                        <div class="card-subtitle" id="natTableSubtitle">Active conntrack entries (top 200 by traffic volume)</div>
                     </div>
                     <div style="display:flex;gap:8px;align-items:center">
                         <input type="text" id="natSearch" placeholder="Filter entries…" style="padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text-1);font-size:12px;width:200px;outline:none">

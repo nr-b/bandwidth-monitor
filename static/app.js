@@ -903,13 +903,41 @@
         legendEl.innerHTML = h || '<div style="text-align:center;color:var(--text-2);font-size:12px;padding:8px">No data</div>';
     }
 
-    function renderHostTable(tbId, hosts) {
+    var _natHostSortMode = { natSrc: 'bytes', natDst: 'bytes' };
+    var _natHostData = { natSrc: [], natDst: [] };
+
+    window._toggleHostSort = function(btn) {
+        var target = btn.getAttribute('data-target');
+        var mode = btn.getAttribute('data-mode');
+        _natHostSortMode[target] = mode;
+        var siblings = btn.parentElement.querySelectorAll('.toggle-btn');
+        for (var i = 0; i < siblings.length; i++) siblings[i].classList.remove('active');
+        btn.classList.add('active');
+        var subtitle = mode === 'bytes' ? 'By traffic volume' : 'By connection count';
+        var header = mode === 'bytes' ? 'Traffic' : 'Connections';
+        document.getElementById(target + 'Subtitle').textContent = subtitle;
+        document.getElementById(target + 'MetricHeader').textContent = header;
+        renderHostTable(target + 'Table', _natHostData[target], mode);
+    };
+
+    function renderHostTable(tbId, hosts, mode) {
+        if (!mode) mode = _natHostSortMode[tbId.replace('Table', '')] || 'bytes';
+        var target = tbId.replace('Table', '');
+        _natHostData[target] = hosts;
         var tb = document.getElementById(tbId);
         if (!hosts || !hosts.length) { tb.innerHTML = '<tr><td colspan="4" class="empty-state">No data</td></tr>'; return; }
-        var mx = hosts[0].connections || 1, h = '';
+        hosts = hosts.slice().sort(function(a, b) {
+            if (mode === 'bytes') return (b.bytes || 0) - (a.bytes || 0);
+            return (b.connections || 0) - (a.connections || 0);
+        });
+        var useBytes = mode === 'bytes';
+        var mx = useBytes ? (hosts[0].bytes || 1) : (hosts[0].connections || 1);
+        var h = '';
         for (var i = 0; i < hosts.length; i++) {
             var host = hosts[i];
-            var pct = ((host.connections / mx) * 100).toFixed(1);
+            var val = useBytes ? (host.bytes || 0) : host.connections;
+            var pct = ((val / mx) * 100).toFixed(1);
+            var display = useBytes ? formatBytes(val) : val.toLocaleString();
             var flag = host.country ? countryFlag(host.country) + ' ' : '';
             var geo = '';
             if (host.as_org) geo = '<span class="hostname">' + flag + (host.country_name || '') + ' &middot; AS' + (host.asn || '') + ' ' + host.as_org + '</span>';
@@ -919,7 +947,7 @@
                 : '<span class="ip-cell">' + host.ip + '</span>' + geo;
             h += '<tr><td><span class="' + rankClass(i) + '">' + (i + 1) + '</span></td>';
             h += '<td>' + cell + '</td>';
-            h += '<td style="font-variant-numeric:tabular-nums">' + host.connections.toLocaleString() + '</td>';
+            h += '<td style="font-variant-numeric:tabular-nums">' + display + '</td>';
             h += '<td class="bar-cell"><div class="bar-bg"></div><div class="bar-fill bw" style="width:' + pct + '%"></div></td></tr>';
         }
         tb.innerHTML = h;
