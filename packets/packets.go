@@ -59,10 +59,59 @@ func extractUint16(a uint32, offset, n uint) uint16 {
 }
 
 // ParseIPPacket attempts to parse an IP packet from a slice of bytes.
+// It handles both Layer 2 frames (with Ethernet header) and raw Layer 3
+// packets (e.g. from WireGuard/tun interfaces captured via AF_PACKET).
 func ParseIPPacket(pkt []byte) Packet {
+	if len(pkt) < 20 {
+		return Packet{}
+	}
+
+	// Detect raw IP packets (no Ethernet header) by checking the IP
+	// version nibble in the first byte. AF_PACKET on L3 interfaces
+	// (WireGuard, tun) delivers packets without an Ethernet header.
+	ipVer := pkt[0] >> 4
+	if ipVer == 4 || ipVer == 6 {
+		return parseRawIP(pkt)
+	}
+
+	// Otherwise assume a standard Ethernet frame.
 	if len(pkt) < 48 {
 		return Packet{}
 	}
+	return parseEthernetFrame(pkt)
+}
+
+// parseRawIP parses a raw IP packet (no Ethernet header).
+func parseRawIP(pkt []byte) Packet {
+	ret := Packet{}
+	ipVer := pkt[0] >> 4
+	switch ipVer {
+	case 4:
+		if len(pkt) < 20 {
+			return Packet{}
+		}
+		ret.Version = 4
+		ret.SrcIP = net.IP(pkt[12:16])
+		ret.DstIP = net.IP(pkt[16:20])
+		ret.Proto = pkt[9]
+		ret.Len = uint64(binary.BigEndian.Uint16(pkt[2:4]))
+	case 6:
+		if len(pkt) < 40 {
+			return Packet{}
+		}
+		ret.Version = 6
+		ret.SrcIP = net.IP(pkt[8:24])
+		ret.DstIP = net.IP(pkt[24:40])
+		ret.Proto = pkt[6]
+		ret.Len = uint64(binary.BigEndian.Uint16(pkt[4:6])) + v6HeaderSize
+	default:
+		return Packet{}
+	}
+	return ret
+}
+
+// parseEthernetFrame parses an Ethernet frame, handling optional VLAN tags.
+func parseEthernetFrame(pkt []byte) Packet {
 	ret := Packet{}
 	// Step from no vlan tag, to single vlan tag, to QinQ tags.
 	for _, offset := range []int{0, 4, 8} {
@@ -95,8 +144,7 @@ func ParseIPPacket(pkt []byte) Packet {
 			return ret
 		}
 	}
-	// If we fall through to here, we have junk data.
-	log.Printf("Unknown packet \n")
+	// Not a recognised EtherType after VLAN unwinding — silently ignore.
 	return Packet{}
 }
 

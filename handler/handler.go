@@ -449,6 +449,7 @@ func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Pr
 			select {
 			case <-r.Context().Done():
 				close(sendCh)
+				<-writerDone // wait for writer to finish before ResponseWriter is invalidated
 				return
 			case <-writerDone:
 				return
