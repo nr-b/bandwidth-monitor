@@ -71,6 +71,7 @@ type Packet struct {
 	Version      int
 	SrcInterface string
 	Dot1qTag     int
+	PktType      uint8 // AF_PACKET pkt_type: 0=HOST, 1=BROADCAST, 2=MULTICAST, 3=OTHERHOST, 4=OUTGOING
 }
 
 // ParseIPPacket attempts to parse an IP packet from a slice of bytes.
