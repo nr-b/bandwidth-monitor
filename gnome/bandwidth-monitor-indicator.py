@@ -25,15 +25,16 @@ Usage:
 """
 
 import argparse
+import http.client
 import json
 import os
 import signal
+import ssl
 import subprocess
 import sys
 import threading
 import time
-import urllib.request
-import urllib.error
+from urllib.parse import urlparse
 
 import gi
 gi.require_version("Gtk", "3.0")
@@ -97,15 +98,83 @@ def fmt_rate_short(bytes_per_sec: float) -> str:
     return "0"
 
 
+class _PersistentConn:
+    """A single persistent HTTP(S) connection with automatic reconnect.
+
+    Uses http.client with keep-alive.  When the server closes the idle
+    connection (or it breaks for any reason), the next request transparently
+    reconnects.  Only ONE socket is ever open per _PersistentConn instance.
+    """
+
+    _UA = "bandwidth-monitor-indicator/1.0"
+
+    def __init__(self, url: str):
+        p = urlparse(url)
+        self._scheme = p.scheme
+        self._host = p.hostname
+        self._port = p.port or (443 if p.scheme == "https" else 80)
+        self._ssl = ssl.create_default_context() if p.scheme == "https" else None
+        self._conn: http.client.HTTPConnection | None = None
+
+    def _connect(self):
+        """Open a fresh connection, closing any old one first."""
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+        if self._ssl:
+            self._conn = http.client.HTTPSConnection(
+                self._host, self._port, timeout=3, context=self._ssl
+            )
+        else:
+            self._conn = http.client.HTTPConnection(
+                self._host, self._port, timeout=3
+            )
+
+    def request(self, path: str = "/") -> bytes | None:
+        """GET path and return the response body, or None on error.
+
+        Retries exactly once on connection failure (stale keep-alive).
+        """
+        for attempt in range(2):
+            try:
+                if self._conn is None:
+                    self._connect()
+                self._conn.request("GET", path, headers={
+                    "User-Agent": self._UA,
+                    "Connection": "keep-alive",
+                    "Host": self._host,
+                })
+                resp = self._conn.getresponse()
+                data = resp.read()
+                if resp.status == 200:
+                    return data
+                return None
+            except Exception:
+                # First attempt failed -- reconnect and retry
+                self._connect()
+        return None
+
+
+# One persistent connection per endpoint (max 3 sockets total)
+_conns: dict[str, _PersistentConn] = {}
+
+
+def _get_conn(url: str) -> _PersistentConn:
+    p = urlparse(url)
+    key = f"{p.scheme}://{p.netloc}"
+    if key not in _conns:
+        _conns[key] = _PersistentConn(url)
+    return _conns[key]
+
+
 def fetch_summary(server: str) -> dict | None:
-    url = f"{server}/api/summary"
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "bandwidth-monitor-indicator/1.0"},
-    )
+    data = _get_conn(server).request("/api/summary")
+    if data is None:
+        return None
     try:
-        with urllib.request.urlopen(req, timeout=2) as resp:
-            return json.loads(resp.read())
+        return json.loads(data)
     except Exception:
         return None
 
@@ -113,22 +182,12 @@ def fetch_summary(server: str) -> dict | None:
 def fetch_external_ips() -> tuple:
     """Fetch public IPv4 and IPv6 via FFMUC anycast endpoints."""
     ip4, ip6 = "", ""
-    for url, setter in [
-        ("https://anycast-v4.ffmuc.net/", lambda v: None),
-        ("https://anycast-v6.ffmuc.net/", lambda v: None),
-    ]:
-        try:
-            req = urllib.request.Request(
-                url, headers={"User-Agent": "bandwidth-monitor-indicator/1.0"}
-            )
-            with urllib.request.urlopen(req, timeout=2) as resp:
-                val = resp.read().decode().strip()
-                if "v4" in url:
-                    ip4 = val
-                else:
-                    ip6 = val
-        except Exception:
-            pass
+    data = _get_conn("https://anycast-v4.ffmuc.net").request("/")
+    if data:
+        ip4 = data.decode().strip()
+    data = _get_conn("https://anycast-v6.ffmuc.net").request("/")
+    if data:
+        ip6 = data.decode().strip()
     return ip4, ip6
 
 
