@@ -15,12 +15,12 @@ import (
 )
 
 const (
-	snapshotLen int32         = 128
-	capTimeout  time.Duration = 100 * time.Millisecond
-	bucketSize                = 1 * time.Minute
-	maxAge                    = 24 * time.Hour
-	epollBuffer               = 128
-	maxHostsPerBucket         = 10000 // cap to bound memory on busy routers
+	snapshotLen       int32         = 128
+	capTimeout        time.Duration = 100 * time.Millisecond
+	bucketSize                      = 1 * time.Minute
+	maxAge                          = 24 * time.Hour
+	epollBuffer                     = 128
+	maxHostsPerBucket               = 10000 // cap to bound memory on busy routers
 )
 
 type TalkerKey struct {
@@ -60,7 +60,8 @@ type hostAccum struct {
 type Tracker struct {
 	devices     []string
 	promiscuous bool
-	localNets   []*net.IPNet // LOCAL_NETS for SPAN port direction detection
+	localNets   []*net.IPNet        // LOCAL_NETS for direction detection
+	selfIPs     map[string]struct{} // router's own interface IPs for direction tiebreaker
 	mu          sync.RWMutex
 	buckets     []*bucket
 	current     *bucket
@@ -70,10 +71,33 @@ type Tracker struct {
 }
 
 func New(devices []string, promiscuous bool, localNets []*net.IPNet, geoDB *geoip.DB, dns *resolver.Resolver) *Tracker {
+	// Build a set of the router's own interface IPs so we can resolve
+	// direction when both endpoints fall within localNets (e.g. the
+	// router's WAN IP talking to a remote host through a tunnel).
+	selfIPs := make(map[string]struct{})
+	if ifaces, err := net.Interfaces(); err == nil {
+		for _, iface := range ifaces {
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+			for _, addr := range addrs {
+				ipnet, ok := addr.(*net.IPNet)
+				if !ok {
+					continue
+				}
+				selfIPs[ipnet.IP.String()] = struct{}{}
+			}
+		}
+	}
+	if len(selfIPs) > 0 {
+		log.Printf("talkers: %d self IPs for direction detection", len(selfIPs))
+	}
 	return &Tracker{
 		devices:     devices,
 		promiscuous: promiscuous,
 		localNets:   localNets,
+		selfIPs:     selfIPs,
 		buckets:     make([]*bucket, 0, 1440),
 		stopCh:      make(chan struct{}),
 		dns:         dns,
@@ -149,6 +173,10 @@ func (t *Tracker) TopByVolume(n int) []TalkerStat {
 		if ip != nil && (ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()) {
 			continue
 		}
+		// Skip the router's own IPs (WAN, VPN tunnel endpoints, etc)
+		if _, isSelf := t.selfIPs[s.IP]; isSelf {
+			continue
+		}
 		list = append(list, *s)
 	}
 	sort.Slice(list, func(i, j int) bool {
@@ -200,6 +228,10 @@ func (t *Tracker) TopByBandwidth(n int) []TalkerStat {
 	for _, r := range raw {
 		ip := net.ParseIP(r.ip)
 		if ip != nil && (ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()) {
+			continue
+		}
+		// Skip the router's own IPs (WAN, VPN tunnel endpoints, etc)
+		if _, isSelf := t.selfIPs[r.ip]; isSelf {
 			continue
 		}
 		list = append(list, TalkerStat{
@@ -288,23 +320,29 @@ func (t *Tracker) captureDevice(device string) {
 		}
 		for i := 0; i < n; i++ {
 			if int(events[i].Fd) == handle {
-				numRead, _, err := unix.Recvfrom(handle, data, 0)
+				numRead, from, err := unix.Recvfrom(handle, data, 0)
 				if err != nil {
 					log.Printf("talkers: read error on %s: %v\n", device, err)
 					return
 				}
-				t.processPacket(data[:numRead], device)
+				// Extract AF_PACKET direction from SockaddrLinklayer
+				var pktType uint8
+				if sa, ok := from.(*unix.SockaddrLinklayer); ok {
+					pktType = sa.Pkttype
+				}
+				t.processPacket(data[:numRead], device, pktType)
 			}
 		}
 	}
 }
 
-func (t *Tracker) processPacket(pkt []byte, capDev string) {
+func (t *Tracker) processPacket(pkt []byte, capDev string, pktType uint8) {
 	ipPacket := packets.ParseIPPacket(pkt)
 	if ipPacket.Version == 0 {
 		return // unparseable packet (too short or unknown EtherType)
 	}
 	ipPacket.SrcInterface = capDev
+	ipPacket.PktType = pktType
 	ipVersion := "IPv4"
 	if ipPacket.Version != 4 {
 		ipVersion = "IPv6"
@@ -361,18 +399,73 @@ func (t *Tracker) processPacket(pkt []byte, capDev string) {
 		t.current.hosts[entry.ip].packets++
 	}
 
-	// Direction detection for SPAN/mirror port using LOCAL_NETS
-	if len(t.localNets) > 0 {
-		if srcLocal && !dstLocal {
-			// Local → Remote = upload (TX from local perspective)
-			if h, ok := t.current.hosts[dstStr]; ok {
-				h.txBytes += ipPacket.Len
+	// Direction detection strategy:
+	//
+	// L2 (Ethernet) interfaces: use the kernel's AF_PACKET pkt_type which is
+	// definitive — the NIC/driver knows if a packet is incoming or outgoing.
+	//   PACKET_HOST(0), PACKET_BROADCAST(1), PACKET_MULTICAST(2) = incoming (RX)
+	//   PACKET_OUTGOING(4) = outgoing (TX)
+	//   PACKET_OTHERHOST(3) = promiscuous/SPAN: use LOCAL_NETS fallback
+	//
+	// L3 (PPP, WireGuard, tun) interfaces: pkt_type is unreliable (kernel
+	// reports PACKET_HOST for both directions). Always use LOCAL_NETS-based
+	// detection on these devices.
+	const pktOutgoing = 4
+	const pktOtherHost = 3
+
+	useLocalNets := packets.IsL3Device(capDev) || ipPacket.PktType == pktOtherHost
+
+	if useLocalNets {
+		// LOCAL_NETS-based direction detection (for L3 devices and SPAN ports)
+		if len(t.localNets) > 0 {
+			_, srcSelf := t.selfIPs[srcStr]
+			_, dstSelf := t.selfIPs[dstStr]
+
+			if srcLocal && !dstLocal {
+				// Local -> Remote = upload (TX)
+				if h, ok := t.current.hosts[dstStr]; ok {
+					h.txBytes += ipPacket.Len
+				}
+			} else if !srcLocal && dstLocal {
+				// Remote -> Local = download (RX)
+				if h, ok := t.current.hosts[srcStr]; ok {
+					h.rxBytes += ipPacket.Len
+				}
+			} else if srcLocal && dstLocal {
+				// Both local — use self-IP tiebreaker:
+				// If src is the router itself, it's sending (TX for the other side)
+				// If dst is the router itself, it's receiving (RX for the other side)
+				if srcSelf && !dstSelf {
+					// Router -> other local host = TX for the other host
+					if h, ok := t.current.hosts[dstStr]; ok {
+						h.txBytes += ipPacket.Len
+					}
+					// Also RX for the router itself
+					if h, ok := t.current.hosts[srcStr]; ok {
+						h.txBytes += ipPacket.Len
+					}
+				} else if dstSelf && !srcSelf {
+					// Other local host -> Router = RX for the other host
+					if h, ok := t.current.hosts[srcStr]; ok {
+						h.rxBytes += ipPacket.Len
+					}
+					// Also TX for the router itself
+					if h, ok := t.current.hosts[dstStr]; ok {
+						h.rxBytes += ipPacket.Len
+					}
+				}
+				// Both self or neither self: cannot determine direction, skip
 			}
-		} else if !srcLocal && dstLocal {
-			// Remote → Local = download (RX from local perspective)
-			if h, ok := t.current.hosts[srcStr]; ok {
-				h.rxBytes += ipPacket.Len
-			}
+		}
+	} else if ipPacket.PktType == pktOutgoing {
+		// L2 outgoing packet: TX (upload). The remote host is the destination.
+		if h, ok := t.current.hosts[dstStr]; ok {
+			h.txBytes += ipPacket.Len
+		}
+	} else if ipPacket.PktType <= 2 {
+		// L2 incoming packet: RX (download). The remote host is the source.
+		if h, ok := t.current.hosts[srcStr]; ok {
+			h.rxBytes += ipPacket.Len
 		}
 	}
 
