@@ -193,7 +193,6 @@ jobs:
               "Package: bandwidth-monitor" \
               "Version: ${VERSION}" \
               "Architecture: ${ARCH}" \
-
               "Maintainer: Annika Wickert <awlx@users.noreply.github.com>" \
               "Section: net" \
               "Description: Real-time network monitoring dashboard with embedded web UI" \
