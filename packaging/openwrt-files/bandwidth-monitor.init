@@ -13,6 +13,7 @@ start_service() {
     procd_set_param env \
         LISTEN="${LISTEN:-:8080}" \
         DEVICE="${DEVICE:-}" \
+        INTERFACES="${INTERFACES:-}" \
         PROMISCUOUS="${PROMISCUOUS:-true}" \
         LOCAL_NETS="${LOCAL_NETS:-}" \
         GEO_COUNTRY="${GEO_COUNTRY:-/etc/bandwidth-monitor/GeoLite2-Country.mmdb}" \
@@ -22,12 +23,20 @@ start_service() {
         ADGUARD_PASS="${ADGUARD_PASS:-}" \
         NEXTDNS_PROFILE="${NEXTDNS_PROFILE:-}" \
         NEXTDNS_API_KEY="${NEXTDNS_API_KEY:-}" \
+        PIHOLE_URL="${PIHOLE_URL:-}" \
+        PIHOLE_PASSWORD="${PIHOLE_PASSWORD:-}" \
         UNIFI_URL="${UNIFI_URL:-}" \
         UNIFI_USER="${UNIFI_USER:-}" \
         UNIFI_PASS="${UNIFI_PASS:-}" \
         UNIFI_SITE="${UNIFI_SITE:-default}" \
+        OMADA_URL="${OMADA_URL:-}" \
+        OMADA_USER="${OMADA_USER:-}" \
+        OMADA_PASS="${OMADA_PASS:-}" \
+        OMADA_SITE="${OMADA_SITE:-Default}" \
         VPN_STATUS_FILES="${VPN_STATUS_FILES:-}" \
-        SPAN_DEVICE="${SPAN_DEVICE:-}"
+        SPAN_DEVICE="${SPAN_DEVICE:-}" \
+        SPEEDTEST_SERVER="${SPEEDTEST_SERVER:-}" \
+        LATENCY_TARGETS="${LATENCY_TARGETS:-}"
     procd_set_param respawn 3600 5 5
     procd_set_param stdout 1
     procd_set_param stderr 1
