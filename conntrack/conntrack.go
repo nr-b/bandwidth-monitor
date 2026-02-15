@@ -87,6 +87,7 @@ type HostStat struct {
 	IP          string `json:"ip"`
 	Hostname    string `json:"hostname,omitempty"`
 	Connections int    `json:"connections"`
+	Bytes       uint64 `json:"bytes"`
 	NATType     string `json:"nat_type,omitempty"`
 	Country     string `json:"country,omitempty"`
 	CountryName string `json:"country_name,omitempty"`
@@ -269,8 +270,10 @@ func (t *Tracker) poll() {
 		s.UsagePct = float64(count) / float64(max) * 100
 	}
 
-	srcCount := make(map[string]int) // LAN clients (local sources)
-	dstCount := make(map[string]int) // remote destinations (non-local destinations)
+	srcCount := make(map[string]int)    // LAN clients (local sources)
+	dstCount := make(map[string]int)    // remote destinations (non-local destinations)
+	srcBytes := make(map[string]uint64) // bytes per LAN client
+	dstBytes := make(map[string]uint64) // bytes per remote destination
 
 	var ipv4Entries, ipv6Entries []Entry
 
@@ -299,14 +302,16 @@ func (t *Tracker) poll() {
 		// Classify: local sources → LAN clients, non-local destinations → remote hosts
 		if t.isLocal(e.OrigSrc) {
 			srcCount[e.OrigSrc]++
+			srcBytes[e.OrigSrc] += e.Bytes
 		}
 		if !t.isLocal(e.OrigDst) && !t.isLoopback(e.OrigDst) {
 			dstCount[e.OrigDst]++
+			dstBytes[e.OrigDst] += e.Bytes
 		}
 	}
 
-	s.TopLANClients = topHosts(srcCount, 20)
-	s.TopRemoteDestinations = topHosts(dstCount, 20)
+	s.TopLANClients = topHosts(srcCount, srcBytes, 20)
+	s.TopRemoteDestinations = topHosts(dstCount, dstBytes, 20)
 
 	// Enrich top hosts with reverse DNS and GeoIP (outside the hot path).
 	t.enrichHosts(s.TopLANClients)
@@ -426,12 +431,16 @@ func detectNAT(e Entry) string {
 	}
 }
 
-func topHosts(counts map[string]int, n int) []HostStat {
+func topHosts(counts map[string]int, bytes map[string]uint64, n int) []HostStat {
 	list := make([]HostStat, 0, len(counts))
 	for ip, c := range counts {
-		list = append(list, HostStat{IP: ip, Connections: c})
+		list = append(list, HostStat{IP: ip, Connections: c, Bytes: bytes[ip]})
 	}
+	// Sort by bytes descending, then by connections as tiebreaker.
 	sort.Slice(list, func(i, j int) bool {
+		if list[i].Bytes != list[j].Bytes {
+			return list[i].Bytes > list[j].Bytes
+		}
 		return list[i].Connections > list[j].Connections
 	})
 	if len(list) > n {
