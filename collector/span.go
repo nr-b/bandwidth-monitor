@@ -1,15 +1,14 @@
 package collector
 
 import (
+	"bandwidth-monitor/packets"
 	"fmt"
 	"net"
 	"os"
 	"sync"
 	"time"
 
-	"github.com/gopacket/gopacket"
-	"github.com/gopacket/gopacket/layers"
-	"github.com/gopacket/gopacket/pcap"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -46,20 +45,30 @@ func newSpanOverlay(device string, promisc bool, localNets []*net.IPNet) *spanOv
 
 // run opens the capture device and classifies packets until stopped.
 func (s *spanOverlay) run() {
-	handle, err := pcap.OpenLive(s.device, int32(spanSnapshotLen), s.promisc, spanCapTimeout)
+	handle, err := packets.FetchPcapSock(s.device, s.promisc)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "span: cannot open %s: %v\n", s.device, err)
 		fmt.Fprintln(os.Stderr, "span: pcap requires root or CAP_NET_RAW")
 		return
 	}
-	defer handle.Close()
+	defer unix.Close(handle)
 
-	if err := handle.SetBPFFilter("ip or ip6"); err != nil {
+	if err := packets.ApplyBPFFilter(handle, packets.AnyIpFilter); err != nil {
 		fmt.Fprintf(os.Stderr, "span: BPF filter error: %v\n", err)
 	}
 
+	epfd, err := packets.CreateEpoller(handle)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "span: failed to setup epoller on %s: %v\n", s.device, err)
+		return
+	}
+	defer unix.Close(epfd)
+
 	fmt.Fprintf(os.Stderr, "span: capturing on %s (promiscuous=%v, %d local nets)\n",
 		s.device, s.promisc, len(s.localNets))
+
+	events := make([]unix.EpollEvent, 128)
+	data := make([]byte, packets.SnapLen)
 
 	for {
 		select {
@@ -67,19 +76,20 @@ func (s *spanOverlay) run() {
 			return
 		default:
 		}
-		data, _, err := handle.ReadPacketData()
+		n, err := unix.EpollWait(epfd, events, 100)
 		if err != nil {
-			if err == pcap.NextErrorTimeoutExpired {
-				continue
-			}
-			fmt.Fprintf(os.Stderr, "span: read error on %s: %v\n", s.device, err)
-			return
+			continue
 		}
-		pkt := gopacket.NewPacket(data, handle.LinkType(), gopacket.DecodeOptions{
-			Lazy:   true,
-			NoCopy: true,
-		})
-		s.processPacket(pkt)
+		for i := 0; i < n; i++ {
+			if int(events[i].Fd) == handle {
+				numRead, _, err := unix.Recvfrom(handle, data, 0)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "span: read error on %s: %v\n", s.device, err)
+					return
+				}
+				s.processPacket(data[:numRead])
+			}
+		}
 	}
 }
 
@@ -98,42 +108,30 @@ func (s *spanOverlay) snapshot() (rxBytes, txBytes, rxPackets, txPackets uint64)
 	return
 }
 
-func (s *spanOverlay) processPacket(pkt gopacket.Packet) {
-	var srcIP, dstIP net.IP
-	var pktLen uint64
-
-	if ipLayer := pkt.Layer(layers.LayerTypeIPv4); ipLayer != nil {
-		ip := ipLayer.(*layers.IPv4)
-		srcIP = ip.SrcIP
-		dstIP = ip.DstIP
-		pktLen = uint64(ip.Length)
-	} else if ipLayer := pkt.Layer(layers.LayerTypeIPv6); ipLayer != nil {
-		ip := ipLayer.(*layers.IPv6)
-		srcIP = ip.SrcIP
-		dstIP = ip.DstIP
-		pktLen = uint64(ip.Length) + 40 // IPv6 payload length excludes the 40-byte header
-	} else {
-		return
+func (s *spanOverlay) processPacket(pkt []byte) {
+	ipPacket := packets.ParseIPPacket(pkt)
+	if ipPacket.Version == 0 {
+		return // unparseable packet
 	}
 
-	srcLocal := s.isLocal(srcIP)
-	dstLocal := s.isLocal(dstIP)
+	srcLocal := s.isLocal(ipPacket.SrcIP)
+	dstLocal := s.isLocal(ipPacket.DstIP)
 
 	s.accMu.Lock()
 	switch {
 	case srcLocal && !dstLocal:
 		// local → remote = upload (TX)
-		s.txBytes += pktLen
+		s.txBytes += ipPacket.Len
 		s.txPackets++
 	case !srcLocal && dstLocal:
 		// remote → local = download (RX)
-		s.rxBytes += pktLen
+		s.rxBytes += ipPacket.Len
 		s.rxPackets++
 	case srcLocal && dstLocal:
 		// intra-LAN — count as both
-		s.rxBytes += pktLen
+		s.rxBytes += ipPacket.Len
 		s.rxPackets++
-		s.txBytes += pktLen
+		s.txBytes += ipPacket.Len
 		s.txPackets++
 	}
 	// both-remote packets (shouldn't appear on a properly-filtered SPAN) are ignored

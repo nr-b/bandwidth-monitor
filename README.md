@@ -74,7 +74,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 - **VPN routing detection** — configurable sentinel files to show whether a VPN interface is actively routing traffic
 - **Real-time line chart** — Chart.js with per-interface filtering and 1-hour sliding window
 - **Per-interface sparklines** — mini inline charts on each interface card
-- **Top talkers by bandwidth** — live transfer rates via packet capture (gopacket/libpcap)
+- **Top talkers by bandwidth** — live transfer rates via packet capture
 - **Top talkers by volume** — rolling 24-hour totals with 1-minute bucket aggregation
 - **Protocol breakdown** — TCP / UDP / ICMP / Other pie chart
 - **IP version breakdown** — IPv4 vs IPv6 traffic split
@@ -141,20 +141,9 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 ### Requirements
 
 - **Linux** — uses netlink (`RTM_GETLINK`, `RTM_GETADDR`) for interface stats and addresses
-- **libpcap-dev** — for packet capture (top talkers)
 - **nf_conntrack kernel module** — for the NAT tab (loaded automatically on most routers)
 - **Go 1.24+** — to build
 
-```bash
-# Debian/Ubuntu
-sudo apt install libpcap-dev
-
-# RHEL/Fedora
-sudo dnf install libpcap-devel
-
-# Arch
-sudo pacman -S libpcap
-```
 
 ### Build & Run
 
@@ -164,6 +153,9 @@ make build
 
 # Download GeoIP databases (optional, free)
 make geoip
+
+# Build a stripped binary - smaller binary size (optional).
+make build_stripped
 
 # Run (needs root or CAP_NET_RAW + CAP_NET_ADMIN for packet capture and netlink)
 sudo ./bandwidth-monitor
@@ -206,7 +198,7 @@ sudo systemctl enable --now bandwidth-monitor
 #### OpenWrt (stable, opkg)
 
 ```bash
-opkg update && opkg install libpcap kmod-nf-conntrack-netlink
+opkg update && opkg install kmod-nf-conntrack-netlink
 opkg install /tmp/bandwidth-monitor_*.ipk
 vi /etc/bandwidth-monitor/env
 /etc/init.d/bandwidth-monitor enable
@@ -222,7 +214,7 @@ scp GeoLite2-Country.mmdb GeoLite2-ASN.mmdb root@router:/etc/bandwidth-monitor/
 #### OpenWrt (snapshot, apk)
 
 ```bash
-apk update && apk add libpcap kmod-nf-conntrack-netlink
+apk update && apk add kmod-nf-conntrack-netlink
 apk add --allow-untrusted /tmp/bandwidth-monitor-*.apk
 vi /etc/bandwidth-monitor/env
 /etc/init.d/bandwidth-monitor enable
@@ -421,7 +413,7 @@ LOCAL_NETS=192.0.2.0/24,2001:db8::/48
 
 ### SPAN / Mirror Port Mode
 
-On a SPAN or mirror port, the kernel reports all mirrored traffic as RX on the interface, making the normal RX/TX split meaningless. Setting `SPAN_DEVICE` activates a pcap-based overlay that inspects IP headers and classifies direction using `LOCAL_NETS`:
+On a SPAN or mirror port, the kernel reports all mirrored traffic as RX on the interface, making the normal RX/TX split meaningless. Setting `SPAN_DEVICE` activates a raw-socket overlay that inspects IP headers and classifies direction using `LOCAL_NETS`:
 
 - **src in LOCAL_NETS → remote** = upload (TX)
 - **remote → dst in LOCAL_NETS** = download (RX)
@@ -599,7 +591,7 @@ Or for the current user only, symlink the script and edit the `Exec=` path in th
 main.go                   → entry point, env config, wires all components
 collector/                → netlink-based interface stats (RTM_GETLINK/RTM_GETADDR), rates, 24h history, VPN routing
 conntrack/                → netlink-based conntrack (NAT) table reader via ti-mo/conntrack
-talkers/                  → pcap packet capture, per-IP tracking, 1-min bucket aggregation
+talkers/                  → AF_PACKET raw-socket capture, per-IP tracking, 1-min bucket aggregation
 resolver/                 → shared reverse-DNS resolver with TTL-based cache and bounded concurrency
 latency/                  → continuous ICMP + HTTPS latency monitoring with rolling history
 speedtest/                → HTTP-based speed test client (download/upload/ping against OpenSpeedTest servers)

@@ -8,9 +8,6 @@ vendor: "awlx"
 homepage: "https://github.com/awlx/bandwidth-monitor"
 license: "ISC"
 
-depends:
-  - libpcap0.8
-
 contents:
   - src: ./bandwidth-monitor
     dst: /usr/bin/bandwidth-monitor
@@ -32,7 +29,3 @@ scripts:
   postinstall: ./packaging/postinstall.sh
   preremove: ./packaging/preremove.sh
 
-overrides:
-  rpm:
-    depends:
-      - libpcap
