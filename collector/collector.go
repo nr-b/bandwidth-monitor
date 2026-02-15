@@ -1,7 +1,7 @@
 package collector
 
 import (
-	"fmt"
+	"log"
 	"net"
 	"os"
 	"strings"
@@ -90,7 +90,7 @@ func New(vpnStatusFiles map[string]string, allowedIfaces []string) *Collector {
 	// Falls back to package-level functions if handle creation fails.
 	nlh, err := vnl.NewHandle(vnl.FAMILY_ALL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "collector: failed to create persistent netlink handle: %v (will use per-call sockets)\n", err)
+		log.Printf("collector: failed to create persistent netlink handle: %v (will use per-call sockets)", err)
 	}
 	return &Collector{
 		current:        make(map[string]*InterfaceStat),
@@ -238,7 +238,7 @@ func (c *Collector) poll() {
 		links, err = vnl.LinkList()
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "collector: netlink LinkList: %v\n", err)
+		log.Printf("collector: netlink LinkList: %v", err)
 		return
 	}
 
@@ -251,7 +251,7 @@ func (c *Collector) poll() {
 			allAddrs, err = vnl.AddrList(nil, vnl.FAMILY_ALL)
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "collector: netlink AddrList: %v\n", err)
+			log.Printf("collector: netlink AddrList: %v", err)
 		} else {
 			addrsByIndex := make(map[int][]string)
 			for _, a := range allAddrs {

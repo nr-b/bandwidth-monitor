@@ -3,6 +3,7 @@ package collector
 import (
 	"bandwidth-monitor/packets"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"sync"
@@ -47,8 +48,8 @@ func newSpanOverlay(device string, promisc bool, localNets []*net.IPNet) *spanOv
 func (s *spanOverlay) run() {
 	handle, err := packets.FetchPcapSock(s.device, s.promisc)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "span: cannot open %s: %v\n", s.device, err)
-		fmt.Fprintln(os.Stderr, "span: pcap requires root or CAP_NET_RAW")
+		log.Printf("span: cannot open %s: %v", s.device, err)
+		log.Println("span: requires root or CAP_NET_RAW")
 		return
 	}
 	defer unix.Close(handle)
@@ -59,12 +60,12 @@ func (s *spanOverlay) run() {
 
 	epfd, err := packets.CreateEpoller(handle)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "span: failed to setup epoller on %s: %v\n", s.device, err)
+		log.Printf("span: failed to setup epoller on %s: %v", s.device, err)
 		return
 	}
 	defer unix.Close(epfd)
 
-	fmt.Fprintf(os.Stderr, "span: capturing on %s (promiscuous=%v, %d local nets)\n",
+	log.Printf("span: capturing on %s (promiscuous=%v, %d local nets)",
 		s.device, s.promisc, len(s.localNets))
 
 	events := make([]unix.EpollEvent, 128)
@@ -84,7 +85,7 @@ func (s *spanOverlay) run() {
 			if int(events[i].Fd) == handle {
 				numRead, _, err := unix.Recvfrom(handle, data, 0)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "span: read error on %s: %v\n", s.device, err)
+					log.Printf("span: read error on %s: %v", s.device, err)
 					return
 				}
 				s.processPacket(data[:numRead])

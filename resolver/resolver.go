@@ -10,8 +10,8 @@ package resolver
 
 import (
 	"fmt"
+	"log"
 	"net"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -55,7 +55,7 @@ func New() *Resolver {
 	if config, err := mdns.ClientConfigFromFile("/etc/resolv.conf"); err == nil && len(config.Servers) > 0 {
 		server = net.JoinHostPort(config.Servers[0], config.Port)
 	} else {
-		fmt.Fprintf(os.Stderr, "resolver: cannot read /etc/resolv.conf, falling back to %s\n", server)
+		log.Printf("resolver: cannot read /etc/resolv.conf, falling back to %s", server)
 	}
 
 	r := &Resolver{

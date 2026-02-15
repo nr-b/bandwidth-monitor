@@ -166,9 +166,9 @@ func main() {
 	spanDevice := env("SPAN_DEVICE", "")
 	if spanDevice != "" && len(localNets) > 0 {
 		statsCollector.EnableSPAN(spanDevice, promiscuousBool, localNets)
-		log.Printf("SPAN mode enabled on %s (%d local nets)", spanDevice, len(localNets))
+		log.Printf("span: enabled on %s (%d local nets)", spanDevice, len(localNets))
 	} else if spanDevice != "" && len(localNets) == 0 {
-		log.Printf("SPAN_DEVICE=%s set but LOCAL_NETS is empty — SPAN mode disabled", spanDevice)
+		log.Printf("span: SPAN_DEVICE=%s set but LOCAL_NETS is empty — disabled", spanDevice)
 	}
 
 	go statsCollector.Run()
@@ -274,11 +274,11 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	log.Printf("Bandwidth Monitor starting on %s", listenAddr)
+	log.Printf("server: starting on %s", listenAddr)
 	if strings.HasPrefix(listenAddr, ":") {
-		log.Printf("Open http://localhost%s in your browser", listenAddr)
+		log.Printf("server: open http://localhost%s in your browser", listenAddr)
 	} else {
-		log.Printf("Open http://%s in your browser", listenAddr)
+		log.Printf("server: open http://%s in your browser", listenAddr)
 	}
 	srv := &http.Server{
 		Addr:              listenAddr,

@@ -6,7 +6,6 @@ package latency
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"log"
 	"math"
 	"net"
@@ -129,7 +128,7 @@ func New(targets []string) *Monitor {
 		if err != nil || len(ips) == 0 {
 			ip := net.ParseIP(t)
 			if ip == nil {
-				fmt.Fprintf(os.Stderr, "latency: cannot resolve %q, skipping\n", t)
+				log.Printf("latency: cannot resolve %q, skipping", t)
 				continue
 			}
 			if ip.To4() != nil {
@@ -319,7 +318,7 @@ func (m *Monitor) probeAll() {
 	// Open ICMP sockets for both v4 and v6
 	conn4, err4 := icmp.ListenPacket("ip4:icmp", "0.0.0.0")
 	if err4 != nil && !icmpV4Logged {
-		fmt.Fprintf(os.Stderr, "latency: ICMPv4 unavailable (need root/CAP_NET_RAW): %v\n", err4)
+		log.Printf("latency: ICMPv4 unavailable (need root/CAP_NET_RAW): %v", err4)
 		icmpV4Logged = true
 	}
 	if conn4 != nil {
@@ -328,7 +327,7 @@ func (m *Monitor) probeAll() {
 
 	conn6, err6 := icmp.ListenPacket("ip6:ipv6-icmp", "::")
 	if err6 != nil && !icmpV6Logged {
-		fmt.Fprintf(os.Stderr, "latency: ICMPv6 unavailable: %v\n", err6)
+		log.Printf("latency: ICMPv6 unavailable: %v", err6)
 		icmpV6Logged = true
 	}
 	if conn6 != nil {
