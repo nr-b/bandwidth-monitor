@@ -201,7 +201,7 @@ func FetchPcapSock(dev string, promisc bool) (int, error) {
 func ApplyBPFFilter(sockFd int, rawBpfFilter []bpf.Instruction) error {
 	expr, err := bpf.Assemble(rawBpfFilter)
 	if err != nil {
-		log.Printf("failed attachment %s \n", err)
+		log.Printf("packets: BPF assemble failed: %v", err)
 		return err
 	}
 	prog := &unix.SockFprog{

@@ -1,10 +1,8 @@
 package talkers
 
 import (
-	"fmt"
 	"log"
 	"net"
-	"os"
 	"sort"
 	"sync"
 	"time"
@@ -85,12 +83,12 @@ func New(devices []string, promiscuous bool, localNets []*net.IPNet, geoDB *geoi
 func (t *Tracker) Run() {
 	devices, err := t.getDevices()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "talkers: cannot list devices: %v\n", err)
-		fmt.Fprintf(os.Stderr, "talkers: top-talkers feature requires root/CAP_NET_RAW\n")
+		log.Printf("talkers: cannot list devices: %v", err)
+		log.Println("talkers: top-talkers feature requires root/CAP_NET_RAW")
 		return
 	}
 	if len(devices) == 0 {
-		fmt.Fprintf(os.Stderr, "talkers: no capture devices found\n")
+		log.Println("talkers: no capture devices found")
 		return
 	}
 
@@ -248,18 +246,18 @@ func (t *Tracker) getDevices() ([]string, error) {
 func (t *Tracker) captureDevice(device string) {
 	handle, err := packets.FetchPcapSock(device, t.promiscuous)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "talkers: cannot open %s: %v\n", device, err)
+		log.Printf("talkers: cannot open %s: %v", device, err)
 		return
 	}
 	defer unix.Close(handle)
-	log.Printf("Applying BPF filter %s \n", device)
+	log.Printf("talkers: applying BPF filter on %s", device)
 	if err := packets.ApplyBPFFilter(handle, packets.BPFFilterForDevice(device)); err != nil {
-		fmt.Fprintf(os.Stderr, "talkers: BPF filter error on %s: %v\n", device, err)
+		log.Printf("talkers: BPF filter error on %s: %v", device, err)
 	}
 	// Use epoll to read from the socket.
 	epfd, err := packets.CreateEpoller(handle)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "talkers: failed to setup epoller on %s: %v\n", device, err)
+		log.Printf("talkers: failed to setup epoller on %s: %v", device, err)
 		return
 	}
 	defer unix.Close(epfd)

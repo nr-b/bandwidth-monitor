@@ -2,6 +2,7 @@ package conntrack
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"net/netip"
 	"os"
@@ -154,9 +155,9 @@ func (t *Tracker) Run() {
 	// Probe: try to open a conntrack netlink connection
 	c, err := ct.Dial(nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "conntrack: netlink dial failed: %v\n", err)
-		fmt.Fprintln(os.Stderr, "conntrack: NAT tracking disabled — ensure nf_conntrack and nf_conntrack_netlink modules are loaded and process has CAP_NET_ADMIN")
-		fmt.Fprintln(os.Stderr, "conntrack: on OpenWrt: apk add kmod-nf-conntrack-netlink  (or opkg install kmod-nf-conntrack-netlink)")
+		log.Printf("conntrack: netlink dial failed: %v", err)
+		log.Println("conntrack: NAT tracking disabled — ensure nf_conntrack and nf_conntrack_netlink modules are loaded and process has CAP_NET_ADMIN")
+		log.Println("conntrack: on OpenWrt: apk add kmod-nf-conntrack-netlink  (or opkg install kmod-nf-conntrack-netlink)")
 		return
 	}
 
@@ -164,19 +165,19 @@ func (t *Tracker) Run() {
 	// The socket can open even without kmod-nf-conntrack-netlink, but dump
 	// will fail with EINVAL.
 	if err := c.SetReadBuffer(t.sockBufSize); err != nil {
-		fmt.Fprintf(os.Stderr, "conntrack: SetReadBuffer: %v\n", err)
+		log.Printf("conntrack: SetReadBuffer: %v", err)
 	}
 	_, err = c.Dump(nil)
 	c.Close()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "conntrack: probe dump failed: %v\n", err)
-		fmt.Fprintln(os.Stderr, "conntrack: NAT tracking disabled — the nf_conntrack_netlink kernel module is likely not loaded")
-		fmt.Fprintln(os.Stderr, "conntrack: on OpenWrt: apk add kmod-nf-conntrack-netlink  (or opkg install kmod-nf-conntrack-netlink)")
+		log.Printf("conntrack: probe dump failed: %v", err)
+		log.Println("conntrack: NAT tracking disabled — the nf_conntrack_netlink kernel module is likely not loaded")
+		log.Println("conntrack: on OpenWrt: apk add kmod-nf-conntrack-netlink  (or opkg install kmod-nf-conntrack-netlink)")
 		return
 	}
 
 	t.available = true
-	fmt.Fprintln(os.Stderr, "conntrack: netlink connection established")
+	log.Println("conntrack: netlink connection established")
 
 	t.poll()
 	ticker := time.NewTicker(pollInterval)
@@ -217,13 +218,13 @@ func (t *Tracker) poll() {
 		c, err := ct.Dial(nil)
 		if err != nil {
 			if t.errCount == 0 || t.errCount%60 == 0 {
-				fmt.Fprintf(os.Stderr, "conntrack: netlink dial: %v\n", err)
+				log.Printf("conntrack: netlink dial: %v", err)
 			}
 			t.errCount++
 			return
 		}
 		if err := c.SetReadBuffer(t.sockBufSize); err != nil {
-			fmt.Fprintf(os.Stderr, "conntrack: SetReadBuffer(%d): %v\n", t.sockBufSize, err)
+			log.Printf("conntrack: SetReadBuffer(%d): %v", t.sockBufSize, err)
 		}
 		t.conn = c
 	}
@@ -240,9 +241,9 @@ func (t *Tracker) poll() {
 			if t.sockBufSize > maxSockBuf {
 				t.sockBufSize = maxSockBuf
 			}
-			fmt.Fprintf(os.Stderr, "conntrack: dump failed (%v), increasing buffer to %d MB\n", err, t.sockBufSize/(1024*1024))
+			log.Printf("conntrack: dump failed (%v), increasing buffer to %d MB", err, t.sockBufSize/(1024*1024))
 		} else if t.errCount == 0 || t.errCount%60 == 0 {
-			fmt.Fprintf(os.Stderr, "conntrack: dump: %v (buffer=%d MB)\n", err, t.sockBufSize/(1024*1024))
+			log.Printf("conntrack: dump: %v (buffer=%d MB)", err, t.sockBufSize/(1024*1024))
 		}
 		t.errCount++
 		return
