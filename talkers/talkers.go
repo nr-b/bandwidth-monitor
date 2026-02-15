@@ -59,7 +59,7 @@ type hostAccum struct {
 }
 
 type Tracker struct {
-	device      string
+	devices     []string
 	promiscuous bool
 	localNets   []*net.IPNet // LOCAL_NETS for SPAN port direction detection
 	mu          sync.RWMutex
@@ -70,9 +70,9 @@ type Tracker struct {
 	geoDB       *geoip.DB
 }
 
-func New(device string, promiscuous bool, localNets []*net.IPNet, geoDB *geoip.DB, dns *resolver.Resolver) *Tracker {
+func New(devices []string, promiscuous bool, localNets []*net.IPNet, geoDB *geoip.DB, dns *resolver.Resolver) *Tracker {
 	return &Tracker{
-		device:      device,
+		devices:     devices,
 		promiscuous: promiscuous,
 		localNets:   localNets,
 		buckets:     make([]*bucket, 0, 1440),
@@ -222,8 +222,8 @@ func (t *Tracker) TopByBandwidth(n int) []TalkerStat {
 }
 
 func (t *Tracker) getDevices() ([]string, error) {
-	if t.device != "" {
-		return []string{t.device}, nil
+	if len(t.devices) > 0 {
+		return t.devices, nil
 	}
 
 	devs, err := net.Interfaces()
