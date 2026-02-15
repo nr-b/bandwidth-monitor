@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -71,6 +72,8 @@ type ProbeStats struct {
 	AvgRTT  float64 `json:"avg_rtt_ms"`
 	MinRTT  float64 `json:"min_rtt_ms"`
 	MaxRTT  float64 `json:"max_rtt_ms"`
+	P95RTT  float64 `json:"p95_rtt_ms"`
+	P99RTT  float64 `json:"p99_rtt_ms"`
 	Jitter  float64 `json:"jitter_ms"`
 	LossPct float64 `json:"loss_pct"`
 }
@@ -311,6 +314,18 @@ func buildProbeStats(pts []Point) *ProbeStats {
 	last := pts[len(pts)-1]
 	s.RTT = last.RTT
 	s.AvgRTT, s.MinRTT, s.MaxRTT, s.Jitter = computeStats(pts)
+	// Percentiles from sorted good values
+	var good []float64
+	for _, p := range pts {
+		if p.RTT >= 0 {
+			good = append(good, p.RTT)
+		}
+	}
+	if len(good) > 0 {
+		sort.Float64s(good)
+		s.P95RTT = good[int(float64(len(good))*0.95)%len(good)]
+		s.P99RTT = good[int(float64(len(good))*0.99)%len(good)]
+	}
 	var lost int
 	for _, p := range pts {
 		if p.RTT < 0 {
