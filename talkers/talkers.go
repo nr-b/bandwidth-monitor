@@ -4,6 +4,7 @@ import (
 	"log"
 	"net"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,7 +20,6 @@ const (
 	capTimeout        time.Duration = 100 * time.Millisecond
 	bucketSize                      = 1 * time.Minute
 	maxAge                          = 24 * time.Hour
-	epollBuffer                     = 128
 	maxHostsPerBucket               = 10000 // cap to bound memory on busy routers
 )
 
@@ -62,6 +62,7 @@ type Tracker struct {
 	promiscuous bool
 	localNets   []*net.IPNet        // LOCAL_NETS for direction detection
 	selfIPs     map[string]struct{} // router's own interface IPs for direction tiebreaker
+	lanDevices  map[string]bool     // LAN-facing interfaces (have private addrs) — only these count hosts
 	mu          sync.RWMutex
 	buckets     []*bucket
 	current     *bucket
@@ -93,11 +94,57 @@ func New(devices []string, promiscuous bool, localNets []*net.IPNet, geoDB *geoi
 	if len(selfIPs) > 0 {
 		log.Printf("talkers: %d self IPs for direction detection", len(selfIPs))
 	}
+
+	// Identify LAN-facing interfaces: L2 (Ethernet) interfaces that have
+	// at least one private (RFC 1918 / ULA) address. Only LAN interfaces
+	// count per-host traffic to avoid double-counting packets that traverse
+	// multiple interfaces (e.g. WAN → kernel routing → LAN, or tunnel →
+	// kernel → LAN).
+	//
+	// L3 interfaces (WireGuard, PPP, tun) are excluded even if they have
+	// private tunnel IPs (e.g. 10.x.x.x) — they are tunnel/WAN endpoints,
+	// not LAN segments. Counting on the LAN side gives a single, consistent
+	// view of who is talking to whom.
+	lanDevices := make(map[string]bool)
+	if ifaces, err := net.Interfaces(); err == nil {
+		for _, iface := range ifaces {
+			if iface.Name == "lo" {
+				continue
+			}
+			// Skip L3 interfaces — tunnels and WAN, never LAN
+			if packets.IsL3Device(iface.Name) {
+				continue
+			}
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+			for _, addr := range addrs {
+				ipnet, ok := addr.(*net.IPNet)
+				if !ok {
+					continue
+				}
+				if ipnet.IP.IsPrivate() && !ipnet.IP.IsLinkLocalUnicast() {
+					lanDevices[iface.Name] = true
+					break
+				}
+			}
+		}
+	}
+	if len(lanDevices) > 0 {
+		names := make([]string, 0, len(lanDevices))
+		for name := range lanDevices {
+			names = append(names, name)
+		}
+		log.Printf("talkers: LAN interfaces for host accounting: %s", strings.Join(names, ", "))
+	}
+
 	return &Tracker{
 		devices:     devices,
 		promiscuous: promiscuous,
 		localNets:   localNets,
 		selfIPs:     selfIPs,
+		lanDevices:  lanDevices,
 		buckets:     make([]*bucket, 0, 1440),
 		stopCh:      make(chan struct{}),
 		dns:         dns,
@@ -127,6 +174,10 @@ func (t *Tracker) Run() {
 	go t.rotateBuckets()
 
 	for _, dev := range devices {
+		if !t.lanDevices[dev] {
+			log.Printf("talkers: skipping capture on %s (not LAN)", dev)
+			continue
+		}
 		go t.captureDevice(dev)
 	}
 
@@ -173,6 +224,10 @@ func (t *Tracker) TopByVolume(n int) []TalkerStat {
 		if ip != nil && (ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()) {
 			continue
 		}
+		// Skip IPs on local subnets (e.g. LAN clients with global IPv6)
+		if ip != nil && t.isLocalNet(ip) {
+			continue
+		}
 		// Skip the router's own IPs (WAN, VPN tunnel endpoints, etc)
 		if _, isSelf := t.selfIPs[s.IP]; isSelf {
 			continue
@@ -197,14 +252,27 @@ func (t *Tracker) TopByVolume(n int) []TalkerStat {
 }
 
 func (t *Tracker) TopByBandwidth(n int) []TalkerStat {
-	// Step 1: Copy raw data under lock
+	// Use a sliding window: combine the current bucket with the previous
+	// bucket to avoid rate dropping to zero on bucket rotation.
+	// The rate is calculated over the combined time window.
 	t.mu.RLock()
 	if t.current == nil {
 		t.mu.RUnlock()
 		return nil
 	}
 
-	elapsed := time.Since(t.current.timestamp).Seconds()
+	now := time.Now()
+	windowStart := t.current.timestamp
+	// Include previous bucket if it exists and is recent
+	var prevBucket *bucket
+	if len(t.buckets) > 0 {
+		prev := t.buckets[len(t.buckets)-1]
+		if now.Sub(prev.timestamp) < 2*bucketSize {
+			prevBucket = prev
+			windowStart = prev.timestamp
+		}
+	}
+	elapsed := now.Sub(windowStart).Seconds()
 	if elapsed < 1 {
 		elapsed = 1
 	}
@@ -216,9 +284,24 @@ func (t *Tracker) TopByBandwidth(n int) []TalkerStat {
 		txBytes uint64
 		packets uint64
 	}
-	raw := make([]rawEntry, 0, len(t.current.hosts))
+	raw := make(map[string]*rawEntry)
+
+	// Add previous bucket data
+	if prevBucket != nil {
+		for ip, acc := range prevBucket.hosts {
+			raw[ip] = &rawEntry{ip: ip, bytes: acc.bytes, rxBytes: acc.rxBytes, txBytes: acc.txBytes, packets: acc.packets}
+		}
+	}
+	// Add current bucket data (may overlap keys — accumulate)
 	for ip, acc := range t.current.hosts {
-		raw = append(raw, rawEntry{ip, acc.bytes, acc.rxBytes, acc.txBytes, acc.packets})
+		if e, ok := raw[ip]; ok {
+			e.bytes += acc.bytes
+			e.rxBytes += acc.rxBytes
+			e.txBytes += acc.txBytes
+			e.packets += acc.packets
+		} else {
+			raw[ip] = &rawEntry{ip: ip, bytes: acc.bytes, rxBytes: acc.rxBytes, txBytes: acc.txBytes, packets: acc.packets}
+		}
 	}
 	t.mu.RUnlock()
 
@@ -228,6 +311,10 @@ func (t *Tracker) TopByBandwidth(n int) []TalkerStat {
 	for _, r := range raw {
 		ip := net.ParseIP(r.ip)
 		if ip != nil && (ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()) {
+			continue
+		}
+		// Skip IPs on local subnets (e.g. LAN clients with global IPv6)
+		if ip != nil && t.isLocalNet(ip) {
 			continue
 		}
 		// Skip the router's own IPs (WAN, VPN tunnel endpoints, etc)
@@ -275,7 +362,6 @@ func (t *Tracker) getDevices() ([]string, error) {
 	for _, d := range devs {
 		addrs, err := d.Addrs()
 		if err != nil {
-			// No addrs - skip the interface.
 			continue
 		}
 		if d.Name == "lo" || len(addrs) == 0 {
@@ -287,25 +373,42 @@ func (t *Tracker) getDevices() ([]string, error) {
 }
 
 func (t *Tracker) captureDevice(device string) {
-	handle, err := packets.FetchPcapSock(device, t.promiscuous)
+	ring, err := packets.NewRing(device, t.promiscuous)
 	if err != nil {
-		log.Printf("talkers: cannot open %s: %v", device, err)
+		log.Printf("talkers: cannot open ring on %s: %v", device, err)
 		return
 	}
-	defer unix.Close(handle)
-	log.Printf("talkers: applying BPF filter on %s", device)
-	if err := packets.ApplyBPFFilter(handle, packets.BPFFilterForDevice(device)); err != nil {
-		log.Printf("talkers: BPF filter error on %s: %v", device, err)
+	defer ring.Close()
+	log.Printf("talkers: TPACKET_V3 ring on %s", device)
+
+	// Parsed packet for batch processing — stack-allocated, no heap.
+	type parsedPkt struct {
+		srcStr, dstStr       string
+		srcLocal, dstLocal   bool
+		srcSelf, dstSelf     bool
+		srcLoopLL, dstLoopLL bool
+		wireLen              uint64
+		proto                string
+		ipVersion            string
 	}
-	// Use epoll to read from the socket.
-	epfd, err := packets.CreateEpoller(handle)
-	if err != nil {
-		log.Printf("talkers: failed to setup epoller on %s: %v", device, err)
-		return
+
+	// IP string cache: avoids heap-allocating net.IP.String() for every
+	// packet. At 10 MB/s there are ~7000 pps but only 10-100 unique IPs.
+	// The cache hits 99%+ of lookups, eliminating the main GC bottleneck.
+	ipStrCache := make(map[[16]byte]string, 256)
+	ipStr := func(ip net.IP) string {
+		var k [16]byte
+		copy(k[:], ip.To16())
+		if s, ok := ipStrCache[k]; ok {
+			return s
+		}
+		s := ip.String()
+		ipStrCache[k] = s
+		return s
 	}
-	defer unix.Close(epfd)
-	events := make([]unix.EpollEvent, epollBuffer)
-	data := make([]byte, snapshotLen)
+
+	// Pre-allocate batch buffer (reused across blocks)
+	batch := make([]parsedPkt, 0, 256)
 
 	for {
 		select {
@@ -313,164 +416,122 @@ func (t *Tracker) captureDevice(device string) {
 			return
 		default:
 		}
-		// Epoll for events.
-		n, err := unix.EpollWait(epfd, events, int(capTimeout.Milliseconds()))
-		if err != nil {
-			continue
-		}
-		for i := 0; i < n; i++ {
-			if int(events[i].Fd) == handle {
-				numRead, from, err := unix.Recvfrom(handle, data, 0)
-				if err != nil {
-					log.Printf("talkers: read error on %s: %v\n", device, err)
-					return
-				}
-				// Extract AF_PACKET direction from SockaddrLinklayer
-				var pktType uint8
-				if sa, ok := from.(*unix.SockaddrLinklayer); ok {
-					pktType = sa.Pkttype
-				}
-				t.processPacket(data[:numRead], device, pktType)
+
+		// Phase 1: Parse all packets in the block WITHOUT holding the lock.
+		// IP parsing, string conversion, and classification happen here.
+		batch = batch[:0]
+		ring.ReadBlock(func(pkt []byte, wireLen uint32) {
+			ipPacket := packets.ParseIPPacket(pkt, true)
+			if ipPacket.Version == 0 || ipPacket.IsTunnel {
+				return
 			}
-		}
-	}
-}
-
-func (t *Tracker) processPacket(pkt []byte, capDev string, pktType uint8) {
-	ipPacket := packets.ParseIPPacket(pkt)
-	if ipPacket.Version == 0 {
-		return // unparseable packet (too short or unknown EtherType)
-	}
-	ipPacket.SrcInterface = capDev
-	ipPacket.PktType = pktType
-	ipVersion := "IPv4"
-	if ipPacket.Version != 4 {
-		ipVersion = "IPv6"
-	}
-	var proto string
-	switch ipPacket.Proto {
-	case unix.IPPROTO_TCP:
-		proto = "TCP"
-	case unix.IPPROTO_UDP:
-		proto = "UDP"
-	case unix.IPPROTO_ICMP, unix.IPPROTO_ICMPV6:
-		proto = "ICMP"
-	default:
-		proto = "Other"
-	}
-
-	// Classify IPs outside the lock — avoids holding the write lock
-	// while doing net.IP method calls.
-	srcLocal := isLocalIP(ipPacket.SrcIP) || t.isLocalNet(ipPacket.SrcIP)
-	dstLocal := isLocalIP(ipPacket.DstIP) || t.isLocalNet(ipPacket.DstIP)
-	srcStr := ipPacket.SrcIP.String()
-	dstStr := ipPacket.DstIP.String()
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if t.current == nil {
-		return
-	}
-
-	for _, entry := range []struct {
-		ip    string
-		local bool
-	}{{srcStr, srcLocal}, {dstStr, dstLocal}} {
-		// Skip loopback and link-local (noise), but keep LAN IPs
-		if ipPacket.SrcIP.IsLoopback() || ipPacket.SrcIP.IsLinkLocalUnicast() {
-			if entry.ip == srcStr {
-				continue
-			}
-		}
-		if ipPacket.DstIP.IsLoopback() || ipPacket.DstIP.IsLinkLocalUnicast() {
-			if entry.ip == dstStr {
-				continue
-			}
-		}
-		if _, ok := t.current.hosts[entry.ip]; !ok {
-			// Cap hosts per bucket to bound memory
-			if len(t.current.hosts) >= maxHostsPerBucket {
-				continue
-			}
-			t.current.hosts[entry.ip] = &hostAccum{}
-		}
-		t.current.hosts[entry.ip].bytes += ipPacket.Len
-		t.current.hosts[entry.ip].packets++
-	}
-
-	// Direction detection strategy:
-	//
-	// L2 (Ethernet) interfaces: use the kernel's AF_PACKET pkt_type which is
-	// definitive — the NIC/driver knows if a packet is incoming or outgoing.
-	//   PACKET_HOST(0), PACKET_BROADCAST(1), PACKET_MULTICAST(2) = incoming (RX)
-	//   PACKET_OUTGOING(4) = outgoing (TX)
-	//   PACKET_OTHERHOST(3) = promiscuous/SPAN: use LOCAL_NETS fallback
-	//
-	// L3 (PPP, WireGuard, tun) interfaces: pkt_type is unreliable (kernel
-	// reports PACKET_HOST for both directions). Always use LOCAL_NETS-based
-	// detection on these devices.
-	const pktOutgoing = 4
-	const pktOtherHost = 3
-
-	useLocalNets := packets.IsL3Device(capDev) || ipPacket.PktType == pktOtherHost
-
-	if useLocalNets {
-		// LOCAL_NETS-based direction detection (for L3 devices and SPAN ports)
-		if len(t.localNets) > 0 {
+			srcIP := ipPacket.SrcIP
+			dstIP := ipPacket.DstIP
+			srcStr := ipStr(srcIP)
+			dstStr := ipStr(dstIP)
 			_, srcSelf := t.selfIPs[srcStr]
 			_, dstSelf := t.selfIPs[dstStr]
 
-			if srcLocal && !dstLocal {
-				// Local -> Remote = upload (TX)
-				if h, ok := t.current.hosts[dstStr]; ok {
-					h.txBytes += ipPacket.Len
-				}
-			} else if !srcLocal && dstLocal {
-				// Remote -> Local = download (RX)
-				if h, ok := t.current.hosts[srcStr]; ok {
-					h.rxBytes += ipPacket.Len
-				}
-			} else if srcLocal && dstLocal {
-				// Both local — use self-IP tiebreaker:
-				// If src is the router itself, it's sending (TX for the other side)
-				// If dst is the router itself, it's receiving (RX for the other side)
-				if srcSelf && !dstSelf {
-					// Router -> other local host = TX for the other host
-					if h, ok := t.current.hosts[dstStr]; ok {
-						h.txBytes += ipPacket.Len
-					}
-					// Also RX for the router itself
-					if h, ok := t.current.hosts[srcStr]; ok {
-						h.txBytes += ipPacket.Len
-					}
-				} else if dstSelf && !srcSelf {
-					// Other local host -> Router = RX for the other host
-					if h, ok := t.current.hosts[srcStr]; ok {
-						h.rxBytes += ipPacket.Len
-					}
-					// Also TX for the router itself
-					if h, ok := t.current.hosts[dstStr]; ok {
-						h.rxBytes += ipPacket.Len
-					}
-				}
-				// Both self or neither self: cannot determine direction, skip
+			ipVersion := "IPv4"
+			if ipPacket.Version != 4 {
+				ipVersion = "IPv6"
 			}
-		}
-	} else if ipPacket.PktType == pktOutgoing {
-		// L2 outgoing packet: TX (upload). The remote host is the destination.
-		if h, ok := t.current.hosts[dstStr]; ok {
-			h.txBytes += ipPacket.Len
-		}
-	} else if ipPacket.PktType <= 2 {
-		// L2 incoming packet: RX (download). The remote host is the source.
-		if h, ok := t.current.hosts[srcStr]; ok {
-			h.rxBytes += ipPacket.Len
-		}
-	}
+			var proto string
+			switch ipPacket.Proto {
+			case unix.IPPROTO_TCP:
+				proto = "TCP"
+			case unix.IPPROTO_UDP:
+				proto = "UDP"
+			case unix.IPPROTO_ICMP, unix.IPPROTO_ICMPV6:
+				proto = "ICMP"
+			default:
+				proto = "Other"
+			}
 
-	t.current.protoBytes[proto] += ipPacket.Len
-	t.current.ipVerBytes[ipVersion] += ipPacket.Len
+			batch = append(batch, parsedPkt{
+				srcStr:    srcStr,
+				dstStr:    dstStr,
+				srcLocal:  isLocalIP(srcIP) || t.isLocalNet(srcIP),
+				dstLocal:  isLocalIP(dstIP) || t.isLocalNet(dstIP),
+				srcSelf:   srcSelf,
+				dstSelf:   dstSelf,
+				srcLoopLL: srcIP.IsLoopback() || srcIP.IsLinkLocalUnicast(),
+				dstLoopLL: dstIP.IsLoopback() || dstIP.IsLinkLocalUnicast(),
+				wireLen:   uint64(wireLen),
+				proto:     proto,
+				ipVersion: ipVersion,
+			})
+		}, 100)
+
+		if len(batch) == 0 {
+			continue
+		}
+
+		// Phase 2: Apply all parsed packets under ONE lock acquisition.
+		// This is ~170 map updates per lock instead of 1, eliminating
+		// lock contention with SSE readers.
+		t.mu.Lock()
+		if t.current == nil {
+			t.mu.Unlock()
+			continue
+		}
+		for i := range batch {
+			p := &batch[i]
+			// Host accounting
+			for _, entry := range []struct {
+				ip     string
+				local  bool
+				loopLL bool
+			}{
+				{p.srcStr, p.srcLocal, p.srcLoopLL},
+				{p.dstStr, p.dstLocal, p.dstLoopLL},
+			} {
+				if entry.loopLL {
+					continue
+				}
+				if _, ok := t.current.hosts[entry.ip]; !ok {
+					if len(t.current.hosts) >= maxHostsPerBucket {
+						continue
+					}
+					t.current.hosts[entry.ip] = &hostAccum{}
+				}
+				t.current.hosts[entry.ip].bytes += p.wireLen
+				t.current.hosts[entry.ip].packets++
+			}
+
+			// Direction detection
+			if len(t.localNets) > 0 {
+				if p.srcLocal && !p.dstLocal {
+					if h, ok := t.current.hosts[p.dstStr]; ok {
+						h.txBytes += p.wireLen
+					}
+				} else if !p.srcLocal && p.dstLocal {
+					if h, ok := t.current.hosts[p.srcStr]; ok {
+						h.rxBytes += p.wireLen
+					}
+				} else if p.srcLocal && p.dstLocal {
+					if p.srcSelf && !p.dstSelf {
+						if h, ok := t.current.hosts[p.dstStr]; ok {
+							h.txBytes += p.wireLen
+						}
+						if h, ok := t.current.hosts[p.srcStr]; ok {
+							h.txBytes += p.wireLen
+						}
+					} else if p.dstSelf && !p.srcSelf {
+						if h, ok := t.current.hosts[p.srcStr]; ok {
+							h.rxBytes += p.wireLen
+						}
+						if h, ok := t.current.hosts[p.dstStr]; ok {
+							h.rxBytes += p.wireLen
+						}
+					}
+				}
+			}
+			t.current.protoBytes[p.proto] += p.wireLen
+			t.current.ipVerBytes[p.ipVersion] += p.wireLen
+		}
+		t.mu.Unlock()
+	}
 }
 
 func (t *Tracker) rotateBuckets() {
@@ -765,15 +826,34 @@ func (t *Tracker) HostTotals(ip string) *TalkerStat {
 			stat.TxBytes += acc.txBytes
 			stat.Packets += acc.packets
 		}
-		elapsed := time.Since(t.current.timestamp).Seconds()
+		// Sliding window rate: use current + previous bucket to avoid
+		// rate dropping to zero on bucket rotation.
+		now := time.Now()
+		windowStart := t.current.timestamp
+		var rateBytes, rateRx, rateTx uint64
+		if acc, ok := t.current.hosts[ip]; ok {
+			rateBytes += acc.bytes
+			rateRx += acc.rxBytes
+			rateTx += acc.txBytes
+		}
+		if len(t.buckets) > 0 {
+			prev := t.buckets[len(t.buckets)-1]
+			if now.Sub(prev.timestamp) < 2*bucketSize {
+				windowStart = prev.timestamp
+				if acc, ok := prev.hosts[ip]; ok {
+					rateBytes += acc.bytes
+					rateRx += acc.rxBytes
+					rateTx += acc.txBytes
+				}
+			}
+		}
+		elapsed := now.Sub(windowStart).Seconds()
 		if elapsed < 1 {
 			elapsed = 1
 		}
-		if acc, ok := t.current.hosts[ip]; ok {
-			stat.RateBytes = float64(acc.bytes) / elapsed
-			stat.RxRate = float64(acc.rxBytes) / elapsed
-			stat.TxRate = float64(acc.txBytes) / elapsed
-		}
+		stat.RateBytes = float64(rateBytes) / elapsed
+		stat.RxRate = float64(rateRx) / elapsed
+		stat.TxRate = float64(rateTx) / elapsed
 	}
 	t.mu.RUnlock()
 
