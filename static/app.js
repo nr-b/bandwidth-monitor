@@ -116,6 +116,23 @@
 
     function rankClass(i) { return i === 0 ? 'rank rank-1' : 'rank'; }
 
+    function formatPPS(pps) {
+        if (pps === 0) return '0 pps';
+        if (pps < 1000) return pps.toFixed(0) + ' pps';
+        if (pps < 1e6) return (pps / 1000).toFixed(1) + ' Kpps';
+        return (pps / 1e6).toFixed(1) + ' Mpps';
+    }
+
+    function formatUptime(secs) {
+        if (!secs || secs <= 0) return '—';
+        var d = Math.floor(secs / 86400);
+        var h = Math.floor((secs % 86400) / 3600);
+        var m = Math.floor((secs % 3600) / 60);
+        if (d > 0) return d + 'd ' + h + 'h';
+        if (h > 0) return h + 'h ' + m + 'm';
+        return m + 'm';
+    }
+
     // Convert ISO 3166-1 alpha-2 to flag emoji
     function countryFlag(cc) {
         if (!cc || cc.length !== 2) return '';
@@ -327,7 +344,42 @@
         loopback: { label: 'Loopback', order: 4 }
     };
 
-    function renderStatsRow(ifaces) {
+    function renderSystemCard(ifaces, d) {
+        var totalRxRate = 0, totalTxRate = 0, totalRxBytes = 0, totalTxBytes = 0;
+        for (var f of ifaces) {
+            totalRxRate += f.rx_rate || 0;
+            totalTxRate += f.tx_rate || 0;
+            totalRxBytes += f.rx_bytes || 0;
+            totalTxBytes += f.tx_bytes || 0;
+        }
+        var el = document.getElementById('systemStats');
+        var sub = document.getElementById('systemSubtitle');
+        if (!el) return;
+        function stat(label, value, cls) {
+            return '<div style="padding:8px 4px"><div style="font-size:10px;color:var(--text-2);margin-bottom:4px">' + label + '</div><div style="font-size:15px;font-weight:700;font-variant-numeric:tabular-nums' + (cls ? ';color:var(--' + cls + ')' : '') + '">' + value + '</div></div>';
+        }
+        var h = '';
+        h += stat('Uptime', d && d.uptime_secs ? formatUptime(d.uptime_secs) : '—');
+        if (d && d.load_avg) {
+            h += stat('Load 1m', d.load_avg[0].toFixed(2));
+            h += stat('Load 5m', d.load_avg[1].toFixed(2));
+            h += stat('Load 15m', d.load_avg[2].toFixed(2));
+        }
+        h += stat('Processes', d && d.processes ? d.processes.running + ' / ' + d.processes.total : '—');
+        h += stat('Bandwidth', formatRate(totalRxRate + totalTxRate));
+        h += stat('RX Rate', formatRate(totalRxRate), 'rx');
+        h += stat('TX Rate', formatRate(totalTxRate), 'tx');
+        h += stat('Total RX', formatBytes(totalRxBytes), 'rx');
+        h += stat('Total TX', formatBytes(totalTxBytes), 'tx');
+        h += stat('IPs (24h)', d && d.unique_ips ? (d.unique_ips).toLocaleString() : '—');
+        el.innerHTML = h;
+        if (sub && d && d.uptime_secs) {
+            sub.textContent = ifaces.length + ' interfaces · up ' + formatUptime(d.uptime_secs);
+        }
+    }
+
+    function renderStatsRow(ifaces, d) {
+        renderSystemCard(ifaces, d);
         var groups = {};
         for (var f of ifaces) {
             var g = classifyIface(f);
@@ -341,12 +393,12 @@
         });
         var h = '';
         for (var i = 0; i < keys.length; i++) {
-            var k = keys[i], meta = groupMeta[k] || { label: k }, d = groups[k];
+            var k = keys[i], meta = groupMeta[k] || { label: k }, grp = groups[k];
             h += '<div class="stats-group">';
-            h += '<div class="stats-group-header">' + meta.label + '<span>' + d.count + '</span></div>';
+            h += '<div class="stats-group-header">' + meta.label + '<span>' + grp.count + '</span></div>';
             h += '<div class="stats-group-body">';
-            h += '<div><div class="stat-mini-label">RX</div><div class="stat-mini-value rx">' + formatRate(d.rx) + '</div></div>';
-            h += '<div><div class="stat-mini-label">TX</div><div class="stat-mini-value tx">' + formatRate(d.tx) + '</div></div>';
+            h += '<div><div class="stat-mini-label">RX</div><div class="stat-mini-value rx">' + formatRate(grp.rx) + '</div></div>';
+            h += '<div><div class="stat-mini-label">TX</div><div class="stat-mini-value tx">' + formatRate(grp.tx) + '</div></div>';
             h += '</div></div>';
         }
         document.getElementById('statsRow').innerHTML = h;
@@ -371,10 +423,10 @@
         h += '<div><div class="iface-stat-label label-tx">TX Rate</div><div class="iface-stat-value" style="color:var(--tx)">' + formatRate(f.tx_rate || 0) + '</div></div>';
         h += '<div><div class="iface-stat-label">RX Total</div><div class="iface-stat-value">' + formatBytes(f.rx_bytes || 0) + '</div></div>';
         h += '<div><div class="iface-stat-label">TX Total</div><div class="iface-stat-value">' + formatBytes(f.tx_bytes || 0) + '</div></div>';
-        h += '<div><div class="iface-stat-label">RX Pkts</div><div class="iface-stat-value">' + (f.rx_packets || 0).toLocaleString() + '</div></div>';
-        h += '<div><div class="iface-stat-label">TX Pkts</div><div class="iface-stat-value">' + (f.tx_packets || 0).toLocaleString() + '</div></div>';
-        if (hasErr) h += '<div><div class="iface-stat-label label-err">Errors RX/TX</div><div class="iface-stat-value" style="color:var(--danger)">' + f.rx_errors + ' / ' + f.tx_errors + '</div></div>';
-        if (hasDrop) h += '<div><div class="iface-stat-label">Drops RX/TX</div><div class="iface-stat-value" style="color:var(--warning)">' + f.rx_dropped + ' / ' + f.tx_dropped + '</div></div>';
+        h += '<div><div class="iface-stat-label">RX Pkts</div><div class="iface-stat-value">' + formatPPS(f.rx_pps || 0) + '</div></div>';
+        h += '<div><div class="iface-stat-label">TX Pkts</div><div class="iface-stat-value">' + formatPPS(f.tx_pps || 0) + '</div></div>';
+        if (hasErr || (f.rx_error_rate || 0) + (f.tx_error_rate || 0) > 0) h += '<div><div class="iface-stat-label label-err">Errors</div><div class="iface-stat-value" style="color:var(--danger)">' + (f.rx_error_rate > 0 || f.tx_error_rate > 0 ? formatPPS(f.rx_error_rate || 0) + ' / ' + formatPPS(f.tx_error_rate || 0) + '/s' : f.rx_errors + ' / ' + f.tx_errors) + '</div></div>';
+        if (hasDrop || (f.rx_drop_rate || 0) + (f.tx_drop_rate || 0) > 0) h += '<div><div class="iface-stat-label">Drops</div><div class="iface-stat-value" style="color:var(--warning)">' + (f.rx_drop_rate > 0 || f.tx_drop_rate > 0 ? formatPPS(f.rx_drop_rate || 0) + ' / ' + formatPPS(f.tx_drop_rate || 0) + '/s' : f.rx_dropped + ' / ' + f.tx_dropped) + '</div></div>';
         h += '</div>';
         if (f.addrs && f.addrs.length) {
             var v4 = [], v6 = [];
@@ -1100,13 +1152,21 @@
         tb.innerHTML = h;
     }
 
-    // Wire search/filter on NAT entry table to re-render
-    ['natSearch', 'natFilter'].forEach(function(id) {
-        var el = document.getElementById(id);
-        if (el) el.addEventListener(id === 'natSearch' ? 'input' : 'change', function() {
+    // Wire search/filter on NAT entry table to re-render (with debounce on search)
+    var _natSearchTimer = null;
+    (function() {
+        var searchEl = document.getElementById('natSearch');
+        if (searchEl) searchEl.addEventListener('input', function() {
+            clearTimeout(_natSearchTimer);
+            _natSearchTimer = setTimeout(function() {
+                if (_lastConntrack) renderNATEntries(_lastConntrack);
+            }, 150);
+        });
+        var filterEl = document.getElementById('natFilter');
+        if (filterEl) filterEl.addEventListener('change', function() {
             if (_lastConntrack) renderNATEntries(_lastConntrack);
         });
-    });
+    })();
 
     // ── World Traffic Map ──
     // Country centroids (ISO alpha-2 → [lat, lon]) for map visualization.
@@ -1413,12 +1473,13 @@
             // Stats grid — per protocol
             function statsRow(label, labelColor, s) {
                 if (!s) return '';
-                var r = '<div style="display:grid;grid-template-columns:auto repeat(5,1fr);gap:8px;text-align:center;align-items:center">';
+                var r = '<div style="display:grid;grid-template-columns:auto repeat(6,1fr);gap:8px;text-align:center;align-items:center">';
                 r += '<div style="text-align:left;font-size:11px;font-weight:700;color:' + labelColor + '">' + label + '</div>';
                 var items = [
                     ['RTT', s.rtt_ms >= 0 ? s.rtt_ms.toFixed(1) : '—', 'ms'],
                     ['Avg', s.avg_rtt_ms > 0 ? s.avg_rtt_ms.toFixed(1) : '—', 'ms'],
-                    ['Min', s.min_rtt_ms > 0 ? s.min_rtt_ms.toFixed(1) : '—', 'ms'],
+                    ['P95', s.p95_rtt_ms > 0 ? s.p95_rtt_ms.toFixed(1) : '—', 'ms'],
+                    ['P99', s.p99_rtt_ms > 0 ? s.p99_rtt_ms.toFixed(1) : '—', 'ms'],
                     ['Jitter', s.jitter_ms > 0 ? s.jitter_ms.toFixed(2) : '—', 'ms'],
                     ['Loss', s.loss_pct.toFixed(1), '%']
                 ];
@@ -1978,7 +2039,7 @@
         var rx = 0, tx = 0;
         for (var f of ifaces) { rx += f.rx_rate || 0; tx += f.tx_rate || 0; knownIfaces.add(f.name); }
 
-        renderStatsRow(ifaces);
+        renderStatsRow(ifaces, d);
 
         // VPN routing banner
         var vpnActive = false, vpnSince = '', vpnName = '';

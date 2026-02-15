@@ -20,6 +20,7 @@ type InterfaceStat struct {
 	VPNRouting      bool     `json:"vpn_routing"`
 	VPNRoutingSince string   `json:"vpn_routing_since,omitempty"`
 	VPNTracked      bool     `json:"vpn_tracked"`
+	Speed           int      `json:"speed,omitempty"`
 	RxBytes         uint64   `json:"rx_bytes"`
 	TxBytes         uint64   `json:"tx_bytes"`
 	RxPackets       uint64   `json:"rx_packets"`
@@ -30,6 +31,12 @@ type InterfaceStat struct {
 	TxDropped       uint64   `json:"tx_dropped"`
 	RxRate          float64  `json:"rx_rate"`
 	TxRate          float64  `json:"tx_rate"`
+	RxPPS           float64  `json:"rx_pps"`
+	TxPPS           float64  `json:"tx_pps"`
+	RxErrorRate     float64  `json:"rx_error_rate"`
+	TxErrorRate     float64  `json:"tx_error_rate"`
+	RxDropRate      float64  `json:"rx_drop_rate"`
+	TxDropRate      float64  `json:"tx_drop_rate"`
 	Timestamp       int64    `json:"timestamp"`
 }
 
@@ -223,6 +230,7 @@ type linkInfo struct {
 	ifType    string // classified type: physical, vpn, vlan, ppp, loopback, span
 	encapType string // ARPHRD text form: "ether", "loopback", "none", "ppp", etc.
 	linkKind  string // IFLA_INFO_KIND: wireguard, vlan, bridge, bond, gre, ...
+	speed     int    // link speed in Mbps (0 = unknown)
 	stats     *rawStat
 	addrs     []string
 }
@@ -277,6 +285,11 @@ func (c *Collector) poll() {
 			encapType: attrs.EncapType,
 			addrs:     c.addrCache[attrs.Index],
 		}
+
+		// Link speed (Mbps) — available for physical Ethernet interfaces.
+		// Note: vishvananda/netlink doesn't expose Speed directly, but
+		// we can check if the link is Device type which has Attrs().
+		// For now, expose 0 and let the frontend hide it.
 
 		// Extract IFLA_INFO_KIND via link type name
 		li.linkKind = link.Type()
@@ -341,6 +354,7 @@ func (c *Collector) poll() {
 			VPNRouting:      vs.routing,
 			VPNRoutingSince: vs.since,
 			VPNTracked:      vpnTracked,
+			Speed:           li.speed,
 			RxBytes:         cur.rxBytes,
 			TxBytes:         cur.txBytes,
 			RxPackets:       cur.rxPackets,
@@ -358,6 +372,12 @@ func (c *Collector) poll() {
 			if dt > 0 {
 				iface.RxRate = float64(cur.rxBytes-prev.rxBytes) / dt
 				iface.TxRate = float64(cur.txBytes-prev.txBytes) / dt
+				iface.RxPPS = float64(cur.rxPackets-prev.rxPackets) / dt
+				iface.TxPPS = float64(cur.txPackets-prev.txPackets) / dt
+				iface.RxErrorRate = float64(cur.rxErrors-prev.rxErrors) / dt
+				iface.TxErrorRate = float64(cur.txErrors-prev.txErrors) / dt
+				iface.RxDropRate = float64(cur.rxDropped-prev.rxDropped) / dt
+				iface.TxDropRate = float64(cur.txDropped-prev.txDropped) / dt
 			}
 		}
 

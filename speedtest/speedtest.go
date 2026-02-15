@@ -202,7 +202,7 @@ func measurePing(server string, samples int) (avgMs, jitterMs float64, err error
 
 func measureDownload(server string, ch chan<- Progress) (float64, error) {
 	const (
-		duration    = 10 * time.Second
+		duration    = 15 * time.Second
 		parallelism = 6
 	)
 
@@ -219,7 +219,7 @@ func measureDownload(server string, ch chan<- Progress) (float64, error) {
 			client := &http.Client{
 				Timeout: duration + 5*time.Second,
 			}
-			buf := make([]byte, 128*1024)
+			buf := make([]byte, 256*1024)
 			for time.Now().Before(deadline) {
 				resp, e := client.Get(server + "/downloading")
 				if e != nil {
@@ -286,9 +286,9 @@ loop:
 
 func measureUpload(server string, ch chan<- Progress) (float64, error) {
 	const (
-		duration    = 10 * time.Second
+		duration    = 15 * time.Second
 		parallelism = 6
-		chunkSize   = 1 * 1024 * 1024
+		chunkSize   = 4 * 1024 * 1024
 	)
 
 	var totalBytes int64

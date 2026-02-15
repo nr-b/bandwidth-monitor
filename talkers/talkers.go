@@ -695,3 +695,21 @@ func (t *Tracker) HostTotals(ip string) *TalkerStat {
 	t.enrichGeo(stat)
 	return stat
 }
+
+// UniqueIPs returns the number of distinct external IPs seen in the 24h window.
+func (t *Tracker) UniqueIPs() int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	seen := make(map[string]struct{})
+	for _, b := range t.buckets {
+		for ip := range b.hosts {
+			seen[ip] = struct{}{}
+		}
+	}
+	if t.current != nil {
+		for ip := range t.current.hosts {
+			seen[ip] = struct{}{}
+		}
+	}
+	return len(seen)
+}
