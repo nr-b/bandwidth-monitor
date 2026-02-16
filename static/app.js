@@ -1298,25 +1298,40 @@
                 var rxRate = t.rx_rate || 0;
                 var txRate = t.tx_rate || 0;
 
-                // RX line: remote → us (download, green)
+                // Compute perpendicular offset so RX/TX lines don't overlap.
+                // One curves to the left of the direct path, the other to the right.
+                var ldx = dest[0] - center[0];
+                var ldy = dest[1] - center[1];
+                var lineLen = Math.sqrt(ldx * ldx + ldy * ldy) || 1;
+                // Unit perpendicular vector (rotated 90° CCW)
+                var perpX = -ldy / lineLen;
+                var perpY = ldx / lineLen;
+                // Separation scales with line length, clamped to a reasonable range
+                var sep = Math.min(30, Math.max(12, lineLen * 0.07));
+
+                // RX line: remote → us (download, green) — curves one side
                 if (rxRate > 0) {
                     var rxRatio = rxRate / maxRate;
                     var rxSw = (0.8 + rxRatio * 3.2).toFixed(1);
                     var rxOp = (0.25 + rxRatio * 0.55).toFixed(2);
+                    var rxMx = mx + perpX * sep;
+                    var rxMy = my + perpY * sep;
                     // Path: from remote to center (download direction)
-                    var rxPath = 'M' + dest[0] + ',' + dest[1] + ' Q' + mx + ',' + (my - 3) + ' ' + center[0] + ',' + center[1];
+                    var rxPath = 'M' + dest[0] + ',' + dest[1] + ' Q' + rxMx.toFixed(1) + ',' + rxMy.toFixed(1) + ' ' + center[0] + ',' + center[1];
                     var rxTip = host + asInfo + ' \u2192 \u2193 ' + formatRate(rxRate);
                     svg += '<path d="' + rxPath + '" fill="none" stroke="transparent" stroke-width="14" style="cursor:pointer" class="map-tip" data-tip="' + rxTip + '"/>';
                     svg += '<path d="' + rxPath + '" fill="none" stroke="' + rxColor + '" stroke-width="' + rxSw + '" stroke-dasharray="6,4" opacity="' + rxOp + '" stroke-linecap="round" style="pointer-events:none"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="' + dur + 's" repeatCount="indefinite"/></path>';
                 }
 
-                // TX line: us → remote (upload, orange)
+                // TX line: us → remote (upload, orange) — curves opposite side
                 if (txRate > 0) {
                     var txRatio = txRate / maxRate;
                     var txSw = (0.8 + txRatio * 3.2).toFixed(1);
                     var txOp = (0.25 + txRatio * 0.55).toFixed(2);
+                    var txMx = mx - perpX * sep;
+                    var txMy = my - perpY * sep;
                     // Path: from center to remote (upload direction)
-                    var txPath = 'M' + center[0] + ',' + center[1] + ' Q' + mx + ',' + (my + 3) + ' ' + dest[0] + ',' + dest[1];
+                    var txPath = 'M' + center[0] + ',' + center[1] + ' Q' + txMx.toFixed(1) + ',' + txMy.toFixed(1) + ' ' + dest[0] + ',' + dest[1];
                     var txTip = host + asInfo + ' \u2192 \u2191 ' + formatRate(txRate);
                     svg += '<path d="' + txPath + '" fill="none" stroke="transparent" stroke-width="14" style="cursor:pointer" class="map-tip" data-tip="' + txTip + '"/>';
                     svg += '<path d="' + txPath + '" fill="none" stroke="' + txColor + '" stroke-width="' + txSw + '" stroke-dasharray="6,4" opacity="' + txOp + '" stroke-linecap="round" style="pointer-events:none"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="' + dur + 's" repeatCount="indefinite"/></path>';
