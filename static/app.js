@@ -1307,7 +1307,7 @@
                 var perpX = -ldy / lineLen;
                 var perpY = ldx / lineLen;
                 // Separation scales with line length, clamped to a reasonable range
-                var sep = Math.min(30, Math.max(12, lineLen * 0.07));
+                var sep = Math.min(40, Math.max(20, lineLen * 0.08));
 
                 // RX line: remote → us (download, green) — curves one side
                 if (rxRate > 0) {
@@ -1319,7 +1319,7 @@
                     // Path: from remote to center (download direction)
                     var rxPath = 'M' + dest[0] + ',' + dest[1] + ' Q' + rxMx.toFixed(1) + ',' + rxMy.toFixed(1) + ' ' + center[0] + ',' + center[1];
                     var rxTip = host + asInfo + ' \u2192 \u2193 ' + formatRate(rxRate);
-                    svg += '<path d="' + rxPath + '" fill="none" stroke="transparent" stroke-width="14" style="cursor:pointer" class="map-tip" data-tip="' + rxTip + '"/>';
+                    svg += '<path d="' + rxPath + '" fill="none" stroke="transparent" stroke-width="8" style="cursor:pointer" class="map-tip" data-tip="' + rxTip + '"/>';
                     svg += '<path d="' + rxPath + '" fill="none" stroke="' + rxColor + '" stroke-width="' + rxSw + '" stroke-dasharray="6,4" opacity="' + rxOp + '" stroke-linecap="round" style="pointer-events:none"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="' + dur + 's" repeatCount="indefinite"/></path>';
                 }
 
@@ -1333,7 +1333,7 @@
                     // Path: from center to remote (upload direction)
                     var txPath = 'M' + center[0] + ',' + center[1] + ' Q' + txMx.toFixed(1) + ',' + txMy.toFixed(1) + ' ' + dest[0] + ',' + dest[1];
                     var txTip = host + asInfo + ' \u2192 \u2191 ' + formatRate(txRate);
-                    svg += '<path d="' + txPath + '" fill="none" stroke="transparent" stroke-width="14" style="cursor:pointer" class="map-tip" data-tip="' + txTip + '"/>';
+                    svg += '<path d="' + txPath + '" fill="none" stroke="transparent" stroke-width="8" style="cursor:pointer" class="map-tip" data-tip="' + txTip + '"/>';
                     svg += '<path d="' + txPath + '" fill="none" stroke="' + txColor + '" stroke-width="' + txSw + '" stroke-dasharray="6,4" opacity="' + txOp + '" stroke-linecap="round" style="pointer-events:none"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="' + dur + 's" repeatCount="indefinite"/></path>';
                 }
 
