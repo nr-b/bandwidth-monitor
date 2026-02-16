@@ -65,9 +65,11 @@ type Entry struct {
 	OrigDPort   string `json:"orig_dport,omitempty"`
 	OrigSrcHost string `json:"orig_src_host,omitempty"`
 	OrigSrcGeo  string `json:"orig_src_geo,omitempty"`
+	OrigSrcCity string `json:"orig_src_city,omitempty"`
 	OrigSrcASN  string `json:"orig_src_asn,omitempty"`
 	OrigDstHost string `json:"orig_dst_host,omitempty"`
 	OrigDstGeo  string `json:"orig_dst_geo,omitempty"`
+	OrigDstCity string `json:"orig_dst_city,omitempty"`
 	OrigDstASN  string `json:"orig_dst_asn,omitempty"`
 
 	// Reply direction
@@ -91,6 +93,7 @@ type HostStat struct {
 	NATType     string `json:"nat_type,omitempty"`
 	Country     string `json:"country,omitempty"`
 	CountryName string `json:"country_name,omitempty"`
+	City        string `json:"city,omitempty"`
 	ASN         uint   `json:"asn,omitempty"`
 	ASOrg       string `json:"as_org,omitempty"`
 }
@@ -481,6 +484,7 @@ func (t *Tracker) enrichHosts(hosts []HostStat) {
 			if geo := t.geoDB.Lookup(ip); geo != nil {
 				hosts[i].Country = geo.Country
 				hosts[i].CountryName = geo.CountryName
+				hosts[i].City = geo.City
 				hosts[i].ASN = geo.ASN
 				hosts[i].ASOrg = geo.ASOrg
 			}
@@ -512,6 +516,7 @@ func (t *Tracker) enrichEntries(entries []Entry) {
 				if geo.Country != "" {
 					e.OrigSrcGeo = geo.Country
 				}
+				e.OrigSrcCity = geo.City
 				if geo.ASOrg != "" {
 					e.OrigSrcASN = fmt.Sprintf("AS%d %s", geo.ASN, geo.ASOrg)
 				}
@@ -520,6 +525,7 @@ func (t *Tracker) enrichEntries(entries []Entry) {
 				if geo.Country != "" {
 					e.OrigDstGeo = geo.Country
 				}
+				e.OrigDstCity = geo.City
 				if geo.ASOrg != "" {
 					e.OrigDstASN = fmt.Sprintf("AS%d %s", geo.ASN, geo.ASOrg)
 				}
