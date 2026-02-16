@@ -1939,7 +1939,7 @@
         // Bandwidth history chart (SVG)
         if (d.history && d.history.length > 1) {
             h += '<div style="margin-bottom:20px">';
-            h += '<div style="font-size:14px;font-weight:600;margin-bottom:10px">Bandwidth History <span style="font-weight:400;color:var(--text-2);font-size:12px">(24h, per minute)</span></div>';
+            h += '<div style="font-size:14px;font-weight:600;margin-bottom:10px">Traffic Volume <span style="font-weight:400;color:var(--text-2);font-size:12px">(24h, per minute)</span></div>';
             h += renderHostHistoryChart(d.history);
             h += '</div>';
         }
