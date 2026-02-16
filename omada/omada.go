@@ -35,12 +35,10 @@ type Client struct {
 	loggedIn  bool
 	csrfToken string
 	lastPoll  time.Time
-	prevAP    map[string]byteSnap
-	prevCli   map[string]byteSnap
-	prevSSID  map[string]byteSnap
+	prevAP    map[string]wifi.ByteSnap
+	prevCli   map[string]wifi.ByteSnap
+	prevSSID  map[string]wifi.ByteSnap
 }
-
-type byteSnap struct{ tx, rx int64 }
 
 // New creates an Omada controller client.
 func New(baseURL, user, pass, siteName string, pollInterval time.Duration) *Client {
@@ -137,17 +135,17 @@ func (c *Client) poll() {
 	}
 	sum := c.buildSummary(devices, clients, dt)
 
-	newAP := make(map[string]byteSnap, len(sum.APs))
+	newAP := make(map[string]wifi.ByteSnap, len(sum.APs))
 	for _, ap := range sum.APs {
-		newAP[ap.MAC] = byteSnap{tx: ap.TxBytes, rx: ap.RxBytes}
+		newAP[ap.MAC] = wifi.ByteSnap{Tx: ap.TxBytes, Rx: ap.RxBytes}
 	}
-	newSSID := make(map[string]byteSnap, len(sum.SSIDs))
+	newSSID := make(map[string]wifi.ByteSnap, len(sum.SSIDs))
 	for _, s := range sum.SSIDs {
-		newSSID[s.Name] = byteSnap{tx: s.TxBytes, rx: s.RxBytes}
+		newSSID[s.Name] = wifi.ByteSnap{Tx: s.TxBytes, Rx: s.RxBytes}
 	}
-	newCli := make(map[string]byteSnap, len(sum.Clients))
+	newCli := make(map[string]wifi.ByteSnap, len(sum.Clients))
 	for _, cl := range sum.Clients {
-		newCli[cl.MAC] = byteSnap{tx: cl.TxBytes, rx: cl.RxBytes}
+		newCli[cl.MAC] = wifi.ByteSnap{Tx: cl.TxBytes, Rx: cl.RxBytes}
 	}
 
 	c.mu.Lock()
@@ -393,8 +391,7 @@ func (c *Client) buildSummary(devices []rawDevice, clients []rawClient, dt float
 		}
 		if dt > 0 {
 			if prev, ok := c.prevAP[d.MAC]; ok {
-				ap.TxRate = clamp(float64(d.TxBytes-prev.tx) / dt)
-				ap.RxRate = clamp(float64(d.RxBytes-prev.rx) / dt)
+				ap.TxRate, ap.RxRate = wifi.ComputeRates(d.TxBytes, d.RxBytes, prev, dt)
 			}
 		}
 		aps = append(aps, ap)
@@ -430,8 +427,7 @@ func (c *Client) buildSummary(devices []rawDevice, clients []rawClient, dt float
 		s := wifi.SSIDStat{Name: name, NumClients: a.n, TxBytes: a.tx, RxBytes: a.rx}
 		if dt > 0 {
 			if prev, ok := c.prevSSID[name]; ok {
-				s.TxRate = clamp(float64(a.tx-prev.tx) / dt)
-				s.RxRate = clamp(float64(a.rx-prev.rx) / dt)
+				s.TxRate, s.RxRate = wifi.ComputeRates(a.tx, a.rx, prev, dt)
 			}
 		}
 		ssids = append(ssids, s)
@@ -460,8 +456,7 @@ func (c *Client) buildSummary(devices []rawDevice, clients []rawClient, dt float
 		}
 		if dt > 0 {
 			if prev, ok := c.prevCli[cl.MAC]; ok {
-				ci.TxRate = clamp(float64(cl.TxBytes-prev.tx) / dt)
-				ci.RxRate = clamp(float64(cl.RxBytes-prev.rx) / dt)
+				ci.TxRate, ci.RxRate = wifi.ComputeRates(cl.TxBytes, cl.RxBytes, prev, dt)
 			}
 		}
 		cis = append(cis, ci)
@@ -491,13 +486,6 @@ func radioName(id int) string {
 	default:
 		return ""
 	}
-}
-
-func clamp(r float64) float64 {
-	if r < 0 {
-		return 0
-	}
-	return r
 }
 
 // String returns a debug representation.

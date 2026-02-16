@@ -61,3 +61,29 @@ type ClientInfo struct {
 	TxRate   float64 `json:"tx_rate"`
 	RxRate   float64 `json:"rx_rate"`
 }
+
+// ByteSnap stores TX/RX byte counters for rate delta computation.
+type ByteSnap struct {
+	Tx int64
+	Rx int64
+}
+
+// Clamp returns r if r >= 0, otherwise 0.
+// Used to handle counter wraps from controller restarts.
+func Clamp(r float64) float64 {
+	if r < 0 {
+		return 0
+	}
+	return r
+}
+
+// ComputeRates calculates TX/RX rates from current and previous byte counters.
+// Returns (txRate, rxRate). Clamps negative deltas to 0.
+func ComputeRates(curTx, curRx int64, prev ByteSnap, dt float64) (float64, float64) {
+	if dt <= 0 {
+		return 0, 0
+	}
+	txRate := Clamp(float64(curTx-prev.Tx) / dt)
+	rxRate := Clamp(float64(curRx-prev.Rx) / dt)
+	return txRate, rxRate
+}
