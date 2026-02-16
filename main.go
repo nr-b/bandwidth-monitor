@@ -102,7 +102,25 @@ func main() {
 		}
 	}
 
-	geoCountry := env("GEO_COUNTRY", "GeoLite2-Country.mmdb")
+	// GeoIP: prefer City DB (has country + city + coordinates), fall back to Country DB.
+	// Check env vars first, then auto-detect from common filenames on disk.
+	// Always verify the file exists — stale env vars may point to missing files.
+	geoCity := env("GEO_CITY", env("GEO_COUNTRY", ""))
+	if geoCity != "" {
+		if _, err := os.Stat(geoCity); err != nil {
+			log.Printf("GeoIP: configured path %q not found, auto-detecting", geoCity)
+			geoCity = ""
+		}
+	}
+	if geoCity == "" {
+		// Auto-detect: try City first, fall back to Country
+		for _, candidate := range []string{"GeoLite2-City.mmdb", "GeoLite2-Country.mmdb"} {
+			if _, err := os.Stat(candidate); err == nil {
+				geoCity = candidate
+				break
+			}
+		}
+	}
 	geoASN := env("GEO_ASN", "GeoLite2-ASN.mmdb")
 	adguardURL := env("ADGUARD_URL", "")
 	adguardUser := env("ADGUARD_USER", "")
@@ -120,7 +138,7 @@ func main() {
 	omadaPass := env("OMADA_PASS", "")
 	omadaSite := env("OMADA_SITE", "Default")
 
-	geoDB, err := geoip.Open(geoCountry, geoASN)
+	geoDB, err := geoip.Open(geoCity, geoASN)
 	if err != nil {
 		log.Printf("GeoIP: %v (continuing without geo)", err)
 		geoDB = nil

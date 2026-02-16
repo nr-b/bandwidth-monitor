@@ -207,7 +207,7 @@ vi /etc/bandwidth-monitor/env
 
 Optional GeoIP databases:
 ```bash
-scp GeoLite2-Country.mmdb GeoLite2-ASN.mmdb root@router:/etc/bandwidth-monitor/
+scp GeoLite2-City.mmdb GeoLite2-ASN.mmdb root@router:/etc/bandwidth-monitor/
 /etc/init.d/bandwidth-monitor restart
 ```
 
@@ -324,8 +324,8 @@ chmod 0600 /opt/bandwidth-monitor/.env
 | `LISTEN` | `:8080` | HTTP listen address (e.g. `198.51.100.1:8080`) |
 | `PROMISCUOUS` | `true` | Enable promiscuous mode for packet capture (`true`/`false`) |
 | `INTERFACES` | *(all)* | Comma-separated list of interfaces to monitor and display (e.g. `eth0,ppp0,wg0`). Controls both the web UI and packet capture. If not set, all interfaces are used. |
-| `GEO_COUNTRY` | `GeoLite2-Country.mmdb` | Path to GeoLite2 Country MMDB |
-| `GEO_ASN` | `GeoLite2-ASN.mmdb` | Path to GeoLite2 ASN MMDB |
+| `GEO_CITY` | `GeoLite2-City.mmdb` | Path to GeoLite2 City MMDB (includes country, city, coordinates for map). ~57 MB. For devices with limited flash (e.g. OpenWrt routers), use `GeoLite2-Country.mmdb` (~6 MB) instead — set `GEO_CITY=GeoLite2-Country.mmdb`. Country data still works, just without city-level map precision. |
+| `GEO_ASN` | `GeoLite2-ASN.mmdb` | Path to GeoLite2 ASN MMDB (~11 MB) |
 
 #### DNS (mutually exclusive — first configured wins)
 

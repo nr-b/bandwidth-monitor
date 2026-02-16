@@ -457,12 +457,19 @@ func DebugDNS() http.HandlerFunc {
 
 // originResolver determines the WAN's geographic country code for the map
 // origin point.  It caches the result and refreshes periodically.
+type originGeo struct {
+	Country   string  `json:"country"`
+	Latitude  float64 `json:"lat"`
+	Longitude float64 `json:"lon"`
+}
+
 type originResolver struct {
-	mu      sync.RWMutex
-	country string
-	last    time.Time
-	ttl     time.Duration
-	geoDB   *geoip.DB
+	mu       sync.RWMutex
+	origin   *originGeo
+	resolved bool // true after first resolve attempt (even if result is nil)
+	last     time.Time
+	ttl      time.Duration
+	geoDB    *geoip.DB
 }
 
 func newOriginResolver(geoDB *geoip.DB) *originResolver {
@@ -497,30 +504,31 @@ func isGlobalUnicast(ip net.IP) bool {
 	return ip.IsGlobalUnicast()
 }
 
-// resolve determines the origin country from the WAN interface IPs.
+// resolve determines the origin location from the WAN interface IPs.
 // Priority: global IPv4 > global IPv6 > ip.ffmuc.net fallback.
-func (o *originResolver) resolve(c *collector.Collector) string {
+func (o *originResolver) resolve(c *collector.Collector) *originGeo {
 	o.mu.RLock()
-	if o.country != "" && time.Since(o.last) < o.ttl {
-		cc := o.country
+	if o.resolved && time.Since(o.last) < o.ttl {
+		og := o.origin
 		o.mu.RUnlock()
-		return cc
+		return og
 	}
 	o.mu.RUnlock()
 
-	cc := o.doResolve(c)
+	og := o.doResolve(c)
 
 	o.mu.Lock()
-	o.country = cc
+	o.origin = og
+	o.resolved = true
 	o.last = time.Now()
 	o.mu.Unlock()
 
-	return cc
+	return og
 }
 
-func (o *originResolver) doResolve(c *collector.Collector) string {
+func (o *originResolver) doResolve(c *collector.Collector) *originGeo {
 	if o.geoDB == nil || !o.geoDB.Available() {
-		return ""
+		return nil
 	}
 
 	// Find WAN interface IPs
@@ -552,8 +560,8 @@ func (o *originResolver) doResolve(c *collector.Collector) string {
 			continue
 		}
 		if r := o.geoDB.Lookup(ipStr); r != nil && r.Country != "" {
-			log.Printf("geo origin: %s -> %s", ipStr, r.Country)
-			return r.Country
+			log.Printf("geo origin: %s -> %s (%.4f, %.4f)", ipStr, r.Country, r.Latitude, r.Longitude)
+			return &originGeo{Country: r.Country, Latitude: r.Latitude, Longitude: r.Longitude}
 		}
 	}
 
@@ -561,12 +569,12 @@ func (o *originResolver) doResolve(c *collector.Collector) string {
 	log.Printf("geo origin: no globally routable WAN IP, trying ip.ffmuc.net")
 	if extIP := fetchExternalIP(); extIP != "" {
 		if r := o.geoDB.Lookup(extIP); r != nil && r.Country != "" {
-			log.Printf("geo origin: ip.ffmuc.net %s -> %s", extIP, r.Country)
-			return r.Country
+			log.Printf("geo origin: ip.ffmuc.net %s -> %s (%.4f, %.4f)", extIP, r.Country, r.Latitude, r.Longitude)
+			return &originGeo{Country: r.Country, Latitude: r.Latitude, Longitude: r.Longitude}
 		}
 	}
 
-	return ""
+	return nil
 }
 
 // fetchExternalIP queries ip.ffmuc.net to get the public IP when all
@@ -608,8 +616,12 @@ func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, w
 		"timestamp":     time.Now().UnixMilli(),
 	}
 	if origin != nil {
-		if cc := origin.resolve(c); cc != "" {
-			payload["origin_country"] = cc
+		if og := origin.resolve(c); og != nil {
+			payload["origin_country"] = og.Country
+			if og.Latitude != 0 || og.Longitude != 0 {
+				payload["origin_lat"] = og.Latitude
+				payload["origin_lon"] = og.Longitude
+			}
 		}
 	}
 	if dp != nil {

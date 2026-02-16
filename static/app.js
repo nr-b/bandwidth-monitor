@@ -65,7 +65,7 @@
         } else if (tab === 'monitor') {
             var now = Date.now();
             if (force || !window._lastMapUpdate || now - window._lastMapUpdate > 5000) {
-                updateWorldMap(d.countries, bw, d.origin_country);
+                updateWorldMap(d.countries, bw, d.origin_country, d.origin_lat, d.origin_lon);
                 window._lastMapUpdate = now;
             }
             if (force || !window._lastLatUpdate || now - window._lastLatUpdate > 2000) {
@@ -1172,7 +1172,7 @@
     // Country centroids (ISO alpha-2 → [lat, lon]) for map visualization.
     var countryCentroids = {"AF":[33,65],"AL":[41,20],"DZ":[28,3],"AO":[-12,17],"AR":[-34,-64],"AM":[40,45],"AU":[-25,134],"AT":[47,14],"AZ":[41,48],"BD":[24,90],"BY":[53,28],"BE":[51,4],"BJ":[9,2],"BO":[-17,-65],"BA":[44,18],"BW":[-22,24],"BR":[-10,-55],"BG":[43,25],"BF":[12,-2],"KH":[13,105],"CM":[6,12],"CA":[56,-96],"CF":[7,21],"TD":[15,19],"CL":[-30,-71],"CN":[35,105],"CO":[4,-72],"CD":[-3,24],"CG":[-1,15],"CR":[10,-84],"CI":[8,-5],"HR":[45,16],"CU":[22,-80],"CY":[35,33],"CZ":[50,15],"DK":[56,10],"DO":[19,-70],"EC":[-2,-78],"EG":[27,30],"SV":[14,-89],"EE":[59,26],"ET":[9,40],"FI":[64,26],"FR":[46,2],"GA":[0,12],"DE":[51,9],"GH":[8,-2],"GR":[39,22],"GT":[16,-90],"GN":[11,-12],"HT":[19,-72],"HN":[15,-87],"HU":[47,20],"IS":[65,-18],"IN":[21,78],"ID":[-5,120],"IR":[32,53],"IQ":[33,44],"IE":[53,-8],"IL":[31,35],"IT":[43,12],"JM":[18,-77],"JP":[36,138],"JO":[31,37],"KZ":[48,68],"KE":[-1,38],"KW":[29,48],"KG":[41,75],"LA":[18,105],"LV":[57,25],"LB":[34,36],"LY":[27,17],"LT":[56,24],"LU":[50,6],"MG":[-19,47],"MY":[4,109],"ML":[17,-4],"MX":[23,-102],"MD":[47,29],"MN":[48,106],"ME":[43,19],"MA":[32,-5],"MZ":[-18,35],"MM":[22,96],"NA":[-22,17],"NP":[28,84],"NL":[52,5],"NZ":[-41,174],"NI":[13,-85],"NE":[18,8],"NG":[10,8],"KP":[40,127],"NO":[62,10],"OM":[21,57],"PK":[30,70],"PA":[9,-80],"PY":[-23,-58],"PE":[-10,-76],"PH":[13,122],"PL":[52,20],"PT":[39,-8],"QA":[25,51],"RO":[46,25],"RU":[62,105],"RW":[-2,30],"SA":[24,45],"SN":[14,-14],"RS":[44,21],"SG":[1,104],"SK":[49,20],"SI":[46,15],"ZA":[-29,24],"KR":[36,128],"ES":[40,-4],"LK":[8,81],"SD":[13,30],"SE":[62,16],"CH":[47,8],"SY":[35,38],"TW":[24,121],"TJ":[39,69],"TZ":[-7,35],"TH":[15,101],"TN":[34,9],"TR":[39,35],"TM":[39,60],"UA":[49,32],"AE":[24,54],"GB":[54,-2],"US":[38,-97],"UY":[-33,-56],"UZ":[41,65],"VE":[8,-66],"VN":[16,108],"YE":[16,48],"ZM":[-14,28],"ZW":[-19,30]};
 
-    function updateWorldMap(countries, topBW, originCountry) {
+    function updateWorldMap(countries, topBW, originCountry, originLat, originLon) {
         if (!countries || !countries.length) return;
         var wc = window._worldCountries || {};
 
@@ -1261,14 +1261,22 @@
 
         // Flow lines from top bandwidth talkers
         if (topBW && topBW.length) {
-            // Origin: use WAN GeoIP country, fall back to Germany (DE)
+            // Origin: use city-level coordinates if available, fall back to country centroid
             var oc = originCountry && countryCentroids[originCountry] ? originCountry : 'DE';
-            var center = proj(countryCentroids[oc][0], countryCentroids[oc][1]);
+            var center = (originLat && originLon) ? proj(originLat, originLon) : proj(countryCentroids[oc][0], countryCentroids[oc][1]);
             svg += '<circle cx="' + center[0] + '" cy="' + center[1] + '" r="3" fill="' + flowColor + '" opacity="0.8"><animate attributeName="r" values="2;6;2" dur="2s" repeatCount="indefinite"/></circle>';
-            // Find max rate for relative line thickness
+
+            // Flow colors: green for download (RX toward us), orange for upload (TX away)
+            var rxColor = isDark ? '#34d399' : '#059669'; // emerald
+            var txColor = isDark ? '#fb923c' : '#ea580c'; // orange
+
+            // Find max rate across both directions for relative scaling
             var maxRate = 1;
             for (var i = 0; i < Math.min(topBW.length, 8); i++) {
-                if ((topBW[i].rate_bytes || 0) > maxRate) maxRate = topBW[i].rate_bytes;
+                var rx = topBW[i].rx_rate || 0;
+                var tx = topBW[i].tx_rate || 0;
+                if (rx > maxRate) maxRate = rx;
+                if (tx > maxRate) maxRate = tx;
             }
             // Track how many flows per country to fan out overlapping lines
             var ccFlowIdx = {};
@@ -1278,29 +1286,64 @@
                 var cc = t.country;
                 if (!ccFlowIdx[cc]) ccFlowIdx[cc] = 0;
                 var fi = ccFlowIdx[cc]++;
-                var rateRatio = (t.rate_bytes || 0) / maxRate;
-                // Line thickness: 0.8px min, 4px max, scaled by rate
-                var sw = (0.8 + rateRatio * 3.2).toFixed(1);
-                // Opacity: higher rate = more visible
-                var lineOpacity = (0.25 + rateRatio * 0.55).toFixed(2);
-                // Same start and end point; only the curve control point varies
-                var dest = proj(countryCentroids[cc][0], countryCentroids[cc][1]);
+                // Use city-level coordinates if available, fall back to country centroid
+                var dest = (t.lat && t.lon) ? proj(t.lat, t.lon) : proj(countryCentroids[cc][0], countryCentroids[cc][1]);
                 var curveOffset = 35 + fi * 18;
-                var spreadX = (fi - 0.5) * 25; // fan out the curve midpoint horizontally
+                var spreadX = (fi - 0.5) * 25;
                 var mx = (center[0] + dest[0]) / 2 + spreadX;
                 var my = Math.min(center[1], dest[1]) - curveOffset;
-                var pathD = 'M' + center[0] + ',' + center[1] + ' Q' + mx + ',' + my + ' ' + dest[0] + ',' + dest[1];
+                var dur = (1.3 + fi * 0.2).toFixed(1);
                 var host = t.hostname && t.hostname !== t.ip ? t.hostname + ' (' + t.ip + ')' : t.ip;
                 var asInfo = t.as_org ? ' \u00b7 AS' + (t.asn || '') + ' ' + t.as_org : '';
-                var tip = host + asInfo + ' \u2192 ' + formatRate(t.rate_bytes || 0);
-                // Invisible wide hit area for hover
-                svg += '<path d="' + pathD + '" fill="none" stroke="transparent" stroke-width="14" style="cursor:pointer" class="map-tip" data-tip="' + tip + '"/>';
-                // Visible animated line — thickness and opacity by rate, dash speed by rank
-                var dur = (1.3 + fi * 0.2).toFixed(1);
-                svg += '<path d="' + pathD + '" fill="none" stroke="' + flowColor + '" stroke-width="' + sw + '" stroke-dasharray="6,4" opacity="' + lineOpacity + '" stroke-linecap="round" style="pointer-events:none"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="' + dur + 's" repeatCount="indefinite"/></path>';
-                // Destination dot — size by rate
-                var dotR = (2 + rateRatio * 4).toFixed(1);
-                svg += '<circle cx="' + dest[0] + '" cy="' + dest[1] + '" r="' + dotR + '" fill="' + flowColor + '" opacity="' + lineOpacity + '" style="pointer-events:none"/>';
+                var rxRate = t.rx_rate || 0;
+                var txRate = t.tx_rate || 0;
+
+                // Compute perpendicular offset so RX/TX lines don't overlap.
+                // One curves to the left of the direct path, the other to the right.
+                var ldx = dest[0] - center[0];
+                var ldy = dest[1] - center[1];
+                var lineLen = Math.sqrt(ldx * ldx + ldy * ldy) || 1;
+                // Unit perpendicular vector (rotated 90° CCW)
+                var perpX = -ldy / lineLen;
+                var perpY = ldx / lineLen;
+                // Separation scales with line length, clamped to a reasonable range
+                var sep = Math.min(40, Math.max(20, lineLen * 0.08));
+
+                // RX line: remote → us (download, green) — curves one side
+                if (rxRate > 0) {
+                    var rxRatio = rxRate / maxRate;
+                    var rxSw = (0.8 + rxRatio * 3.2).toFixed(1);
+                    var rxOp = (0.25 + rxRatio * 0.55).toFixed(2);
+                    var rxMx = mx + perpX * sep;
+                    var rxMy = my + perpY * sep;
+                    // Path: from remote to center (download direction)
+                    var rxPath = 'M' + dest[0] + ',' + dest[1] + ' Q' + rxMx.toFixed(1) + ',' + rxMy.toFixed(1) + ' ' + center[0] + ',' + center[1];
+                    var rxTip = host + asInfo + ' \u2192 \u2193 ' + formatRate(rxRate);
+                    svg += '<path d="' + rxPath + '" fill="none" stroke="transparent" stroke-width="8" style="cursor:pointer" class="map-tip" data-tip="' + rxTip + '"/>';
+                    svg += '<path d="' + rxPath + '" fill="none" stroke="' + rxColor + '" stroke-width="' + rxSw + '" stroke-dasharray="6,4" opacity="' + rxOp + '" stroke-linecap="round" style="pointer-events:none"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="' + dur + 's" repeatCount="indefinite"/></path>';
+                }
+
+                // TX line: us → remote (upload, orange) — curves opposite side
+                if (txRate > 0) {
+                    var txRatio = txRate / maxRate;
+                    var txSw = (0.8 + txRatio * 3.2).toFixed(1);
+                    var txOp = (0.25 + txRatio * 0.55).toFixed(2);
+                    var txMx = mx - perpX * sep;
+                    var txMy = my - perpY * sep;
+                    // Path: from center to remote (upload direction)
+                    var txPath = 'M' + center[0] + ',' + center[1] + ' Q' + txMx.toFixed(1) + ',' + txMy.toFixed(1) + ' ' + dest[0] + ',' + dest[1];
+                    var txTip = host + asInfo + ' \u2192 \u2191 ' + formatRate(txRate);
+                    svg += '<path d="' + txPath + '" fill="none" stroke="transparent" stroke-width="8" style="cursor:pointer" class="map-tip" data-tip="' + txTip + '"/>';
+                    svg += '<path d="' + txPath + '" fill="none" stroke="' + txColor + '" stroke-width="' + txSw + '" stroke-dasharray="6,4" opacity="' + txOp + '" stroke-linecap="round" style="pointer-events:none"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="' + dur + 's" repeatCount="indefinite"/></path>';
+                }
+
+                // Destination dot — size by total rate, colored by dominant direction
+                var totalRate = rxRate + txRate;
+                var dotRatio = totalRate / (maxRate * 2 || 1);
+                var dotR = (2 + dotRatio * 4).toFixed(1);
+                var dotColor = rxRate >= txRate ? rxColor : txColor;
+                var dotOp = (0.3 + dotRatio * 0.5).toFixed(2);
+                svg += '<circle cx="' + dest[0] + '" cy="' + dest[1] + '" r="' + dotR + '" fill="' + dotColor + '" opacity="' + dotOp + '" style="pointer-events:none"/>';
             }
         }
 

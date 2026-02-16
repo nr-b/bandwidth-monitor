@@ -12,11 +12,13 @@ import (
 
 // Result holds the geo + ASN information for a single IP.
 type Result struct {
-	Country     string `json:"country"`      // ISO 3166-1 alpha-2
-	CountryName string `json:"country_name"` // English name
-	City        string `json:"city,omitempty"`
-	ASN         uint   `json:"asn,omitempty"`
-	ASOrg       string `json:"as_org,omitempty"`
+	Country     string  `json:"country"`      // ISO 3166-1 alpha-2
+	CountryName string  `json:"country_name"` // English name
+	City        string  `json:"city,omitempty"`
+	Latitude    float64 `json:"latitude,omitempty"`
+	Longitude   float64 `json:"longitude,omitempty"`
+	ASN         uint    `json:"asn,omitempty"`
+	ASOrg       string  `json:"as_org,omitempty"`
 }
 
 // DB wraps the MaxMind MMDB readers with a lookup cache.
@@ -37,6 +39,10 @@ type cityRecord struct {
 	City struct {
 		Names map[string]string `maxminddb:"names"`
 	} `maxminddb:"city"`
+	Location struct {
+		Latitude  float64 `maxminddb:"latitude"`
+		Longitude float64 `maxminddb:"longitude"`
+	} `maxminddb:"location"`
 }
 
 // asnRecord is the minimal struct for MMDB ASN lookups.
@@ -151,6 +157,8 @@ func (db *DB) Lookup(ipStr string) *Result {
 			if name, ok := rec.City.Names["en"]; ok {
 				r.City = name
 			}
+			r.Latitude = rec.Location.Latitude
+			r.Longitude = rec.Location.Longitude
 		}
 	}
 
