@@ -32,6 +32,8 @@ type TalkerStat struct {
 	Hostname    string  `json:"hostname"`
 	Country     string  `json:"country,omitempty"`
 	CountryName string  `json:"country_name,omitempty"`
+	Latitude    float64 `json:"lat,omitempty"`
+	Longitude   float64 `json:"lon,omitempty"`
 	ASN         uint    `json:"asn,omitempty"`
 	ASOrg       string  `json:"as_org,omitempty"`
 	TotalBytes  uint64  `json:"total_bytes"`
@@ -631,6 +633,8 @@ func (t *Tracker) enrichGeo(s *TalkerStat) {
 	}
 	s.Country = geo.Country
 	s.CountryName = geo.CountryName
+	s.Latitude = geo.Latitude
+	s.Longitude = geo.Longitude
 	s.ASN = geo.ASN
 	s.ASOrg = geo.ASOrg
 }

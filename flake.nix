@@ -7,8 +7,8 @@
 
     # GeoIP databases — run `nix flake update` to pull fresh versions.
     # These are from a public mirror that tracks MaxMind's weekly releases.
-    geolite2-country = {
-      url = "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb";
+    geolite2-city = {
+      url = "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-City.mmdb";
       flake = false;
     };
     geolite2-asn = {
@@ -37,7 +37,7 @@
 
           postInstall = ''
             # Install GeoIP databases from flake inputs
-            install -Dm644 ${geolite2-country} $out/share/bandwidth-monitor/GeoLite2-Country.mmdb
+            install -Dm644 ${geolite2-city} $out/share/bandwidth-monitor/GeoLite2-City.mmdb
             install -Dm644 ${geolite2-asn} $out/share/bandwidth-monitor/GeoLite2-ASN.mmdb
 
             # Install support files
@@ -93,7 +93,7 @@
               type = lib.types.nullOr lib.types.str;
               default = null;
               description = ''
-                Path to directory containing GeoLite2-Country.mmdb and
+                Path to directory containing GeoLite2-City.mmdb and
                 GeoLite2-ASN.mmdb. If null, uses the databases bundled
                 in the package (from flake inputs).
 
@@ -133,7 +133,7 @@
                   else "${cfg.package}/share/bandwidth-monitor";
               in {
                 LISTEN = cfg.listenAddress;
-                GEO_COUNTRY = "${geoDir}/GeoLite2-Country.mmdb";
+                GEO_CITY = "${geoDir}/GeoLite2-City.mmdb";
                 GEO_ASN = "${geoDir}/GeoLite2-ASN.mmdb";
               } // cfg.settings;
 
