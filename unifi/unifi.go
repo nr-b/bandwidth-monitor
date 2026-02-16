@@ -24,7 +24,7 @@ type Client struct {
 	interval   time.Duration
 	httpClient *http.Client
 	mu         sync.RWMutex
-	summary    *Summary
+	summary    *wifi.Summary
 	stopCh     chan struct{}
 
 	// API variant detection
@@ -35,20 +35,10 @@ type Client struct {
 
 	// rate tracking
 	lastPoll time.Time
-	prevAP   map[string]byteSnap // keyed by MAC
-	prevSSID map[string]byteSnap // keyed by SSID name
-	prevCli  map[string]byteSnap // keyed by client MAC
+	prevAP   map[string]wifi.ByteSnap // keyed by MAC
+	prevSSID map[string]wifi.ByteSnap // keyed by SSID name
+	prevCli  map[string]wifi.ByteSnap // keyed by client MAC
 }
-
-type byteSnap struct {
-	tx int64
-	rx int64
-}
-
-type APInfo = wifi.APInfo
-type SSIDStat = wifi.SSIDStat
-type ClientInfo = wifi.ClientInfo
-type Summary = wifi.Summary
 
 func New(baseURL, user, pass, site string, pollInterval time.Duration) *Client {
 	if site == "" {
@@ -144,17 +134,17 @@ func (c *Client) poll() {
 	sum := c.buildSummary(devices, clients, dt)
 
 	// Store current counters for next delta
-	newAP := make(map[string]byteSnap, len(sum.APs))
+	newAP := make(map[string]wifi.ByteSnap, len(sum.APs))
 	for _, ap := range sum.APs {
-		newAP[ap.MAC] = byteSnap{tx: ap.TxBytes, rx: ap.RxBytes}
+		newAP[ap.MAC] = wifi.ByteSnap{Tx: ap.TxBytes, Rx: ap.RxBytes}
 	}
-	newSSID := make(map[string]byteSnap, len(sum.SSIDs))
+	newSSID := make(map[string]wifi.ByteSnap, len(sum.SSIDs))
 	for _, s := range sum.SSIDs {
-		newSSID[s.Name] = byteSnap{tx: s.TxBytes, rx: s.RxBytes}
+		newSSID[s.Name] = wifi.ByteSnap{Tx: s.TxBytes, Rx: s.RxBytes}
 	}
-	newCli := make(map[string]byteSnap, len(sum.Clients))
+	newCli := make(map[string]wifi.ByteSnap, len(sum.Clients))
 	for _, cl := range sum.Clients {
-		newCli[cl.MAC] = byteSnap{tx: cl.TxBytes, rx: cl.RxBytes}
+		newCli[cl.MAC] = wifi.ByteSnap{Tx: cl.TxBytes, Rx: cl.RxBytes}
 	}
 
 	c.mu.Lock()
@@ -327,8 +317,8 @@ func (c *Client) fetchClients() ([]rawClient, error) {
 	return cr.Data, nil
 }
 
-func (c *Client) buildSummary(devices []rawDevice, clients []rawClient, dt float64) *Summary {
-	var aps []APInfo
+func (c *Client) buildSummary(devices []rawDevice, clients []rawClient, dt float64) *wifi.Summary {
+	var aps []wifi.APInfo
 	for _, d := range devices {
 		if d.Type != "uap" {
 			continue
@@ -337,7 +327,7 @@ func (c *Client) buildSummary(devices []rawDevice, clients []rawClient, dt float
 		if d.State == 1 {
 			status = "connected"
 		}
-		ap := APInfo{
+		ap := wifi.APInfo{
 			Name:       d.Name,
 			Model:      d.Model,
 			MAC:        d.MAC,
@@ -351,14 +341,7 @@ func (c *Client) buildSummary(devices []rawDevice, clients []rawClient, dt float
 		}
 		if dt > 0 {
 			if prev, ok := c.prevAP[d.MAC]; ok {
-				ap.TxRate = float64(d.TxBytes-prev.tx) / dt
-				ap.RxRate = float64(d.RxBytes-prev.rx) / dt
-				if ap.TxRate < 0 {
-					ap.TxRate = 0
-				}
-				if ap.RxRate < 0 {
-					ap.RxRate = 0
-				}
+				ap.TxRate, ap.RxRate = wifi.ComputeRates(d.TxBytes, d.RxBytes, prev, dt)
 			}
 		}
 		aps = append(aps, ap)
@@ -389,19 +372,12 @@ func (c *Client) buildSummary(devices []rawDevice, clients []rawClient, dt float
 		}
 	}
 
-	var ssids []SSIDStat
+	var ssids []wifi.SSIDStat
 	for name, a := range ssidMap {
-		s := SSIDStat{Name: name, NumClients: a.count, TxBytes: a.txBytes, RxBytes: a.rxBytes}
+		s := wifi.SSIDStat{Name: name, NumClients: a.count, TxBytes: a.txBytes, RxBytes: a.rxBytes}
 		if dt > 0 {
 			if prev, ok := c.prevSSID[name]; ok {
-				s.TxRate = float64(a.txBytes-prev.tx) / dt
-				s.RxRate = float64(a.rxBytes-prev.rx) / dt
-				if s.TxRate < 0 {
-					s.TxRate = 0
-				}
-				if s.RxRate < 0 {
-					s.RxRate = 0
-				}
+				s.TxRate, s.RxRate = wifi.ComputeRates(a.txBytes, a.rxBytes, prev, dt)
 			}
 		}
 		ssids = append(ssids, s)
@@ -415,12 +391,12 @@ func (c *Client) buildSummary(devices []rawDevice, clients []rawClient, dt float
 	}
 
 	// Build per-client list (wireless only), sorted by total traffic descending
-	var clientInfos []ClientInfo
+	var clientInfos []wifi.ClientInfo
 	for _, cl := range clients {
 		if cl.IsWired {
 			continue
 		}
-		ci := ClientInfo{
+		ci := wifi.ClientInfo{
 			MAC:      cl.MAC,
 			Hostname: cl.Hostname,
 			IP:       cl.IP,
@@ -435,14 +411,7 @@ func (c *Client) buildSummary(devices []rawDevice, clients []rawClient, dt float
 		}
 		if dt > 0 {
 			if prev, ok := c.prevCli[cl.MAC]; ok {
-				ci.TxRate = float64(cl.TxBytes-prev.tx) / dt
-				ci.RxRate = float64(cl.RxBytes-prev.rx) / dt
-				if ci.TxRate < 0 {
-					ci.TxRate = 0
-				}
-				if ci.RxRate < 0 {
-					ci.RxRate = 0
-				}
+				ci.TxRate, ci.RxRate = wifi.ComputeRates(cl.TxBytes, cl.RxBytes, prev, dt)
 			}
 		}
 		clientInfos = append(clientInfos, ci)
@@ -452,7 +421,7 @@ func (c *Client) buildSummary(devices []rawDevice, clients []rawClient, dt float
 			(clientInfos[j].TxBytes + clientInfos[j].RxBytes)
 	})
 
-	return &Summary{
+	return &wifi.Summary{
 		ProviderName: "UniFi",
 		TotalAPs:     len(aps),
 		TotalClients: totalWireless,

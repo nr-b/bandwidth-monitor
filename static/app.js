@@ -593,20 +593,7 @@
         var order = ['TCP', 'UDP', 'ICMP', 'Other'], labels = [], values = [], colors = [];
         for (var i = 0; i < order.length; i++) { if (data[order[i]]) { labels.push(order[i]); values.push(data[order[i]]); colors.push(protoColors[order[i]]); } }
         for (var k in data) { if (order.indexOf(k) === -1) { labels.push(k); values.push(data[k]); colors.push('#71717a'); } }
-        protoChart.data.labels = labels;
-        protoChart.data.datasets[0].data = values;
-        protoChart.data.datasets[0].backgroundColor = colors;
-        protoChart.update('none');
-        var total = 0; for (var i = 0; i < values.length; i++) total += values[i];
-        var h = '';
-        for (var i = 0; i < labels.length; i++) {
-            var pct = total > 0 ? ((values[i] / total) * 100).toFixed(1) : '0.0';
-            h += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">';
-            h += '<div style="width:10px;height:10px;border-radius:2px;background:' + colors[i] + ';flex-shrink:0"></div>';
-            h += '<div><div style="font-size:13px;font-weight:600;color:var(--text-0)">' + labels[i] + '</div>';
-            h += '<div style="font-size:11px;color:var(--text-2)">' + formatBytes(values[i]) + ' &middot; ' + pct + '%</div></div></div>';
-        }
-        document.getElementById('protoLegend').innerHTML = h;
+        updateSimpleDoughnut(protoChart, document.getElementById('protoLegend'), labels, values, colors);
     }
 
     function updateCountries(countries) {
@@ -618,55 +605,16 @@
             legend.innerHTML = '<div style="text-align:center;color:var(--text-2);font-size:12px;padding:8px">No data</div>';
             return;
         }
-        // Chart: top 8 + rest
-        var chartMax = 8, chartLabels = [], chartValues = [], chartColors = [], rest = 0;
-        var total = 0;
-        for (var i = 0; i < countries.length; i++) total += countries[i].bytes;
-        for (var i = 0; i < countries.length; i++) {
-            if (i < chartMax) {
-                var flag = countryFlag(countries[i].country);
-                chartLabels.push(flag + ' ' + (countries[i].country_name || countries[i].country));
-                chartValues.push(countries[i].bytes);
-                chartColors.push(geoChartPalette[i % geoChartPalette.length]);
-            } else { rest += countries[i].bytes; }
-        }
-        if (rest > 0) { chartLabels.push('Others'); chartValues.push(rest); chartColors.push('#52525b'); }
-        countryChart.data.labels = chartLabels;
-        countryChart.data.datasets[0].data = chartValues;
-        countryChart.data.datasets[0].backgroundColor = chartColors;
-        countryChart.update('none');
-        // Legend: top entries
-        var lh = '';
-        var legendCount = Math.min(countries.length, chartMax);
-        for (var i = 0; i < legendCount; i++) {
-            var pct = total > 0 ? ((countries[i].bytes / total) * 100).toFixed(1) : '0.0';
-            var flag = countryFlag(countries[i].country);
-            lh += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
-            lh += '<div style="width:8px;height:8px;border-radius:2px;background:' + chartColors[i] + ';flex-shrink:0"></div>';
-            lh += '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:500;color:var(--text-0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + flag + ' ' + (countries[i].country_name || countries[i].country) + '</div>';
-            lh += '<div style="font-size:10px;color:var(--text-2)">' + formatBytes(countries[i].bytes) + ' &middot; ' + pct + '%</div></div></div>';
-        }
-        if (rest > 0) {
-            var rpct = total > 0 ? ((rest / total) * 100).toFixed(1) : '0.0';
-            lh += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
-            lh += '<div style="width:8px;height:8px;border-radius:2px;background:#52525b;flex-shrink:0"></div>';
-            lh += '<div style="flex:1"><div style="font-size:12px;font-weight:500;color:var(--text-0)">Others</div>';
-            lh += '<div style="font-size:10px;color:var(--text-2)">' + formatBytes(rest) + ' &middot; ' + rpct + '%</div></div></div>';
-        }
-        legend.innerHTML = lh;
-        // Detail table
-        var mx = countries[0].bytes || 1, h = '';
-        for (var i = 0; i < countries.length; i++) {
-            var c = countries[i];
-            var pct = ((c.bytes / mx) * 100).toFixed(1);
-            var flag = countryFlag(c.country);
-            h += '<tr><td><span class="' + rankClass(i) + '">' + (i + 1) + '</span></td>';
-            h += '<td>' + flag + ' <span style="font-weight:500">' + (c.country_name || c.country) + '</span> <span class="hostname" style="display:inline">' + c.country + '</span></td>';
-            h += '<td style="font-variant-numeric:tabular-nums">' + c.connections + '</td>';
-            h += '<td style="white-space:nowrap">' + formatBytes(c.bytes) + '</td>';
-            h += '<td class="bar-cell"><div class="bar-bg"></div><div class="bar-fill bw" style="width:' + pct + '%"></div></td></tr>';
-        }
-        tb.innerHTML = h;
+        fillDoughnut(countryChart, legend, countries,
+            function(c) { return countryFlag(c.country) + ' ' + (c.country_name || c.country); },
+            function(c) { return c.bytes; },
+            function(v) { return formatBytes(v); }
+        );
+        fillDetailTable('countryTable', countries,
+            function(c) { return countryFlag(c.country) + ' <span style="font-weight:500">' + (c.country_name || c.country) + '</span> <span class="hostname" style="display:inline">' + c.country + '</span>'; },
+            function(c) { return c.bytes; },
+            function(v) { return formatBytes(v); }, 'bw'
+        );
     }
 
     var ipvColors = { 'IPv4': '#60a5fa', 'IPv6': '#a855f7' };
@@ -678,22 +626,10 @@
             legend.innerHTML = '<div style="text-align:center;color:var(--text-2);font-size:12px;padding:8px">No data</div>';
             return;
         }
-        var labels = [], values = [], colors = [], total = 0;
-        if (data['IPv4']) { labels.push('IPv4'); values.push(data['IPv4']); colors.push(ipvColors['IPv4']); total += data['IPv4']; }
-        if (data['IPv6']) { labels.push('IPv6'); values.push(data['IPv6']); colors.push(ipvColors['IPv6']); total += data['IPv6']; }
-        ipvChart.data.labels = labels;
-        ipvChart.data.datasets[0].data = values;
-        ipvChart.data.datasets[0].backgroundColor = colors;
-        ipvChart.update('none');
-        var h = '';
-        for (var i = 0; i < labels.length; i++) {
-            var pct = total > 0 ? ((values[i] / total) * 100).toFixed(1) : '0.0';
-            h += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">';
-            h += '<div style="width:10px;height:10px;border-radius:2px;background:' + colors[i] + ';flex-shrink:0"></div>';
-            h += '<div><div style="font-size:13px;font-weight:600;color:var(--text-0)">' + labels[i] + '</div>';
-            h += '<div style="font-size:11px;color:var(--text-2)">' + formatBytes(values[i]) + ' &middot; ' + pct + '%</div></div></div>';
-        }
-        legend.innerHTML = h;
+        var labels = [], values = [], colors = [];
+        if (data['IPv4']) { labels.push('IPv4'); values.push(data['IPv4']); colors.push(ipvColors['IPv4']); }
+        if (data['IPv6']) { labels.push('IPv6'); values.push(data['IPv6']); colors.push(ipvColors['IPv6']); }
+        updateSimpleDoughnut(ipvChart, legend, labels, values, colors);
     }
 
     function updateASNs(asns) {
@@ -705,52 +641,16 @@
             legend.innerHTML = '<div style="text-align:center;color:var(--text-2);font-size:12px;padding:8px">No data</div>';
             return;
         }
-        // Chart: top 8 + rest
-        var chartMax = 8, chartLabels = [], chartValues = [], chartColors = [], rest = 0;
-        var total = 0;
-        for (var i = 0; i < asns.length; i++) total += asns[i].bytes;
-        for (var i = 0; i < asns.length; i++) {
-            if (i < chartMax) {
-                chartLabels.push((asns[i].as_org || 'AS' + asns[i].asn));
-                chartValues.push(asns[i].bytes);
-                chartColors.push(geoChartPalette[i % geoChartPalette.length]);
-            } else { rest += asns[i].bytes; }
-        }
-        if (rest > 0) { chartLabels.push('Others'); chartValues.push(rest); chartColors.push('#52525b'); }
-        asnChart.data.labels = chartLabels;
-        asnChart.data.datasets[0].data = chartValues;
-        asnChart.data.datasets[0].backgroundColor = chartColors;
-        asnChart.update('none');
-        // Legend: top entries
-        var lh = '';
-        var legendCount = Math.min(asns.length, chartMax);
-        for (var i = 0; i < legendCount; i++) {
-            var pct = total > 0 ? ((asns[i].bytes / total) * 100).toFixed(1) : '0.0';
-            lh += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
-            lh += '<div style="width:8px;height:8px;border-radius:2px;background:' + chartColors[i] + ';flex-shrink:0"></div>';
-            lh += '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:500;color:var(--text-0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (asns[i].as_org || 'Unknown') + '</div>';
-            lh += '<div style="font-size:10px;color:var(--text-2)">AS' + asns[i].asn + ' &middot; ' + formatBytes(asns[i].bytes) + ' &middot; ' + pct + '%</div></div></div>';
-        }
-        if (rest > 0) {
-            var rpct = total > 0 ? ((rest / total) * 100).toFixed(1) : '0.0';
-            lh += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
-            lh += '<div style="width:8px;height:8px;border-radius:2px;background:#52525b;flex-shrink:0"></div>';
-            lh += '<div style="flex:1"><div style="font-size:12px;font-weight:500;color:var(--text-0)">Others</div>';
-            lh += '<div style="font-size:10px;color:var(--text-2)">' + formatBytes(rest) + ' &middot; ' + rpct + '%</div></div></div>';
-        }
-        legend.innerHTML = lh;
-        // Detail table
-        var mx = asns[0].bytes || 1, h = '';
-        for (var i = 0; i < asns.length; i++) {
-            var a = asns[i];
-            var pct = ((a.bytes / mx) * 100).toFixed(1);
-            h += '<tr><td><span class="' + rankClass(i) + '">' + (i + 1) + '</span></td>';
-            h += '<td><span style="font-weight:500">' + (a.as_org || 'Unknown') + '</span> <span class="hostname" style="display:inline">AS' + a.asn + '</span></td>';
-            h += '<td style="font-variant-numeric:tabular-nums">' + a.connections + '</td>';
-            h += '<td style="white-space:nowrap">' + formatBytes(a.bytes) + '</td>';
-            h += '<td class="bar-cell"><div class="bar-bg"></div><div class="bar-fill vol" style="width:' + pct + '%"></div></td></tr>';
-        }
-        tb.innerHTML = h;
+        fillDoughnut(asnChart, legend, asns,
+            function(a) { return a.as_org || 'AS' + a.asn; },
+            function(a) { return a.bytes; },
+            function(v) { return formatBytes(v); }
+        );
+        fillDetailTable('asnTable', asns,
+            function(a) { return '<span style="font-weight:500">' + (a.as_org || 'Unknown') + '</span> <span class="hostname" style="display:inline">AS' + a.asn + '</span>'; },
+            function(a) { return a.bytes; },
+            function(v) { return formatBytes(v); }, 'vol'
+        );
     }
 
     var sse = null;
@@ -1570,62 +1470,46 @@
             var icmpV6 = t.icmp_v6 && t.icmp_v6.length > 1 ? t.icmp_v6 : null;
             var icmpLegacy = t.icmp && t.icmp.length > 1 ? t.icmp : null;
 
-            if (icmpV4 && icmpV6) {
-                h += '<div style="margin-bottom:10px">';
-                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">ICMP Ping <span style="color:#22d3ee">IPv4</span></div>';
-                h += renderLatencyChart(icmpV4, '#22d3ee', '#22d3ee');
-                h += '</div>';
-                h += '<div style="margin-bottom:10px">';
-                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">ICMP Ping <span style="color:#34d399">IPv6</span></div>';
-                h += renderLatencyChart(icmpV6, '#34d399', '#34d399');
-                h += '</div>';
-            } else if (icmpV4) {
-                h += '<div style="margin-bottom:10px">';
-                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">ICMP Ping (IPv4)</div>';
-                h += renderLatencyChart(icmpV4, '#22d3ee', '#22d3ee');
-                h += '</div>';
-            } else if (icmpV6) {
-                h += '<div style="margin-bottom:10px">';
-                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">ICMP Ping (IPv6)</div>';
-                h += renderLatencyChart(icmpV6, '#34d399', '#34d399');
-                h += '</div>';
-            } else if (icmpLegacy) {
-                h += '<div style="margin-bottom:10px">';
-                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">ICMP Ping</div>';
-                h += renderLatencyChart(icmpLegacy, '#22d3ee', '#22d3ee');
-                h += '</div>';
+            // Helper: render a latency chart section with label
+            function latencySection(label, v4Data, v6Data, legacyData, v4Color, v6Color, marginBottom) {
+                var mb = marginBottom ? 'margin-bottom:10px' : '';
+                var out = '';
+                if (v4Data && v6Data) {
+                    out += '<div style="margin-bottom:10px">';
+                    out += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">' + label + ' <span style="color:' + v4Color + '">IPv4</span></div>';
+                    out += renderLatencyChart(v4Data, v4Color, v4Color);
+                    out += '</div>';
+                    out += '<div style="' + mb + '">';
+                    out += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">' + label + ' <span style="color:' + v6Color + '">IPv6</span></div>';
+                    out += renderLatencyChart(v6Data, v6Color, v6Color);
+                    out += '</div>';
+                } else if (v4Data) {
+                    out += '<div style="' + mb + '">';
+                    out += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">' + label + ' (IPv4)</div>';
+                    out += renderLatencyChart(v4Data, v4Color, v4Color);
+                    out += '</div>';
+                } else if (v6Data) {
+                    out += '<div style="' + mb + '">';
+                    out += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">' + label + ' (IPv6)</div>';
+                    out += renderLatencyChart(v6Data, v6Color, v6Color);
+                    out += '</div>';
+                } else if (legacyData) {
+                    out += '<div style="' + mb + '">';
+                    out += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">' + label + '</div>';
+                    out += renderLatencyChart(legacyData, v4Color, v4Color);
+                    out += '</div>';
+                }
+                return out;
             }
+
+            h += latencySection('ICMP Ping', icmpV4, icmpV6, icmpLegacy, '#22d3ee', '#34d399', true);
 
             // HTTPS charts — show v4 and v6 separately if dual-stack
             var httpsV4 = t.https_v4 && t.https_v4.length > 1 ? t.https_v4 : null;
             var httpsV6 = t.https_v6 && t.https_v6.length > 1 ? t.https_v6 : null;
             var httpsLegacy = t.https && t.https.length > 1 ? t.https : null;
 
-            if (httpsV4 && httpsV6) {
-                h += '<div style="margin-bottom:10px">';
-                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">HTTPS <span style="color:#a78bfa">IPv4</span></div>';
-                h += renderLatencyChart(httpsV4, '#a78bfa', '#a78bfa');
-                h += '</div>';
-                h += '<div>';
-                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">HTTPS <span style="color:#fb923c">IPv6</span></div>';
-                h += renderLatencyChart(httpsV6, '#fb923c', '#fb923c');
-                h += '</div>';
-            } else if (httpsV4) {
-                h += '<div>';
-                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">HTTPS (IPv4)</div>';
-                h += renderLatencyChart(httpsV4, '#a78bfa', '#a78bfa');
-                h += '</div>';
-            } else if (httpsV6) {
-                h += '<div>';
-                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">HTTPS (IPv6)</div>';
-                h += renderLatencyChart(httpsV6, '#fb923c', '#fb923c');
-                h += '</div>';
-            } else if (httpsLegacy) {
-                h += '<div>';
-                h += '<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">HTTPS</div>';
-                h += renderLatencyChart(httpsLegacy, '#a78bfa', '#a78bfa');
-                h += '</div>';
-            }
+            h += latencySection('HTTPS', httpsV4, httpsV6, httpsLegacy, '#a78bfa', '#fb923c', false);
 
             h += '</div>';
         }
