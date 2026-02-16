@@ -299,6 +299,10 @@
     var MAX_PTS = 3600;
     var chartData = {};
     var sparklineData = {};
+    var _emaState = {}; // EMA smoothing state per interface
+    var EMA_ALPHA = 0.3; // 0.3 = responsive but smooth (higher = less smoothing)
+    var _yAxisMax = 0; // high-water mark for Y-axis stability
+    var _yAxisDecay = 0.995; // slow decay per update (~5s half-life at 1Hz)
 
     function updateChart() {
         var ds = [], ci = 0;
@@ -306,11 +310,26 @@
         for (var n of list) {
             if (!chartData[n]) continue;
             var c = chartColors[ci % chartColors.length];
-            ds.push({ label: n + ' RX', data: chartData[n].rx, borderColor: c.rx, backgroundColor: c.rxBg, fill: 'origin', tension: 0.3, pointRadius: 0, borderWidth: 1.5 });
-            ds.push({ label: n + ' TX', data: chartData[n].tx, borderColor: c.tx, backgroundColor: c.txBg, fill: 'origin', tension: 0.3, pointRadius: 0, borderWidth: 1.5 });
+            ds.push({ label: n + ' RX', data: chartData[n].rx, borderColor: c.rx, backgroundColor: c.rxBg, fill: false, tension: 0.4, pointRadius: 0, borderWidth: 1.5 });
+            ds.push({ label: n + ' TX', data: chartData[n].tx, borderColor: c.tx, backgroundColor: c.txBg, fill: false, tension: 0.4, pointRadius: 0, borderWidth: 1.5 });
             ci++;
         }
         trafficChart.data.datasets = ds;
+        // Stabilize Y-axis: use a high-water mark that decays slowly.
+        // This prevents the scale from jumping on every update.
+        var currentMax = 0;
+        for (var di = 0; di < ds.length; di++) {
+            var pts = ds[di].data;
+            for (var pi = Math.max(0, pts.length - 120); pi < pts.length; pi++) {
+                var av = Math.abs(pts[pi].y);
+                if (av > currentMax) currentMax = av;
+            }
+        }
+        _yAxisMax = Math.max(currentMax * 1.15, _yAxisMax * _yAxisDecay);
+        if (_yAxisMax > 0) {
+            trafficChart.options.scales.y.suggestedMax = _yAxisMax;
+            trafficChart.options.scales.y.suggestedMin = -_yAxisMax;
+        }
         trafficChart.update('none');
     }
 
@@ -2112,8 +2131,15 @@
         var now = new Date();
         for (var f of ifaces) {
             if (!chartData[f.name]) chartData[f.name] = { rx: [], tx: [] };
-            chartData[f.name].rx.push({ x: now, y: f.rx_rate || 0 });
-            chartData[f.name].tx.push({ x: now, y: -(f.tx_rate || 0) });
+            // EMA smoothing to reduce 1-second rate jitter
+            if (!_emaState[f.name]) _emaState[f.name] = { rx: 0, tx: 0 };
+            var em = _emaState[f.name];
+            var rawRx = f.rx_rate || 0;
+            var rawTx = f.tx_rate || 0;
+            em.rx = em.rx === 0 ? rawRx : EMA_ALPHA * rawRx + (1 - EMA_ALPHA) * em.rx;
+            em.tx = em.tx === 0 ? rawTx : EMA_ALPHA * rawTx + (1 - EMA_ALPHA) * em.tx;
+            chartData[f.name].rx.push({ x: now, y: em.rx });
+            chartData[f.name].tx.push({ x: now, y: -(em.tx) });
             if (chartData[f.name].rx.length > MAX_PTS) { chartData[f.name].rx.shift(); chartData[f.name].tx.shift(); }
         }
 
