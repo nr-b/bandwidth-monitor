@@ -21,6 +21,12 @@ const (
 	bucketSize                      = 1 * time.Minute
 	maxAge                          = 24 * time.Hour
 	maxHostsPerBucket               = 10000 // cap to bound memory on busy routers
+
+	// Rate ring: short circular buffer for responsive rate calculation.
+	// 6 slots × 5s = 30s window. Rates are computed over the filled
+	// portion of the ring, so peaks show within 5–10s instead of 60–120s.
+	rateSlotDuration = 5 * time.Second
+	rateSlotCount    = 6
 )
 
 type TalkerKey struct {
@@ -52,6 +58,12 @@ type bucket struct {
 	ipVerBytes map[string]uint64
 }
 
+// rateSlot is one slot in the short rate ring buffer.
+type rateSlot struct {
+	timestamp time.Time
+	hosts     map[string]*hostAccum
+}
+
 type hostAccum struct {
 	bytes   uint64
 	rxBytes uint64 // towards local nets (download)
@@ -71,6 +83,11 @@ type Tracker struct {
 	stopCh      chan struct{}
 	dns         *resolver.Resolver
 	geoDB       *geoip.DB
+
+	// Rate ring: short circular buffer (5s slots) for responsive rate calc.
+	// Protected by the same mu as buckets/current.
+	rateRing    [rateSlotCount]*rateSlot
+	rateRingIdx int // index of current slot in rateRing
 }
 
 func New(devices []string, promiscuous bool, localNets []*net.IPNet, geoDB *geoip.DB, dns *resolver.Resolver) *Tracker {
@@ -141,7 +158,7 @@ func New(devices []string, promiscuous bool, localNets []*net.IPNet, geoDB *geoi
 		log.Printf("talkers: LAN interfaces for host accounting: %s", strings.Join(names, ", "))
 	}
 
-	return &Tracker{
+	trk := &Tracker{
 		devices:     devices,
 		promiscuous: promiscuous,
 		localNets:   localNets,
@@ -152,6 +169,12 @@ func New(devices []string, promiscuous bool, localNets []*net.IPNet, geoDB *geoi
 		dns:         dns,
 		geoDB:       geoDB,
 	}
+	// Initialize first rate ring slot
+	trk.rateRing[0] = &rateSlot{
+		timestamp: time.Now(),
+		hosts:     make(map[string]*hostAccum),
+	}
+	return trk
 }
 
 func (t *Tracker) Run() {
@@ -174,6 +197,7 @@ func (t *Tracker) Run() {
 	}
 
 	go t.rotateBuckets()
+	go t.rotateRateRing()
 
 	for _, dev := range devices {
 		if !t.lanDevices[dev] {
@@ -254,77 +278,35 @@ func (t *Tracker) TopByVolume(n int) []TalkerStat {
 }
 
 func (t *Tracker) TopByBandwidth(n int) []TalkerStat {
-	// Use a sliding window: combine the current bucket with the previous
-	// bucket to avoid rate dropping to zero on bucket rotation.
-	// The rate is calculated over the combined time window.
+	// Use the short rate ring (5s slots, ~30s window) for responsive rate
+	// calculation. The 1-minute buckets are still used for 24h volume.
 	t.mu.RLock()
 	if t.current == nil {
 		t.mu.RUnlock()
 		return nil
 	}
 
-	now := time.Now()
-	windowStart := t.current.timestamp
-	// Include previous bucket if it exists and is recent
-	var prevBucket *bucket
-	if len(t.buckets) > 0 {
-		prev := t.buckets[len(t.buckets)-1]
-		if now.Sub(prev.timestamp) < 2*bucketSize {
-			prevBucket = prev
-			windowStart = prev.timestamp
-		}
-	}
-	elapsed := now.Sub(windowStart).Seconds()
-	if elapsed < 1 {
-		elapsed = 1
-	}
-
-	type rawEntry struct {
-		ip      string
-		bytes   uint64
-		rxBytes uint64
-		txBytes uint64
-		packets uint64
-	}
-	raw := make(map[string]*rawEntry)
-
-	// Add previous bucket data
-	if prevBucket != nil {
-		for ip, acc := range prevBucket.hosts {
-			raw[ip] = &rawEntry{ip: ip, bytes: acc.bytes, rxBytes: acc.rxBytes, txBytes: acc.txBytes, packets: acc.packets}
-		}
-	}
-	// Add current bucket data (may overlap keys — accumulate)
-	for ip, acc := range t.current.hosts {
-		if e, ok := raw[ip]; ok {
-			e.bytes += acc.bytes
-			e.rxBytes += acc.rxBytes
-			e.txBytes += acc.txBytes
-			e.packets += acc.packets
-		} else {
-			raw[ip] = &rawEntry{ip: ip, bytes: acc.bytes, rxBytes: acc.rxBytes, txBytes: acc.txBytes, packets: acc.packets}
-		}
-	}
+	rates, elapsed := t.rateFromRing()
 	t.mu.RUnlock()
 
 	// Step 2: Build stats, sort, and trim before enrichment
 	// Only include external IPs in the top talkers list
-	list := make([]TalkerStat, 0, len(raw))
-	for _, r := range raw {
-		ip := net.ParseIP(r.ip)
-		if ip != nil && (ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()) {
+	list := make([]TalkerStat, 0, len(rates))
+	for ip, r := range rates {
+		parsedIP := net.ParseIP(ip)
+		if parsedIP != nil && (parsedIP.IsPrivate() || parsedIP.IsLoopback() || parsedIP.IsLinkLocalUnicast()) {
 			continue
 		}
 		// Skip IPs on local subnets (e.g. LAN clients with global IPv6)
-		if ip != nil && t.isLocalNet(ip) {
+		if parsedIP != nil && t.isLocalNet(parsedIP) {
 			continue
 		}
 		// Skip the router's own IPs (WAN, VPN tunnel endpoints, etc)
-		if _, isSelf := t.selfIPs[r.ip]; isSelf {
+		if _, isSelf := t.selfIPs[ip]; isSelf {
 			continue
 		}
 		list = append(list, TalkerStat{
-			IP:         r.ip,
+			IP:         ip,
 			TotalBytes: r.bytes,
 			RxBytes:    r.rxBytes,
 			TxBytes:    r.txBytes,
@@ -477,6 +459,7 @@ func (t *Tracker) captureDevice(device string) {
 			t.mu.Unlock()
 			continue
 		}
+		rSlot := t.rateRing[t.rateRingIdx]
 		for i := range batch {
 			p := &batch[i]
 			// Host accounting
@@ -499,6 +482,15 @@ func (t *Tracker) captureDevice(device string) {
 				}
 				t.current.hosts[entry.ip].bytes += p.wireLen
 				t.current.hosts[entry.ip].packets++
+
+				// Rate ring: mirror byte + packet accounting
+				if rSlot != nil {
+					if _, ok := rSlot.hosts[entry.ip]; !ok {
+						rSlot.hosts[entry.ip] = &hostAccum{}
+					}
+					rSlot.hosts[entry.ip].bytes += p.wireLen
+					rSlot.hosts[entry.ip].packets++
+				}
 			}
 
 			// Direction detection
@@ -507,9 +499,19 @@ func (t *Tracker) captureDevice(device string) {
 					if h, ok := t.current.hosts[p.dstStr]; ok {
 						h.txBytes += p.wireLen
 					}
+					if rSlot != nil {
+						if h, ok := rSlot.hosts[p.dstStr]; ok {
+							h.txBytes += p.wireLen
+						}
+					}
 				} else if !p.srcLocal && p.dstLocal {
 					if h, ok := t.current.hosts[p.srcStr]; ok {
 						h.rxBytes += p.wireLen
+					}
+					if rSlot != nil {
+						if h, ok := rSlot.hosts[p.srcStr]; ok {
+							h.rxBytes += p.wireLen
+						}
 					}
 				} else if p.srcLocal && p.dstLocal {
 					if p.srcSelf && !p.dstSelf {
@@ -519,12 +521,28 @@ func (t *Tracker) captureDevice(device string) {
 						if h, ok := t.current.hosts[p.srcStr]; ok {
 							h.txBytes += p.wireLen
 						}
+						if rSlot != nil {
+							if h, ok := rSlot.hosts[p.dstStr]; ok {
+								h.txBytes += p.wireLen
+							}
+							if h, ok := rSlot.hosts[p.srcStr]; ok {
+								h.txBytes += p.wireLen
+							}
+						}
 					} else if p.dstSelf && !p.srcSelf {
 						if h, ok := t.current.hosts[p.srcStr]; ok {
 							h.rxBytes += p.wireLen
 						}
 						if h, ok := t.current.hosts[p.dstStr]; ok {
 							h.rxBytes += p.wireLen
+						}
+						if rSlot != nil {
+							if h, ok := rSlot.hosts[p.srcStr]; ok {
+								h.rxBytes += p.wireLen
+							}
+							if h, ok := rSlot.hosts[p.dstStr]; ok {
+								h.rxBytes += p.wireLen
+							}
 						}
 					}
 				}
@@ -566,6 +584,68 @@ func (t *Tracker) rotateBuckets() {
 			return
 		}
 	}
+}
+
+// rotateRateRing advances the short rate ring every rateSlotDuration.
+func (t *Tracker) rotateRateRing() {
+	ticker := time.NewTicker(rateSlotDuration)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			t.mu.Lock()
+			t.rateRingIdx = (t.rateRingIdx + 1) % rateSlotCount
+			t.rateRing[t.rateRingIdx] = &rateSlot{
+				timestamp: time.Now(),
+				hosts:     make(map[string]*hostAccum),
+			}
+			t.mu.Unlock()
+		case <-t.stopCh:
+			return
+		}
+	}
+}
+
+// rateFromRing computes per-IP rates from the rate ring (excluding the
+// current slot which is still accumulating). Returns bytes/elapsed maps.
+// Must be called with t.mu held (at least RLock).
+func (t *Tracker) rateFromRing() (rates map[string]*hostAccum, elapsed float64) {
+	now := time.Now()
+	rates = make(map[string]*hostAccum)
+	var oldest time.Time
+
+	for i := 0; i < rateSlotCount; i++ {
+		slot := t.rateRing[i]
+		if slot == nil {
+			continue
+		}
+		// Include all slots (the current one is still accumulating,
+		// but including it keeps rates responsive to new bursts).
+		if oldest.IsZero() || slot.timestamp.Before(oldest) {
+			oldest = slot.timestamp
+		}
+		for ip, acc := range slot.hosts {
+			if e, ok := rates[ip]; ok {
+				e.bytes += acc.bytes
+				e.rxBytes += acc.rxBytes
+				e.txBytes += acc.txBytes
+				e.packets += acc.packets
+			} else {
+				rates[ip] = &hostAccum{
+					bytes:   acc.bytes,
+					rxBytes: acc.rxBytes,
+					txBytes: acc.txBytes,
+					packets: acc.packets,
+				}
+			}
+		}
+	}
+
+	elapsed = now.Sub(oldest).Seconds()
+	if elapsed < 1 {
+		elapsed = 1
+	}
+	return
 }
 
 // GetProtocolBreakdown returns accumulated bytes per L4 protocol over the 24h window.
@@ -843,34 +923,13 @@ func (t *Tracker) HostTotals(ip string) *TalkerStat {
 			stat.TxBytes += acc.txBytes
 			stat.Packets += acc.packets
 		}
-		// Sliding window rate: use current + previous bucket to avoid
-		// rate dropping to zero on bucket rotation.
-		now := time.Now()
-		windowStart := t.current.timestamp
-		var rateBytes, rateRx, rateTx uint64
-		if acc, ok := t.current.hosts[ip]; ok {
-			rateBytes += acc.bytes
-			rateRx += acc.rxBytes
-			rateTx += acc.txBytes
+		// Rate from the short rate ring (5s slots, ~30s window)
+		rates, elapsed := t.rateFromRing()
+		if r, ok := rates[ip]; ok {
+			stat.RateBytes = float64(r.bytes) / elapsed
+			stat.RxRate = float64(r.rxBytes) / elapsed
+			stat.TxRate = float64(r.txBytes) / elapsed
 		}
-		if len(t.buckets) > 0 {
-			prev := t.buckets[len(t.buckets)-1]
-			if now.Sub(prev.timestamp) < 2*bucketSize {
-				windowStart = prev.timestamp
-				if acc, ok := prev.hosts[ip]; ok {
-					rateBytes += acc.bytes
-					rateRx += acc.rxBytes
-					rateTx += acc.txBytes
-				}
-			}
-		}
-		elapsed := now.Sub(windowStart).Seconds()
-		if elapsed < 1 {
-			elapsed = 1
-		}
-		stat.RateBytes = float64(rateBytes) / elapsed
-		stat.RxRate = float64(rateRx) / elapsed
-		stat.TxRate = float64(rateTx) / elapsed
 	}
 	t.mu.RUnlock()
 
