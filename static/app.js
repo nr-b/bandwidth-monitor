@@ -496,8 +496,9 @@
             var pct = ((t[vk] / mx) * 100).toFixed(1);
             var flag = t.country ? countryFlag(t.country) + ' ' : '';
             var geo = '';
-            if (t.as_org) geo = '<span class="hostname">' + flag + (t.country_name || '') + ' &middot; AS' + (t.asn || '') + ' ' + t.as_org + '</span>';
-            else if (t.country_name) geo = '<span class="hostname">' + flag + t.country_name + '</span>';
+            var geoName = (t.city && t.country_name) ? t.city + ', ' + t.country_name : (t.country_name || '');
+            if (t.as_org) geo = '<span class="hostname">' + flag + geoName + ' &middot; AS' + (t.asn || '') + ' ' + t.as_org + '</span>';
+            else if (geoName) geo = '<span class="hostname">' + flag + geoName + '</span>';
             var host = t.hostname && t.hostname !== t.ip
                 ? '<span class="ip-cell ip-clickable" data-ip="' + t.ip + '">' + t.ip + '</span><span class="hostname">' + t.hostname + '</span>' + geo
                 : '<span class="ip-cell ip-clickable" data-ip="' + t.ip + '">' + t.ip + '</span>' + geo;
@@ -1062,8 +1063,9 @@
             var display = useBytes ? formatBytes(val) : val.toLocaleString();
             var flag = host.country ? countryFlag(host.country) + ' ' : '';
             var geo = '';
-            if (host.as_org) geo = '<span class="hostname">' + flag + (host.country_name || '') + ' &middot; AS' + (host.asn || '') + ' ' + host.as_org + '</span>';
-            else if (host.country_name) geo = '<span class="hostname">' + flag + host.country_name + '</span>';
+            var geoName = (host.city && host.country_name) ? host.city + ', ' + host.country_name : (host.country_name || '');
+            if (host.as_org) geo = '<span class="hostname">' + flag + geoName + ' &middot; AS' + (host.asn || '') + ' ' + host.as_org + '</span>';
+            else if (geoName) geo = '<span class="hostname">' + flag + geoName + '</span>';
             var cell = host.hostname
                 ? '<span class="ip-cell ip-clickable" data-ip="' + host.ip + '">' + host.ip + '</span><span class="hostname">' + host.hostname + '</span>' + geo
                 : '<span class="ip-cell ip-clickable" data-ip="' + host.ip + '">' + host.ip + '</span>' + geo;
@@ -1125,11 +1127,12 @@
             var replDstHL = (e.repl_dst !== e.orig_src) ? ' style="color:var(--rx);font-weight:600"' : '';
 
             // Helper: render IP cell with optional enrichment below
-            function ipCell(addr, host, geo, asn, hlStyle) {
+            function ipCell(addr, host, geo, city, asn, hlStyle) {
                 var s = '<td' + (hlStyle || '') + '><div style="font-family:JetBrains Mono,monospace;font-size:11px;white-space:nowrap">' + addr + '</div>';
                 var info = [];
                 if (host) info.push(host);
-                if (geo) info.push(countryFlag(geo) + ' ' + geo);
+                if (city && geo) info.push(countryFlag(geo) + ' ' + city + ', ' + geo);
+                else if (geo) info.push(countryFlag(geo) + ' ' + geo);
                 if (asn) info.push(asn);
                 if (info.length) s += '<div style="font-size:9px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px">' + info.join(' · ') + '</div>';
                 s += '</td>';
@@ -1139,8 +1142,8 @@
             h += '<tr>';
             h += '<td style="font-size:12px;font-weight:500">' + (e.protocol || '').toUpperCase() + '</td>';
             h += '<td>' + (e.state ? '<span class="nat-state-badge ' + stateClass + '">' + e.state + '</span>' : '<span style="color:var(--text-2)">—</span>') + '</td>';
-            h += ipCell(origSrc, e.orig_src_host, e.orig_src_geo, e.orig_src_asn, '');
-            h += ipCell(origDst, e.orig_dst_host, e.orig_dst_geo, e.orig_dst_asn, '');
+            h += ipCell(origSrc, e.orig_src_host, e.orig_src_geo, e.orig_src_city, e.orig_src_asn, '');
+            h += ipCell(origDst, e.orig_dst_host, e.orig_dst_geo, e.orig_dst_city, e.orig_dst_asn, '');
             h += '<td style="font-family:JetBrains Mono,monospace;font-size:11px;white-space:nowrap"' + replSrcHL + '>' + replSrc + '</td>';
             h += '<td style="font-family:JetBrains Mono,monospace;font-size:11px;white-space:nowrap"' + replDstHL + '>' + replDst + '</td>';
             h += '<td><span class="nat-badge ' + e.nat_type + '">' + (e.nat_type || 'none').toUpperCase() + '</span></td>';
@@ -1911,9 +1914,9 @@
         var flag = d.country ? countryFlag(d.country) + ' ' : '';
         titleEl.textContent = flag + (d.hostname || d.ip);
         var sub = d.ip;
-        if (d.country_name) sub += ' \u00b7 ' + d.country_name;
+        if (d.city && d.country_name) sub += ' \u00b7 ' + d.city + ', ' + d.country_name;
+        else if (d.country_name) sub += ' \u00b7 ' + d.country_name;
         if (d.as_org) sub += ' \u00b7 AS' + (d.asn || '') + ' ' + d.as_org;
-        if (d.city) sub += ' \u00b7 ' + d.city;
         subtitleEl.textContent = sub;
 
         var h = '';

@@ -143,6 +143,7 @@ func HostDetail(t *talkers.Tracker, ct *conntrack.Tracker, geoDB *geoip.DB) http
 			detail.Hostname = totals.Hostname
 			detail.Country = totals.Country
 			detail.CountryName = totals.CountryName
+			detail.City = totals.City
 			detail.ASN = totals.ASN
 			detail.ASOrg = totals.ASOrg
 			detail.TotalBytes = totals.TotalBytes
@@ -154,8 +155,8 @@ func HostDetail(t *talkers.Tracker, ct *conntrack.Tracker, geoDB *geoip.DB) http
 			detail.TxRate = totals.TxRate
 		}
 
-		// GeoIP city (not in TalkerStat)
-		if geoDB != nil && geoDB.Available() {
+		// GeoIP fallback (in case TalkerStat had no geo data)
+		if geoDB != nil && geoDB.Available() && detail.Country == "" {
 			if geo := geoDB.Lookup(ip); geo != nil {
 				detail.City = geo.City
 				if detail.Country == "" {
