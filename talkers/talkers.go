@@ -679,6 +679,19 @@ func (t *Tracker) GetGeoBreakdown() *GeoBreakdown {
 	asns := make(map[uint]*asnAcc)
 
 	for ip, bytes := range ipTotals {
+		// Skip local/private/self IPs — they have no GeoIP data and
+		// inflate the "Unknown" category.
+		parsedIP := net.ParseIP(ip)
+		if parsedIP != nil && (parsedIP.IsPrivate() || parsedIP.IsLoopback() || parsedIP.IsLinkLocalUnicast()) {
+			continue
+		}
+		if parsedIP != nil && t.isLocalNet(parsedIP) {
+			continue
+		}
+		if _, isSelf := t.selfIPs[ip]; isSelf {
+			continue
+		}
+
 		geo := t.geoDB.Lookup(ip)
 
 		// Country aggregation
