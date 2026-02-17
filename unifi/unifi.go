@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"bandwidth-monitor/httputil"
 	"bandwidth-monitor/wifi"
 )
 
@@ -54,9 +55,9 @@ func New(baseURL, user, pass, site string, pollInterval time.Duration) *Client {
 		httpClient: &http.Client{
 			Timeout: 15 * time.Second,
 			Jar:     jar,
-			Transport: &http.Transport{
+			Transport: httputil.WrapTransport(&http.Transport{
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			},
+			}),
 		},
 		stopCh: make(chan struct{}),
 	}

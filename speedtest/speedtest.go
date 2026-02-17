@@ -9,6 +9,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"bandwidth-monitor/httputil"
 )
 
 // Result holds the outcome of a single speed test run.
@@ -146,7 +148,8 @@ func (t *Tester) run(ch chan<- Progress) {
 
 func measurePing(server string, samples int) (avgMs, jitterMs float64, err error) {
 	client := &http.Client{
-		Timeout: 10 * time.Second,
+		Timeout:   10 * time.Second,
+		Transport: httputil.WrapTransport(nil),
 	}
 
 	var pings []float64
@@ -217,7 +220,8 @@ func measureDownload(server string, ch chan<- Progress) (float64, error) {
 		go func() {
 			defer wg.Done()
 			client := &http.Client{
-				Timeout: duration + 5*time.Second,
+				Timeout:   duration + 5*time.Second,
+				Transport: httputil.WrapTransport(nil),
 			}
 			buf := make([]byte, 256*1024)
 			for time.Now().Before(deadline) {
@@ -302,7 +306,8 @@ func measureUpload(server string, ch chan<- Progress) (float64, error) {
 		go func() {
 			defer wg.Done()
 			client := &http.Client{
-				Timeout: duration + 5*time.Second,
+				Timeout:   duration + 5*time.Second,
+				Transport: httputil.WrapTransport(nil),
 			}
 			data := make([]byte, chunkSize)
 			rand.Read(data)

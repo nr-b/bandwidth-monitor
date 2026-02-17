@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"bandwidth-monitor/dns"
+	"bandwidth-monitor/httputil"
 )
 
 // Client polls a Pi-hole v6 instance for DNS statistics.
@@ -115,9 +116,9 @@ func New(baseURL, password string, pollInterval time.Duration) *Client {
 		interval: pollInterval,
 		httpClient: &http.Client{
 			Timeout: 15 * time.Second,
-			Transport: &http.Transport{
+			Transport: httputil.WrapTransport(&http.Transport{
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			},
+			}),
 		},
 		stopCh: make(chan struct{}),
 	}

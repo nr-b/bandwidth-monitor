@@ -33,7 +33,10 @@
           nativeBuildInputs = [ pkgs.pkg-config ];
 
           CGO_ENABLED = 1;
-          ldflags = [ "-s" "-w" ];
+          ldflags = [
+            "-s" "-w"
+            "-X" "bandwidth-monitor/version.Version=${bandwidth-monitor.version}"
+          ];
 
           postInstall = ''
             # Install GeoIP databases from flake inputs

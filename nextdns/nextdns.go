@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"bandwidth-monitor/dns"
+	"bandwidth-monitor/httputil"
 )
 
 const apiBase = "https://api.nextdns.io"
@@ -62,7 +63,7 @@ func New(profile, apiKey string, pollInterval time.Duration) *Client {
 		profile:  profile,
 		apiKey:   apiKey,
 		interval: pollInterval,
-		httpC:    &http.Client{Timeout: 15 * time.Second},
+		httpC:    &http.Client{Timeout: 15 * time.Second, Transport: httputil.WrapTransport(nil)},
 		stopCh:   make(chan struct{}),
 	}
 }

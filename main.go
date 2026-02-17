@@ -31,6 +31,7 @@ import (
 	"bandwidth-monitor/speedtest"
 	"bandwidth-monitor/talkers"
 	"bandwidth-monitor/unifi"
+	"bandwidth-monitor/version"
 	"bandwidth-monitor/wifi"
 )
 
@@ -293,7 +294,7 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	log.Printf("server: starting on %s", listenAddr)
+	log.Printf("server: bandwidth-monitor %s starting on %s", version.String(), listenAddr)
 	if strings.HasPrefix(listenAddr, ":") {
 		log.Printf("server: open http://localhost%s in your browser", listenAddr)
 	} else {
@@ -366,6 +367,8 @@ func buildIndexHTML(embedded embed.FS, versions map[string]string) []byte {
 		// Replace src="app.js"     → src="app.js?v=abcd1234"
 		html = strings.ReplaceAll(html, `"`+name+`"`, `"`+name+"?v="+ver+`"`)
 	}
+	// Inject the build version into the header.
+	html = strings.Replace(html, "Bandwidth Monitor<span>v1.0</span>", "Bandwidth Monitor<span>"+version.String()+"</span>", 1)
 	return []byte(html)
 }
 
@@ -373,7 +376,7 @@ func buildIndexHTML(embedded embed.FS, versions map[string]string) []byte {
 // on every response, allowing clients to verify they're talking to the right service.
 func withSignature(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Bandwidth-Monitor", "1")
+		w.Header().Set("X-Bandwidth-Monitor", version.String())
 		h.ServeHTTP(w, r)
 	})
 }
