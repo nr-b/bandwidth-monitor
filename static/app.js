@@ -1880,7 +1880,7 @@
     }
 
     function renderHostHistoryChart(history) {
-        var W = 760, H = 160, ML = 55, PT = 8, PB = 16;
+        var W = 760, H = 175, ML = 55, PT = 8, PB = 28;
         var chartW = W - ML;
         var maxVal = 1;
         for (var i = 0; i < history.length; i++) {
@@ -1934,11 +1934,25 @@
         svg += '<path d="' + smoothFill(rxPts) + '" fill="#22d3ee" opacity="0.1"/>';
         svg += '<path d="' + smoothPath(rxPts) + '" fill="none" stroke="#22d3ee" stroke-width="1.5" stroke-linejoin="round"/>';
 
-        // Legend
-        svg += '<circle cx="' + (ML + 8) + '" cy="' + (H - 3) + '" r="3" fill="#22d3ee"/>';
-        svg += '<text x="' + (ML + 14) + '" y="' + (H - 0) + '" fill="var(--text-2)" font-size="8px">RX</text>';
-        svg += '<circle cx="' + (ML + 38) + '" cy="' + (H - 3) + '" r="3" fill="#a78bfa"/>';
-        svg += '<text x="' + (ML + 44) + '" y="' + (H - 0) + '" fill="var(--text-2)" font-size="8px">TX</text>';
+        // Legend (top-right)
+        svg += '<circle cx="' + (W - 48) + '" cy="' + (PT + 6) + '" r="3" fill="#22d3ee"/>';
+        svg += '<text x="' + (W - 42) + '" y="' + (PT + 9) + '" fill="var(--text-2)" font-size="8px">RX</text>';
+        svg += '<circle cx="' + (W - 22) + '" cy="' + (PT + 6) + '" r="3" fill="#a78bfa"/>';
+        svg += '<text x="' + (W - 16) + '" y="' + (PT + 9) + '" fill="var(--text-2)" font-size="8px">TX</text>';
+
+        // X-axis time labels
+        if (history.length > 1 && history[0].ts) {
+            var pad2 = function(n) { return n < 10 ? '0' + n : '' + n; };
+            var timeFmt = function(d) { return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); };
+            var nLabels = Math.min(6, Math.max(2, Math.floor(history.length / 60)));
+            for (var li = 0; li < nLabels; li++) {
+                var frac = li / (nLabels - 1);
+                var idx = Math.round(frac * (history.length - 1));
+                var lx = ML + (idx / (history.length - 1)) * chartW;
+                var anchor = li === 0 ? 'start' : (li === nLabels - 1 ? 'end' : 'middle');
+                svg += '<text x="' + lx.toFixed(1) + '" y="' + (H - 3) + '" text-anchor="' + anchor + '" fill="var(--text-3)" font-size="8px">' + timeFmt(new Date(history[idx].ts)) + '</text>';
+            }
+        }
 
         svg += '</svg>';
         return svg;
