@@ -74,13 +74,14 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 - **VPN routing detection** — configurable sentinel files to show whether a VPN interface is actively routing traffic
 - **Real-time line chart** — Chart.js with per-interface filtering and 1-hour sliding window
 - **Per-interface sparklines** — mini inline charts on each interface card
-- **Top talkers by bandwidth** — live transfer rates via packet capture
+- **Top talkers by bandwidth** — live transfer rates via packet capture with 5-second rate ring for responsive peak detection
 - **Top talkers by volume** — rolling 24-hour totals with 1-minute bucket aggregation
+- **Host detail modal** — click any IP to see per-host stats, 24h traffic volume chart with time labels, and active conntrack flows
 - **Protocol breakdown** — TCP / UDP / ICMP / Other pie chart
 - **IP version breakdown** — IPv4 vs IPv6 traffic split
-- **GeoIP enrichment** — country flags, ASN org names via MaxMind MMDB files
+- **GeoIP enrichment** — country flags, city names, ASN org names via MaxMind MMDB files (city-level precision with GeoLite2-City)
 - **Reverse DNS** — resolves IPs to hostnames via a shared resolver with TTL-based cache expiry and bounded concurrency
-- **Traffic world map** — live SVG map showing traffic flows by country, sized by volume, with animated flow lines to active destinations
+- **Traffic world map** — live SVG map showing traffic flows with directional RX/TX lines (green for download, orange for upload), city-level coordinates when available, animated flow lines sized by rate, with zoom/pan controls
 - **Latency monitor** — continuous ICMP + HTTPS probes against configurable targets (default: FFMUC anycast, Quad9, Digitalcourage) with rolling sparklines, RTT, jitter, and packet loss; dual-stack IPv4+IPv6; 15-minute history
 
 ### DNS Tab
@@ -142,7 +143,7 @@ Single-binary deployment with an embedded web UI, optional DNS stats (AdGuard Ho
 
 - **Linux** — uses netlink (`RTM_GETLINK`, `RTM_GETADDR`) for interface stats and addresses
 - **nf_conntrack kernel module** — for the NAT tab (loaded automatically on most routers)
-- **Go 1.24+** — to build
+- **Go 1.25+** — to build
 
 
 ### Build & Run
@@ -591,7 +592,7 @@ Or for the current user only, symlink the script and edit the `Exec=` path in th
 main.go                   → entry point, env config, wires all components
 collector/                → netlink-based interface stats (RTM_GETLINK/RTM_GETADDR), rates, 24h history, VPN routing
 conntrack/                → netlink-based conntrack (NAT) table reader via ti-mo/conntrack
-talkers/                  → AF_PACKET raw-socket capture, per-IP tracking, 1-min bucket aggregation
+talkers/                  → AF_PACKET raw-socket capture, per-IP tracking, 1-min bucket aggregation + 5s rate ring for responsive peaks
 resolver/                 → shared reverse-DNS resolver with TTL-based cache and bounded concurrency
 latency/                  → continuous ICMP + HTTPS latency monitoring with rolling history
 speedtest/                → HTTP-based speed test client (download/upload/ping against OpenSpeedTest servers)
@@ -604,7 +605,7 @@ pihole/                   → Pi-hole v6 API client (stats, top clients/domains,
 wifi/                     → common WiFi provider interface
 unifi/                    → UniFi controller API client (APs, SSIDs, clients, live rates)
 omada/                    → TP-Link Omada controller API client (APs, SSIDs, clients, live rates)
-geoip/                    → MaxMind MMDB GeoIP lookups (country, ASN)
+geoip/                    → MaxMind MMDB GeoIP lookups (country, city, coordinates, ASN)
 static/
   index.html              → HTML shell with seven tabs (Traffic, NAT, DNS, WiFi, Monitor, Speed Test, Debug)
   app.js                  → all frontend JavaScript (charts, tables, SSE client)
