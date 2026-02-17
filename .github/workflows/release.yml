@@ -46,7 +46,12 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           VERSION="${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || github.sha }}"
-          go build -ldflags="-s -w -X main.version=${VERSION}" -o bandwidth-monitor .
+          COMMIT="$(echo $GITHUB_SHA | cut -c1-7)"
+          LDFLAGS="-s -w -X bandwidth-monitor/version.Commit=${COMMIT}"
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            LDFLAGS="${LDFLAGS} -X bandwidth-monitor/version.Version=${{ github.ref_name }}"
+          fi
+          go build -ldflags="${LDFLAGS}" -o bandwidth-monitor .
 
       - name: Prepare packaging service file
         run: |
@@ -130,8 +135,12 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           GOMIPS: ${{ matrix.gomips }}
         run: |
-          VERSION="${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || github.sha }}"
-          go build -ldflags="-s -w -X main.version=${VERSION}" -o bandwidth-monitor .
+          COMMIT="$(echo $GITHUB_SHA | cut -c1-7)"
+          LDFLAGS="-s -w -X bandwidth-monitor/version.Commit=${COMMIT}"
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            LDFLAGS="${LDFLAGS} -X bandwidth-monitor/version.Version=${{ github.ref_name }}"
+          fi
+          go build -ldflags="${LDFLAGS}" -o bandwidth-monitor .
           file bandwidth-monitor
           echo "BINARY=${{ github.workspace }}/bandwidth-monitor" >> $GITHUB_ENV
 

@@ -2,6 +2,14 @@ BINARY=bandwidth-monitor
 INSTALL_DIR=/opt/bandwidth-monitor
 SERVICE_FILE=bandwidth-monitor.service
 
+# Version injection: use git tag if on a tag, otherwise short commit hash.
+GIT_VERSION := $(shell git describe --tags --exact-match 2>/dev/null)
+GIT_COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+LDFLAGS_VERSION := -X bandwidth-monitor/version.Commit=$(GIT_COMMIT)
+ifneq ($(GIT_VERSION),)
+  LDFLAGS_VERSION += -X bandwidth-monitor/version.Version=$(GIT_VERSION)
+endif
+
 GEOLITE2_CITY=GeoLite2-City.mmdb
 GEOLITE2_ASN=GeoLite2-ASN.mmdb
 GEOLITE2_CITY_URL=https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-City.mmdb
@@ -10,11 +18,11 @@ GEOLITE2_ASN_URL=https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-AS
 .PHONY: build run clean geoip install uninstall
 
 build:
-	go build -o $(BINARY) .
+	go build -ldflags="$(LDFLAGS_VERSION)" -o $(BINARY) .
 
 build_stripped:
 	# Build and strip the binary. 
-	go build -ldflags="-s -w" -o $(BINARY) .
+	go build -ldflags="-s -w $(LDFLAGS_VERSION)" -o $(BINARY) .
 
 geoip:
 	@[ -f $(GEOLITE2_CITY) ] || { echo "Downloading GeoLite2-City.mmdb..."; curl -fSL -o $(GEOLITE2_CITY) $(GEOLITE2_CITY_URL); }

@@ -18,6 +18,7 @@ import (
 	"bandwidth-monitor/debug"
 	"bandwidth-monitor/dns"
 	"bandwidth-monitor/geoip"
+	"bandwidth-monitor/httputil"
 	"bandwidth-monitor/latency"
 	"bandwidth-monitor/resolver"
 	"bandwidth-monitor/speedtest"
@@ -581,7 +582,7 @@ func (o *originResolver) doResolve(c *collector.Collector) *originGeo {
 // fetchExternalIP queries ip.ffmuc.net to get the public IP when all
 // WAN addresses are behind CGNAT or not globally routable.
 func fetchExternalIP() string {
-	client := &http.Client{Timeout: 3 * time.Second}
+	client := &http.Client{Timeout: 3 * time.Second, Transport: httputil.WrapTransport(nil)}
 	resp, err := client.Get("https://ip.ffmuc.net")
 	if err != nil {
 		return ""

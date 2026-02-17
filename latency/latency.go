@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"bandwidth-monitor/httputil"
+
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
@@ -57,10 +59,10 @@ type TargetStatus struct {
 	// Per-protocol summary stats
 	ICMPStats  *ProbeStats `json:"icmp_stats,omitempty"`
 	HTTPSStats *ProbeStats `json:"https_stats,omitempty"`
-	ICMPv4  []Point `json:"icmp_v4,omitempty"`
-	ICMPv6  []Point `json:"icmp_v6,omitempty"`
-	HTTPSv4 []Point `json:"https_v4,omitempty"`
-	HTTPSv6 []Point `json:"https_v6,omitempty"`
+	ICMPv4     []Point     `json:"icmp_v4,omitempty"`
+	ICMPv6     []Point     `json:"icmp_v6,omitempty"`
+	HTTPSv4    []Point     `json:"https_v4,omitempty"`
+	HTTPSv6    []Point     `json:"https_v6,omitempty"`
 	// Legacy fields (preferred stack) for backward compat
 	ICMP  []Point `json:"icmp"`
 	HTTPS []Point `json:"https"`
@@ -114,7 +116,7 @@ func newDirectHTTPSClient(ip net.IP, hostname string) *http.Client {
 	dialer := &net.Dialer{Timeout: httpsTimeout}
 	return &http.Client{
 		Timeout: httpsTimeout,
-		Transport: &http.Transport{
+		Transport: httputil.WrapTransport(&http.Transport{
 			TLSClientConfig: &tls.Config{
 				ServerName: hostname,
 			},
@@ -124,7 +126,7 @@ func newDirectHTTPSClient(ip net.IP, hostname string) *http.Client {
 				_, port, _ := net.SplitHostPort(addr)
 				return dialer.DialContext(ctx, network, ipStr+":"+port)
 			},
-		},
+		}),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

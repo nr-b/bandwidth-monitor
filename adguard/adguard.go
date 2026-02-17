@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"bandwidth-monitor/dns"
+	"bandwidth-monitor/httputil"
 )
 
 // Client polls ADGuard Home's REST API for DNS statistics.
@@ -58,7 +59,7 @@ func New(baseURL, user, pass string, pollInterval time.Duration) *Client {
 		user:       user,
 		pass:       pass,
 		interval:   pollInterval,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		httpClient: &http.Client{Timeout: 10 * time.Second, Transport: httputil.WrapTransport(nil)},
 		stopCh:     make(chan struct{}),
 	}
 }
