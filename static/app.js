@@ -62,6 +62,7 @@
             updateASNs(d.asns);
             renderTalkers('bwTable', bw, 'rate_bytes', formatRate, 'bw');
             renderTalkers('volTable', vol, 'total_bytes', formatBytes, 'vol');
+            if (!_historyLoaded) loadInterfaceHistory();
         } else if (tab === 'monitor') {
             var now = Date.now();
             if (force || !window._lastMapUpdate || now - window._lastMapUpdate > 5000) {
@@ -219,6 +220,85 @@
 
     var protoColors = { 'TCP': '#3b82f6', 'UDP': '#22d3ee', 'ICMP': '#f59e0b', 'Other': '#71717a' };
     var geoChartPalette = ['#3b82f6','#22d3ee','#a78bfa','#34d399','#f59e0b','#f472b6','#60a5fa','#e879f9','#fb923c','#4ade80','#818cf8','#fbbf24','#c084fc','#2dd4bf','#f87171','#71717a'];
+
+    // ── 24h History Chart ──
+    var historyCtx = document.getElementById('historyChart').getContext('2d');
+    var historyChart = new Chart(historyCtx, {
+        type: 'line',
+        data: { datasets: [] },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: {
+                    labels: { color: '#71717a', font: { size: 11, family: 'Inter' }, boxWidth: 12, padding: 16 }
+                },
+                tooltip: {
+                    backgroundColor: '#18181b', titleColor: '#fafafa', bodyColor: '#a1a1aa',
+                    borderColor: '#27272a', borderWidth: 1, padding: 10, cornerRadius: 6,
+                    callbacks: {
+                        label: function(c) { return c.dataset.label + ': ' + formatRate(Math.abs(c.raw.y)); }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    type: 'time',
+                    time: { unit: 'hour', displayFormats: { hour: 'HH:mm' }, tooltipFormat: 'HH:mm:ss' },
+                    min: function() { return Date.now() - 86400000; },
+                    max: function() { return Date.now(); },
+                    grid: { color: '#1f1f23' },
+                    ticks: { color: '#52525b', font: { size: 10 }, maxTicksLimit: 12, source: 'auto' },
+                    border: { color: '#27272a' }
+                },
+                y: {
+                    grid: { color: '#1f1f23' },
+                    ticks: { color: '#52525b', font: { size: 10 }, callback: function(v) { return formatRate(Math.abs(v)); } },
+                    border: { color: '#27272a' },
+                    grace: '10%'
+                }
+            }
+        }
+    });
+    var _historyLoaded = false;
+    function loadInterfaceHistory() {
+        if (_historyLoaded) return;
+        _historyLoaded = true;
+        fetch('/api/interfaces/history').then(function(r) { return r.json(); }).then(function(data) {
+            var ds = [], ci = 0;
+            var names = Object.keys(data).sort();
+            var earliestTs = Infinity;
+            for (var ni = 0; ni < names.length; ni++) {
+                var name = names[ni];
+                var pts = data[name];
+                if (!pts || !pts.length) continue;
+                if (pts[0].t < earliestTs) earliestTs = pts[0].t;
+                var c = chartColors[ci % chartColors.length];
+                var rxData = [], txData = [];
+                for (var pi = 0; pi < pts.length; pi++) {
+                    var t = new Date(pts[pi].t);
+                    rxData.push({ x: t, y: pts[pi].rx || 0 });
+                    txData.push({ x: t, y: -(pts[pi].tx || 0) });
+                }
+                ds.push({ label: name + ' RX', data: rxData, borderColor: c.rx, backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, borderWidth: 1.5 });
+                ds.push({ label: name + ' TX', data: txData, borderColor: c.tx, backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, borderWidth: 1.5 });
+                ci++;
+            }
+            historyChart.data.datasets = ds;
+            historyChart.update('none');
+            // Update subtitle with data coverage
+            var subEl = document.querySelector('#historyChart').closest('.card').querySelector('.card-subtitle');
+            if (subEl && earliestTs < Infinity) {
+                var ageMs = Date.now() - earliestTs;
+                var ageH = Math.floor(ageMs / 3600000);
+                var ageM = Math.floor((ageMs % 3600000) / 60000);
+                var ageStr = ageH > 0 ? ageH + 'h ' + ageM + 'm' : ageM + 'm';
+                subEl.textContent = ageH >= 24 ? 'Per-interface bandwidth over the last 24 hours' : 'Collecting data \u2014 ' + ageStr + ' of 24h available';
+            }
+        }).catch(function(e) { console.error('history load:', e); });
+    }
 
     function makeDoughnut(id) {
         return new Chart(document.getElementById(id).getContext('2d'), {
@@ -429,8 +509,9 @@
         var os = f.oper_state || 'unknown';
         var dotClass = (os === 'up') ? 'up' : (os === 'down' ? 'down' : 'unknown');
         var stateLabel = os === 'up' ? 'Up' : (os === 'down' ? 'Down' : os);
+        var speedLabel = (f.speed && f.speed > 0) ? '<span style="font-size:10px;color:var(--text-2);font-weight:400;margin-right:4px">' + (f.speed >= 1000 ? (f.speed / 1000) + ' Gbit' : f.speed + ' Mbit') + '</span>' : '';
         var badge = groupLabel ? '<span class="iface-group-badge">' + groupLabel + '</span>' : '';
-        var h = '<div class="iface-card"><div class="iface-name"><span>' + f.name + ' ' + badge + '</span><span class="iface-status"><span class="iface-status-dot ' + dotClass + '"></span>' + stateLabel + '</span></div>';
+        var h = '<div class="iface-card"><div class="iface-name"><span>' + f.name + ' ' + badge + '</span><span class="iface-status">' + speedLabel + '<span class="iface-status-dot ' + dotClass + '"></span>' + stateLabel + '</span></div>';
         h += '<div class="sparkline-wrap"><canvas class="sparkline-canvas" data-iface="' + f.name + '"></canvas></div>';
         if (f.vpn_routing) {
             h += '<div class="vpn-routing active"><span class="iface-status-dot up"></span>Routing' + (f.vpn_routing_since ? ' since ' + f.vpn_routing_since : '') + '</div>';
@@ -1745,7 +1826,7 @@
 
         var ctb = document.getElementById('wifiClientTable');
         if (!clients.length) {
-            ctb.innerHTML = '<tr><td colspan="9" class="empty-state">' + (filter ? 'No matching clients' : 'No wireless clients') + '</td></tr>';
+            ctb.innerHTML = '<tr><td colspan="11" class="empty-state">' + (filter ? 'No matching clients' : 'No wireless clients') + '</td></tr>';
         } else {
             var maxBw = 1;
             for (var i = 0; i < clients.length; i++) {
@@ -1768,6 +1849,8 @@
                 ch += '</td>';
                 ch += '<td style="font-size:12px">' + (cl.ssid || '—') + '</td>';
                 ch += '<td style="font-size:12px">' + (cl.ap_name || '—') + '</td>';
+                ch += '<td style="font-size:11px;color:var(--text-2)">' + (cl.radio || '—') + '</td>';
+                ch += '<td style="font-size:11px;font-variant-numeric:tabular-nums">' + (cl.channel || '—') + '</td>';
                 ch += '<td><span class="signal-badge ' + sigClass + '">' + sig + ' dBm</span></td>';
                 ch += '<td style="white-space:nowrap;font-variant-numeric:tabular-nums">' + formatBytes(cl.rx_bytes || 0) + '</td>';
                 ch += '<td style="white-space:nowrap;font-variant-numeric:tabular-nums">' + formatBytes(cl.tx_bytes || 0) + '</td>';
@@ -1858,17 +1941,39 @@
             h += '<th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--text-2)">Destination</th>';
             h += '<th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--text-2)">NAT</th>';
             h += '<th style="padding:8px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--text-2)">Bytes</th>';
+            h += '<th style="padding:8px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--text-2)">Pkts</th>';
             h += '</tr></thead><tbody>';
             for (var i = 0; i < d.connections.length; i++) {
                 var c = d.connections[i];
                 var rowBg = i % 2 === 0 ? '' : ' style="background:var(--bg-1)"';
+                // Source cell with enrichment
+                var srcAddr = c.orig_src + (c.orig_sport ? ':' + c.orig_sport : '');
+                var srcInfo = [];
+                if (c.orig_src_host) srcInfo.push(c.orig_src_host);
+                if (c.orig_src_city && c.orig_src_geo) srcInfo.push(countryFlag(c.orig_src_geo) + ' ' + c.orig_src_city);
+                else if (c.orig_src_geo) srcInfo.push(countryFlag(c.orig_src_geo) + ' ' + c.orig_src_geo);
+                if (c.orig_src_asn) srcInfo.push(c.orig_src_asn);
+                var srcHtml = '<div style="font-family:var(--font-mono,monospace);font-size:11px">' + srcAddr + '</div>';
+                if (srcInfo.length) srcHtml += '<div style="font-size:9px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px">' + srcInfo.join(' &middot; ') + '</div>';
+                // Dest cell with enrichment
+                var dstAddr = c.orig_dst + (c.orig_dport ? ':' + c.orig_dport : '');
+                var dstInfo = [];
+                if (c.orig_dst_host) dstInfo.push(c.orig_dst_host);
+                if (c.orig_dst_city && c.orig_dst_geo) dstInfo.push(countryFlag(c.orig_dst_geo) + ' ' + c.orig_dst_city);
+                else if (c.orig_dst_geo) dstInfo.push(countryFlag(c.orig_dst_geo) + ' ' + c.orig_dst_geo);
+                if (c.orig_dst_asn) dstInfo.push(c.orig_dst_asn);
+                var dstHtml = '<div style="font-family:var(--font-mono,monospace);font-size:11px">' + dstAddr + '</div>';
+                if (dstInfo.length) dstHtml += '<div style="font-size:9px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px">' + dstInfo.join(' &middot; ') + '</div>';
+                // Family badge
+                var familyBadge = c.family === 'ipv6' ? '<span style="font-size:9px;color:var(--text-2);background:var(--bg-2);padding:1px 4px;border-radius:3px;margin-left:4px">v6</span>' : '';
                 h += '<tr' + rowBg + '>';
-                h += '<td style="padding:6px 10px">' + (c.protocol || '') + '</td>';
+                h += '<td style="padding:6px 10px">' + (c.protocol || '').toUpperCase() + familyBadge + '</td>';
                 h += '<td style="padding:6px 10px">' + (c.state || '—') + '</td>';
-                h += '<td style="padding:6px 10px;font-family:var(--font-mono,monospace);font-size:11px">' + c.orig_src + (c.orig_sport ? ':' + c.orig_sport : '') + '</td>';
-                h += '<td style="padding:6px 10px;font-family:var(--font-mono,monospace);font-size:11px">' + c.orig_dst + (c.orig_dport ? ':' + c.orig_dport : '') + '</td>';
+                h += '<td style="padding:6px 10px">' + srcHtml + '</td>';
+                h += '<td style="padding:6px 10px">' + dstHtml + '</td>';
                 h += '<td style="padding:6px 10px">' + (c.nat_type || 'none') + '</td>';
                 h += '<td style="padding:6px 10px;text-align:right;font-variant-numeric:tabular-nums">' + formatBytes(c.bytes || 0) + '</td>';
+                h += '<td style="padding:6px 10px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text-2)">' + (c.packets ? c.packets.toLocaleString() : '—') + '</td>';
                 h += '</tr>';
             }
             h += '</tbody></table></div>';

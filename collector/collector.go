@@ -4,6 +4,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -286,10 +287,8 @@ func (c *Collector) poll() {
 			addrs:     c.addrCache[attrs.Index],
 		}
 
-		// Link speed (Mbps) — available for physical Ethernet interfaces.
-		// Note: vishvananda/netlink doesn't expose Speed directly, but
-		// we can check if the link is Device type which has Attrs().
-		// For now, expose 0 and let the frontend hide it.
+		// Link speed (Mbps) — read from sysfs. Returns 0 for virtual interfaces.
+		li.speed = readLinkSpeed(name)
 
 		// Extract IFLA_INFO_KIND via link type name
 		li.linkKind = link.Type()
@@ -436,6 +435,20 @@ func (c *Collector) classifyLink(li *linkInfo) string {
 	t := classifyLinkUncached(li)
 	c.ifaceTypeCache[li.name] = t
 	return t
+}
+
+// readLinkSpeed reads the negotiated link speed in Mbps from sysfs.
+// Returns 0 for virtual interfaces or if the file is unreadable.
+func readLinkSpeed(name string) int {
+	data, err := os.ReadFile("/sys/class/net/" + name + "/speed")
+	if err != nil {
+		return 0
+	}
+	v, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || v < 0 {
+		return 0
+	}
+	return v
 }
 
 func classifyLinkUncached(li *linkInfo) string {
