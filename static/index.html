@@ -72,6 +72,18 @@
             </div>
         </div>
 
+        <div class="card chart-section">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">24h Traffic History</div>
+                    <div class="card-subtitle">Per-interface bandwidth over the last 24 hours</div>
+                </div>
+            </div>
+            <div class="chart-container">
+                <canvas id="historyChart"></canvas>
+            </div>
+        </div>
+
         <div class="breakdown-row">
             <div class="breakdown-card" id="ipvSection">
                 <div class="card-header">
@@ -653,6 +665,8 @@
                         <th>Client</th>
                         <th>SSID</th>
                         <th>AP</th>
+                        <th>Band</th>
+                        <th>Ch</th>
                         <th>Signal</th>
                         <th>RX</th>
                         <th>TX</th>
@@ -660,7 +674,7 @@
                         <th style="width:14%"></th>
                     </tr></thead>
                     <tbody id="wifiClientTable">
-                        <tr><td colspan="9" class="empty-state">Waiting for data</td></tr>
+                        <tr><td colspan="11" class="empty-state">Waiting for data</td></tr>
                     </tbody>
                 </table>
             </div>
