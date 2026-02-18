@@ -263,9 +263,8 @@
         }
     });
     var _historyLoaded = false;
-    function loadInterfaceHistory() {
-        if (_historyLoaded) return;
-        _historyLoaded = true;
+    var _historyRefreshInterval = null;
+    function _fetchInterfaceHistory() {
         fetch('/api/interfaces/history').then(function(r) { return r.json(); }).then(function(data) {
             var ds = [], ci = 0;
             var names = Object.keys(data).sort();
@@ -298,6 +297,13 @@
                 subEl.textContent = ageH >= 24 ? 'Per-interface bandwidth over the last 24 hours' : 'Collecting data \u2014 ' + ageStr + ' of 24h available';
             }
         }).catch(function(e) { console.error('history load:', e); });
+    }
+    function loadInterfaceHistory() {
+        if (_historyLoaded) return;
+        _historyLoaded = true;
+        _fetchInterfaceHistory();
+        // Refresh the 24h history chart every 60 seconds
+        _historyRefreshInterval = setInterval(_fetchInterfaceHistory, 60000);
     }
 
     function makeDoughnut(id) {
