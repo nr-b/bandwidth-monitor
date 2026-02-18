@@ -680,7 +680,7 @@
         var order = ['TCP', 'UDP', 'ICMP', 'Other'], labels = [], values = [], colors = [];
         for (var i = 0; i < order.length; i++) { if (data[order[i]]) { labels.push(order[i]); values.push(data[order[i]]); colors.push(protoColors[order[i]]); } }
         for (var k in data) { if (order.indexOf(k) === -1) { labels.push(k); values.push(data[k]); colors.push('#71717a'); } }
-        updateSimpleDoughnut(protoChart, document.getElementById('protoLegend'), labels, values, colors);
+        updateSimpleDoughnut(protoChart, document.getElementById('protoLegend'), labels, values, colors, formatBytes);
     }
 
     function updateCountries(countries) {
@@ -716,7 +716,7 @@
         var labels = [], values = [], colors = [];
         if (data['IPv4']) { labels.push('IPv4'); values.push(data['IPv4']); colors.push(ipvColors['IPv4']); }
         if (data['IPv6']) { labels.push('IPv6'); values.push(data['IPv6']); colors.push(ipvColors['IPv6']); }
-        updateSimpleDoughnut(ipvChart, legend, labels, values, colors);
+        updateSimpleDoughnut(ipvChart, legend, labels, values, colors, formatBytes);
     }
 
     function updateASNs(asns) {
@@ -1014,7 +1014,7 @@
         renderNATEntries(ct);
     }
 
-    function updateSimpleDoughnut(chart, legendEl, labels, values, colors) {
+    function updateSimpleDoughnut(chart, legendEl, labels, values, colors, formatter) {
         chart.data.labels = labels;
         chart.data.datasets[0].data = values;
         chart.data.datasets[0].backgroundColor = colors;
@@ -1024,10 +1024,11 @@
         var h = '';
         for (var i = 0; i < labels.length; i++) {
             var pct = total > 0 ? ((values[i] / total) * 100).toFixed(1) : '0.0';
+            var displayVal = formatter ? formatter(values[i]) : values[i].toLocaleString();
             h += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">';
             h += '<div style="width:10px;height:10px;border-radius:2px;background:' + colors[i] + ';flex-shrink:0"></div>';
             h += '<div><div style="font-size:13px;font-weight:600;color:var(--text-0)">' + labels[i] + '</div>';
-            h += '<div style="font-size:11px;color:var(--text-2)">' + values[i].toLocaleString() + ' &middot; ' + pct + '%</div></div></div>';
+            h += '<div style="font-size:11px;color:var(--text-2)">' + displayVal + ' &middot; ' + pct + '%</div></div></div>';
         }
         legendEl.innerHTML = h || '<div style="text-align:center;color:var(--text-2);font-size:12px;padding:8px">No data</div>';
     }
