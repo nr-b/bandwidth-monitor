@@ -281,8 +281,8 @@
                     rxData.push({ x: t, y: pts[pi].rx || 0 });
                     txData.push({ x: t, y: -(pts[pi].tx || 0) });
                 }
-                ds.push({ label: name + ' RX', data: rxData, borderColor: c.rx, backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, borderWidth: 1.5 });
-                ds.push({ label: name + ' TX', data: txData, borderColor: c.tx, backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, borderWidth: 1.5 });
+                ds.push({ label: name + ' RX', data: rxData, borderColor: c.rx, backgroundColor: 'transparent', fill: false, tension: 0.3, cubicInterpolationMode: 'monotone', pointRadius: 0, borderWidth: 1.5 });
+                ds.push({ label: name + ' TX', data: txData, borderColor: c.tx, backgroundColor: 'transparent', fill: false, tension: 0.3, cubicInterpolationMode: 'monotone', pointRadius: 0, borderWidth: 1.5 });
                 ci++;
             }
             historyChart.data.datasets = ds;
