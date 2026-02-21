@@ -376,6 +376,282 @@ func sendProbeV6(conn *icmp.PacketConn, dest net.IP, ttl int, seq int) (string, 
 	}
 }
 
+// ── Path MTU Discovery ──
+
+// MTUProbeResult holds the result of a single MTU probe.
+type MTUProbeResult struct {
+	Size    int     `json:"size"`
+	Success bool    `json:"success"`
+	RTT     float64 `json:"rtt_ms"`
+	Error   string  `json:"error,omitempty"`
+}
+
+// MTUResult is the complete result returned to the frontend.
+type MTUResult struct {
+	Target     string           `json:"target"`
+	ResolvedIP string           `json:"resolved_ip"`
+	PathMTU    int              `json:"path_mtu"`
+	LocalMTU   int              `json:"local_mtu,omitempty"`
+	Probes     []MTUProbeResult `json:"probes"`
+	Timestamp  int64            `json:"timestamp"`
+}
+
+// MTUProgress is sent via SSE while running.
+type MTUProgress struct {
+	Phase   string     `json:"phase"` // "running", "done", "error"
+	Message string     `json:"message"`
+	Size    int        `json:"size,omitempty"`
+	Result  *MTUResult `json:"result,omitempty"`
+}
+
+// RunMTUDiscovery performs a binary-search path MTU discovery by sending
+// ICMP echo packets with the DF (Don't Fragment) bit set. It streams
+// progress updates over the returned channel.
+func RunMTUDiscovery(target string) <-chan MTUProgress {
+	ch := make(chan MTUProgress, 64)
+
+	go func() {
+		defer close(ch)
+
+		// Resolve target
+		ips, err := net.LookupIP(target)
+		if err != nil {
+			ch <- MTUProgress{Phase: "error", Message: fmt.Sprintf("cannot resolve %s", target)}
+			return
+		}
+
+		var destIP net.IP
+		for _, ip := range ips {
+			if ip.To4() != nil {
+				destIP = ip.To4()
+				break
+			}
+		}
+		if destIP == nil {
+			ch <- MTUProgress{Phase: "error", Message: "MTU discovery requires an IPv4 target"}
+			return
+		}
+
+		log.Printf("debug/mtu: starting path MTU discovery to %s (%s)", target, destIP)
+		ch <- MTUProgress{Phase: "running", Message: fmt.Sprintf("Path MTU discovery to %s (%s)", target, destIP)}
+
+		// Detect the local interface MTU for the route to destIP
+		localMTU := detectLocalMTU(destIP)
+
+		// Open a raw ICMP socket via net.ListenPacket so we can access
+		// the underlying fd to set the Don't Fragment socket option.
+		rawPC, err := net.ListenPacket("ip4:icmp", "0.0.0.0")
+		if err != nil {
+			ch <- MTUProgress{Phase: "error", Message: fmt.Sprintf("cannot open ICMP socket (need root/CAP_NET_RAW): %v", err)}
+			return
+		}
+		defer rawPC.Close()
+
+		// Set the Don't Fragment bit on the socket
+		setDontFragment(rawPC)
+
+		// Binary search for the path MTU between 68 (IPv4 minimum) and 1500
+		// (standard Ethernet). Upper bound may be raised if local MTU is higher.
+		upper := 1500
+		if localMTU > 1500 {
+			upper = localMTU
+		}
+		lower := 68
+		var probes []MTUProbeResult
+
+		// First, check if the upper bound works — skip binary search if so
+		ok, rtt, probeErr := probeMTU(rawPC, destIP, upper)
+		probes = append(probes, MTUProbeResult{Size: upper, Success: ok, RTT: rtt, Error: probeErr})
+		ch <- MTUProgress{Phase: "running", Message: fmt.Sprintf("Testing %d bytes: %s", upper, mtuStatus(ok)), Size: upper}
+
+		if ok {
+			// Full size works — path MTU is at least the upper bound
+			result := &MTUResult{
+				Target:     target,
+				ResolvedIP: destIP.String(),
+				PathMTU:    upper,
+				LocalMTU:   localMTU,
+				Probes:     probes,
+				Timestamp:  time.Now().UnixMilli(),
+			}
+			ch <- MTUProgress{Phase: "done", Message: fmt.Sprintf("Path MTU: %d bytes (full size passes)", upper), Result: result}
+			log.Printf("debug/mtu: finished %s — path MTU %d", target, upper)
+			return
+		}
+
+		// Also verify the minimum works
+		ok, rtt, probeErr = probeMTU(rawPC, destIP, lower)
+		probes = append(probes, MTUProbeResult{Size: lower, Success: ok, RTT: rtt, Error: probeErr})
+		ch <- MTUProgress{Phase: "running", Message: fmt.Sprintf("Testing %d bytes: %s", lower, mtuStatus(ok)), Size: lower}
+
+		if !ok {
+			result := &MTUResult{
+				Target:     target,
+				ResolvedIP: destIP.String(),
+				PathMTU:    0,
+				LocalMTU:   localMTU,
+				Probes:     probes,
+				Timestamp:  time.Now().UnixMilli(),
+			}
+			ch <- MTUProgress{Phase: "done", Message: "Host unreachable or blocks ICMP — cannot determine MTU", Result: result}
+			log.Printf("debug/mtu: finished %s — host unreachable", target)
+			return
+		}
+
+		// Binary search
+		for upper-lower > 1 {
+			mid := (lower + upper) / 2
+			ok, rtt, probeErr = probeMTU(rawPC, destIP, mid)
+			probes = append(probes, MTUProbeResult{Size: mid, Success: ok, RTT: rtt, Error: probeErr})
+			ch <- MTUProgress{Phase: "running", Message: fmt.Sprintf("Testing %d bytes: %s (range %d–%d)", mid, mtuStatus(ok), lower, upper), Size: mid}
+
+			if ok {
+				lower = mid
+			} else {
+				upper = mid
+			}
+		}
+
+		// Sort probes by size for display
+		sortProbes(probes)
+
+		result := &MTUResult{
+			Target:     target,
+			ResolvedIP: destIP.String(),
+			PathMTU:    lower,
+			LocalMTU:   localMTU,
+			Probes:     probes,
+			Timestamp:  time.Now().UnixMilli(),
+		}
+		ch <- MTUProgress{Phase: "done", Message: fmt.Sprintf("Path MTU: %d bytes", lower), Result: result}
+		log.Printf("debug/mtu: finished %s — path MTU %d, local MTU %d", target, lower, localMTU)
+	}()
+
+	return ch
+}
+
+func mtuStatus(ok bool) string {
+	if ok {
+		return "pass"
+	}
+	return "blocked (DF bit set, packet too large)"
+}
+
+func sortProbes(probes []MTUProbeResult) {
+	for i := 1; i < len(probes); i++ {
+		for j := i; j > 0 && probes[j].Size < probes[j-1].Size; j-- {
+			probes[j], probes[j-1] = probes[j-1], probes[j]
+		}
+	}
+}
+
+// probeMTU sends an ICMP echo with DF bit at the given packet size and returns
+// whether it succeeded. Size is total IP packet size (header + payload).
+func probeMTU(pc net.PacketConn, dest net.IP, size int) (bool, float64, string) {
+	// IP header is 20 bytes, ICMP header is 8 bytes
+	payloadSize := size - 20 - 8
+	if payloadSize < 0 {
+		payloadSize = 0
+	}
+
+	pc.SetDeadline(time.Now().Add(2 * time.Second))
+
+	payload := make([]byte, payloadSize)
+	for i := range payload {
+		payload[i] = 'M'
+	}
+	id := uint16(size & 0xFFFF)
+	msg := icmp.Message{
+		Type: ipv4.ICMPTypeEcho,
+		Code: 0,
+		Body: &icmp.Echo{
+			ID:   int(id),
+			Seq:  size,
+			Data: payload,
+		},
+	}
+	wb, err := msg.Marshal(nil)
+	if err != nil {
+		return false, 0, sanitizeError(err)
+	}
+
+	dst := &net.IPAddr{IP: dest}
+	start := time.Now()
+	if _, err := pc.WriteTo(wb, dst); err != nil {
+		errStr := err.Error()
+		if strings.Contains(errStr, "message too long") {
+			return false, 0, "packet too large for local interface"
+		}
+		return false, 0, sanitizeError(err)
+	}
+
+	// Wait for reply — retry a couple of times in case of spurious ICMP
+	rb := make([]byte, 1500)
+	for attempts := 0; attempts < 3; attempts++ {
+		n, _, err := pc.ReadFrom(rb)
+		if err != nil {
+			return false, 0, "timeout"
+		}
+		rtt := float64(time.Since(start).Microseconds()) / 1000.0
+		rm, err := icmp.ParseMessage(1, rb[:n])
+		if err != nil {
+			continue
+		}
+
+		switch rm.Type {
+		case ipv4.ICMPTypeEchoReply:
+			if echo, ok := rm.Body.(*icmp.Echo); ok {
+				if uint16(echo.ID) == id {
+					return true, rtt, ""
+				}
+			}
+			continue
+		case ipv4.ICMPTypeDestinationUnreachable:
+			// Code 4 = fragmentation needed but DF set
+			if rm.Code == 4 {
+				return false, rtt, "fragmentation needed (DF set)"
+			}
+			return false, rtt, fmt.Sprintf("destination unreachable (code %d)", rm.Code)
+		}
+	}
+	return false, 0, "timeout"
+}
+
+// detectLocalMTU finds the MTU of the interface that routes to the given IP.
+func detectLocalMTU(dest net.IP) int {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return 0
+	}
+	// Try to find the interface that can reach dest by checking routes
+	// Heuristic: match the interface whose subnet contains dest, or default
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ipnet, ok := addr.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			if ipnet.Contains(dest) {
+				return iface.MTU
+			}
+		}
+	}
+	// Fallback: return the MTU of the first non-loopback interface
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp != 0 && iface.Flags&net.FlagLoopback == 0 {
+			return iface.MTU
+		}
+	}
+	return 0
+}
+
 // ── DNS Checks ──
 
 // DNSRecord holds a single DNS record result.

@@ -264,6 +264,7 @@ func main() {
 	mux.HandleFunc("/api/speedtest/results", handler.SpeedTestResults(speedTester))
 	mux.HandleFunc("/api/debug/traceroute", handler.DebugTraceroute(dnsResolver))
 	mux.HandleFunc("/api/debug/dns", handler.DebugDNS())
+	mux.HandleFunc("/api/debug/mtu", handler.DebugMTU())
 	mux.HandleFunc("/api/summary", handler.MenuBarSummary(statsCollector, talkerTracker, dnsProvider, wifiProvider, conntrackTracker))
 	mux.HandleFunc("/api/events", handler.SSE(statsCollector, talkerTracker, dnsProvider, wifiProvider, conntrackTracker, latencyMonitor, geoDB))
 	staticSub, err := fs.Sub(staticFiles, "static")

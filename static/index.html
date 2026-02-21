@@ -888,6 +888,44 @@
             </div>
         </div>
 
+        <!-- MTU Discovery Section -->
+        <div class="card" style="margin-bottom:16px">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">MTU Discovery</div>
+                    <div class="card-subtitle">Detect path MTU using ICMP with Don&rsquo;t Fragment &mdash; find packet-size issues causing silent drops</div>
+                </div>
+            </div>
+            <div style="padding:12px 20px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--border)">
+                <input type="text" id="mtuTarget" placeholder="IP or hostname (e.g. 1.1.1.1)" style="padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg-2);color:var(--text-0);font-size:13px;width:220px;outline:none;font-family:'JetBrains Mono',monospace">
+                <button class="speedtest-btn" id="mtuBtn" onclick="window._runMTUDiscovery()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M12 2v20M2 12h20"/></svg>
+                    Discover
+                </button>
+            </div>
+        </div>
+
+        <div id="mtuProgressWrap" style="display:none">
+            <div class="speedtest-progress-wrap" style="margin-bottom:16px">
+                <div class="speedtest-progress-phase" id="mtuPhase">Waiting...</div>
+                <div class="speedtest-progress-bar-bg">
+                    <div class="speedtest-progress-bar-fill" id="mtuProgressBar" style="width:0%"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="mtuResults" style="display:none">
+            <div class="card" style="margin-bottom:16px">
+                <div class="card-header">
+                    <div>
+                        <div class="card-title" id="mtuResultTitle">MTU Results</div>
+                        <div class="card-subtitle" id="mtuResultSub"></div>
+                    </div>
+                </div>
+                <div id="mtuResultBody"></div>
+            </div>
+        </div>
+
         </div><!-- /tabDebug -->
 
         <div class="footer"><span id="clock"></span></div>
