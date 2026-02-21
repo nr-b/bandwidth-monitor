@@ -340,6 +340,15 @@ func (c *Collector) poll() {
 		}
 	}
 
+	// Determine the fastest physical link speed — used as the rate cap for
+	// virtual interfaces (VPN, bridges) that don't report their own speed.
+	maxPhysSpeed := 0
+	for _, li := range infos {
+		if li.speed > maxPhysSpeed {
+			maxPhysSpeed = li.speed
+		}
+	}
+
 	for name, li := range infos {
 		cur := li.stats
 		prev, hasPrev := c.previous[name]
@@ -369,14 +378,28 @@ func (c *Collector) poll() {
 		if hasPrev {
 			dt := now.Sub(prev.ts).Seconds()
 			if dt > 0 {
-				iface.RxRate = float64(cur.rxBytes-prev.rxBytes) / dt
-				iface.TxRate = float64(cur.txBytes-prev.txBytes) / dt
-				iface.RxPPS = float64(cur.rxPackets-prev.rxPackets) / dt
-				iface.TxPPS = float64(cur.txPackets-prev.txPackets) / dt
-				iface.RxErrorRate = float64(cur.rxErrors-prev.rxErrors) / dt
-				iface.TxErrorRate = float64(cur.txErrors-prev.txErrors) / dt
-				iface.RxDropRate = float64(cur.rxDropped-prev.rxDropped) / dt
-				iface.TxDropRate = float64(cur.txDropped-prev.txDropped) / dt
+				iface.RxRate = safeRate(cur.rxBytes, prev.rxBytes, dt)
+				iface.TxRate = safeRate(cur.txBytes, prev.txBytes, dt)
+				iface.RxPPS = safeRate(cur.rxPackets, prev.rxPackets, dt)
+				iface.TxPPS = safeRate(cur.txPackets, prev.txPackets, dt)
+				iface.RxErrorRate = safeRate(cur.rxErrors, prev.rxErrors, dt)
+				iface.TxErrorRate = safeRate(cur.txErrors, prev.txErrors, dt)
+				iface.RxDropRate = safeRate(cur.rxDropped, prev.rxDropped, dt)
+				iface.TxDropRate = safeRate(cur.txDropped, prev.txDropped, dt)
+
+				// Reject impossibly high byte rates caused by hardware
+				// offload counter flushes or 32-bit counter wraparound.
+				effSpeed := li.speed
+				if effSpeed == 0 {
+					effSpeed = maxPhysSpeed
+				}
+				maxBytesPerSec := rateLimit(effSpeed)
+				if iface.RxRate > maxBytesPerSec {
+					iface.RxRate = 0
+				}
+				if iface.TxRate > maxBytesPerSec {
+					iface.TxRate = 0
+				}
 			}
 		}
 
@@ -569,4 +592,26 @@ func (c *Collector) checkVPNRouting(name string) (bool, string) {
 		return false, ""
 	}
 	return true, strings.TrimSpace(string(data))
+}
+
+// safeRate computes (cur-prev)/dt, returning 0 if the counter went backwards
+// (reset/wraparound).
+func safeRate(cur, prev uint64, dt float64) float64 {
+	if cur < prev {
+		return 0
+	}
+	return float64(cur-prev) / dt
+}
+
+// rateLimit returns the maximum plausible byte rate for an interface.
+// For interfaces with a known link speed, allows 50% headroom above the
+// negotiated speed to tolerate measurement jitter. For virtual/unknown
+// interfaces, uses a generous 100 Gbps cap.
+// This filters out impossible spikes caused by hardware flow-offload counter
+// flushes and 32-bit counter wraparound on embedded devices.
+func rateLimit(speedMbps int) float64 {
+	if speedMbps > 0 {
+		return float64(speedMbps) * 1e6 / 8 * 1.5
+	}
+	return 100e9 / 8 // 100 Gbps
 }
