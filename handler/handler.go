@@ -415,6 +415,63 @@ func DebugTraceroute(dns *resolver.Resolver) http.HandlerFunc {
 	}
 }
 
+// DebugMTU performs a path MTU discovery to a target and streams progress as SSE.
+func DebugMTU() http.HandlerFunc {
+	var mu sync.Mutex
+	running := false
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			http.Error(w, "POST required", http.StatusMethodNotAllowed)
+			return
+		}
+
+		target := r.URL.Query().Get("target")
+		if target == "" {
+			http.Error(w, "target parameter required", http.StatusBadRequest)
+			return
+		}
+
+		if len(target) > 253 {
+			http.Error(w, "target too long", http.StatusBadRequest)
+			return
+		}
+
+		// Rate limit: only one MTU test at a time
+		mu.Lock()
+		if running {
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]string{"error": "MTU test already running"})
+			return
+		}
+		running = true
+		mu.Unlock()
+		defer func() { mu.Lock(); running = false; mu.Unlock() }()
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+
+		ch := debug.RunMTUDiscovery(target)
+		for p := range ch {
+			data, _ := json.Marshal(p)
+			w.Write([]byte("data: "))
+			w.Write(data)
+			w.Write([]byte("\n\n"))
+			flusher.Flush()
+		}
+	}
+}
+
 // DebugDNS runs DNS checks against multiple servers.
 func DebugDNS() http.HandlerFunc {
 	var mu sync.Mutex

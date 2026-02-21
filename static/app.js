@@ -2490,6 +2490,156 @@
         tb.innerHTML = h;
     }
 
+    // ── Debug: MTU Discovery ──
+    var _mtuRunning = false;
+    window._runMTUDiscovery = function() {
+        if (_mtuRunning) return;
+        var target = (document.getElementById('mtuTarget').value || '').trim();
+        if (!target) { alert('Enter an IP or hostname'); return; }
+
+        _mtuRunning = true;
+        var btn = document.getElementById('mtuBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="speedtest-spinner"></span> Testing...';
+
+        var wrap = document.getElementById('mtuProgressWrap');
+        wrap.style.display = '';
+        var bar = document.getElementById('mtuProgressBar');
+        var phase = document.getElementById('mtuPhase');
+        bar.style.width = '0%';
+        bar.className = 'speedtest-progress-bar-fill ping';
+        phase.textContent = 'Starting MTU discovery...';
+
+        document.getElementById('mtuResults').style.display = 'none';
+
+        var probeCount = 0;
+        fetch('/api/debug/mtu?target=' + encodeURIComponent(target), { method: 'POST' })
+        .then(function(resp) {
+            var reader = resp.body.getReader();
+            var decoder = new TextDecoder();
+            var buffer = '';
+
+            function processChunk() {
+                return reader.read().then(function(result) {
+                    if (result.done) return;
+                    buffer += decoder.decode(result.value, { stream: true });
+                    var lines = buffer.split('\n');
+                    buffer = lines.pop();
+                    for (var i = 0; i < lines.length; i++) {
+                        var line = lines[i].trim();
+                        if (!line.startsWith('data: ')) continue;
+                        try {
+                            var p = JSON.parse(line.substring(6));
+                            handleMTUProgress(p);
+                        } catch(e) {}
+                    }
+                    return processChunk();
+                });
+            }
+
+            function handleMTUProgress(p) {
+                if (p.phase === 'running') {
+                    phase.textContent = p.message;
+                    probeCount++;
+                    // Binary search of 1500 range ~ 11 steps; animate progress
+                    bar.style.width = Math.min(probeCount * 8, 99) + '%';
+                } else if (p.phase === 'done' && p.result) {
+                    phase.textContent = p.message;
+                    bar.style.width = '100%';
+                    bar.className = 'speedtest-progress-bar-fill done';
+                    renderMTUResults(p.result);
+                    finishMTU();
+                } else if (p.phase === 'error') {
+                    phase.textContent = p.message;
+                    bar.className = 'speedtest-progress-bar-fill error';
+                    finishMTU();
+                }
+            }
+
+            return processChunk();
+        }).catch(function() {
+            phase.textContent = 'Connection error';
+            finishMTU();
+        });
+
+        function finishMTU() {
+            _mtuRunning = false;
+            btn.disabled = false;
+            btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M12 2v20M2 12h20"/></svg> Discover';
+            setTimeout(function() { wrap.style.display = 'none'; }, 2000);
+        }
+    };
+
+    function renderMTUResults(result) {
+        document.getElementById('mtuResults').style.display = '';
+        var mtu = result.path_mtu;
+        var titleText = 'Path MTU to ' + result.target + ' (' + result.resolved_ip + ')';
+        document.getElementById('mtuResultTitle').textContent = titleText;
+
+        var subParts = [];
+        if (mtu > 0) {
+            subParts.push('Path MTU: ' + mtu + ' bytes');
+        } else {
+            subParts.push('Could not determine path MTU');
+        }
+        if (result.local_mtu > 0) subParts.push('Local interface MTU: ' + result.local_mtu + ' bytes');
+        subParts.push(result.probes.length + ' probes sent');
+        document.getElementById('mtuResultSub').textContent = subParts.join(' — ');
+
+        var body = document.getElementById('mtuResultBody');
+        var h = '';
+
+        // Summary banner
+        if (mtu > 0) {
+            var mtuColor = mtu >= 1500 ? 'var(--success)' : (mtu >= 1400 ? 'var(--warning)' : 'var(--danger)');
+            var mtuNote = '';
+            if (mtu >= 1500) {
+                mtuNote = 'Standard Ethernet MTU — no issues expected';
+            } else if (mtu >= 1400) {
+                mtuNote = 'Slightly reduced — common with VPN/PPPoE tunnels';
+            } else if (mtu >= 1280) {
+                mtuNote = 'Below standard — possible tunnel or misconfigured link';
+            } else {
+                mtuNote = 'Very low MTU — likely causing performance issues';
+            }
+            h += '<div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:16px">';
+            h += '<div style="font-size:32px;font-weight:700;font-family:JetBrains Mono,monospace;color:' + mtuColor + '">' + mtu + '</div>';
+            h += '<div>';
+            h += '<div style="font-size:13px;font-weight:600;color:var(--text-0)">bytes path MTU</div>';
+            h += '<div style="font-size:12px;color:var(--text-2);margin-top:2px">' + mtuNote + '</div>';
+            if (result.local_mtu > 0 && result.local_mtu !== mtu) {
+                h += '<div style="font-size:11px;color:var(--warning);margin-top:4px">⚠ Local interface MTU (' + result.local_mtu + ') differs from path MTU (' + mtu + ')</div>';
+            }
+            h += '</div></div>';
+        } else {
+            h += '<div style="padding:16px 20px;border-bottom:1px solid var(--border);color:var(--warning);font-size:13px">';
+            h += '⚠ Could not determine path MTU — host may be unreachable or blocking ICMP</div>';
+        }
+
+        // Probe table
+        if (result.probes && result.probes.length) {
+            h += '<div style="max-height:400px;overflow-y:auto">';
+            h += '<table><thead><tr>';
+            h += '<th>Packet Size</th><th>Result</th><th>RTT (ms)</th><th>Detail</th>';
+            h += '</tr></thead><tbody>';
+            for (var i = 0; i < result.probes.length; i++) {
+                var p = result.probes[i];
+                var statusColor = p.success ? 'var(--success)' : 'var(--danger)';
+                var statusIcon = p.success ? '✓ Pass' : '✗ Blocked';
+                var bg = p.size === mtu ? 'background:color-mix(in srgb, var(--success) 10%, transparent)' : '';
+                h += '<tr style="' + bg + '">';
+                h += '<td style="font-family:JetBrains Mono,monospace;font-size:12px">' + p.size + ' bytes' + (p.size === mtu ? ' ←' : '') + '</td>';
+                h += '<td style="color:' + statusColor + ';font-weight:600;font-size:12px">' + statusIcon + '</td>';
+                h += '<td style="font-variant-numeric:tabular-nums;font-size:12px">' + (p.rtt_ms > 0 ? p.rtt_ms.toFixed(2) + ' ms' : '—') + '</td>';
+                h += '<td style="font-size:11px;color:var(--text-2)">' + (p.error || '') + '</td>';
+                h += '</tr>';
+            }
+            h += '</tbody></table></div>';
+        }
+
+        body.innerHTML = h;
+    }
+
     // ── Debug: DNS Check ──
     window._runDNSCheck = function() {
         var domain = (document.getElementById('dnsCheckDomain').value || '').trim();
