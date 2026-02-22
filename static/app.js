@@ -3146,34 +3146,36 @@
             // Check if the child node has traffic
             var childRate = nodeRates[l.target] || nodeRates[l.source];
             if (childRate && childRate.total > 0) {
-                // Animated traffic flow line
-                var ratio = Math.min(childRate.total / maxNodeRate, 1);
-                var flowSw = (1.5 + ratio * 3).toFixed(1);
-
                 // Compute perpendicular offset so RX/TX lines don't overlap
                 var dx = to.x - from.x;
                 var dy = to.y - from.y;
                 var len = Math.sqrt(dx * dx + dy * dy) || 1;
                 var perpX = -dy / len;
                 var perpY = dx / len;
-                var sep = Math.max(2, Math.min(5, parseFloat(flowSw) * 0.8));
+
+                // Independent line widths per direction
+                var rxRatio = Math.min(childRate.rx / maxNodeRate, 1);
+                var txRatio = Math.min(childRate.tx / maxNodeRate, 1);
+                var rxSw = (1.5 + rxRatio * 3).toFixed(1);
+                var txSw = (1.5 + txRatio * 3).toFixed(1);
+                var sep = Math.max(2, Math.min(5, Math.max(parseFloat(rxSw), parseFloat(txSw)) * 0.8));
 
                 // Base line (dim center line)
                 svgHtml += '<line x1="' + from.x + '" y1="' + from.y + '" x2="' + to.x + '" y2="' + to.y + '" stroke="' + lineCol + '" stroke-width="1" opacity="0.15"/>';
 
                 // RX flow (download: parent → child direction, green) — offset left
                 if (childRate.rx > 0) {
-                    var rxOp = (0.3 + (childRate.rx / maxNodeRate) * 0.5).toFixed(2);
+                    var rxOp = (0.3 + rxRatio * 0.5).toFixed(2);
                     var rx1x = (from.x + perpX * sep).toFixed(1), rx1y = (from.y + perpY * sep).toFixed(1);
                     var rx2x = (to.x + perpX * sep).toFixed(1), rx2y = (to.y + perpY * sep).toFixed(1);
-                    svgHtml += '<line x1="' + rx1x + '" y1="' + rx1y + '" x2="' + rx2x + '" y2="' + rx2y + '" stroke="' + rxColor + '" stroke-width="' + flowSw + '" stroke-dasharray="6 4" opacity="' + rxOp + '" stroke-linecap="round"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.5s" repeatCount="indefinite"/></line>';
+                    svgHtml += '<line x1="' + rx1x + '" y1="' + rx1y + '" x2="' + rx2x + '" y2="' + rx2y + '" stroke="' + rxColor + '" stroke-width="' + rxSw + '" stroke-dasharray="6 4" opacity="' + rxOp + '" stroke-linecap="round"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.5s" repeatCount="indefinite"/></line>';
                 }
                 // TX flow (upload: child → parent direction, orange) — offset right
                 if (childRate.tx > 0) {
-                    var txOp = (0.3 + (childRate.tx / maxNodeRate) * 0.5).toFixed(2);
+                    var txOp = (0.3 + txRatio * 0.5).toFixed(2);
                     var tx1x = (to.x - perpX * sep).toFixed(1), tx1y = (to.y - perpY * sep).toFixed(1);
                     var tx2x = (from.x - perpX * sep).toFixed(1), tx2y = (from.y - perpY * sep).toFixed(1);
-                    svgHtml += '<line x1="' + tx1x + '" y1="' + tx1y + '" x2="' + tx2x + '" y2="' + tx2y + '" stroke="' + txColor + '" stroke-width="' + flowSw + '" stroke-dasharray="6 4" opacity="' + txOp + '" stroke-linecap="round"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.5s" repeatCount="indefinite"/></line>';
+                    svgHtml += '<line x1="' + tx1x + '" y1="' + tx1y + '" x2="' + tx2x + '" y2="' + tx2y + '" stroke="' + txColor + '" stroke-width="' + txSw + '" stroke-dasharray="6 4" opacity="' + txOp + '" stroke-linecap="round"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.5s" repeatCount="indefinite"/></line>';
                 }
 
                 // Invisible wider hover target with tooltip
