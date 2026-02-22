@@ -269,7 +269,7 @@ func main() {
 	mux.HandleFunc("/api/interfaces/history", handler.InterfaceHistory(statsCollector))
 	mux.HandleFunc("/api/talkers/bandwidth", handler.TopTalkersBandwidth(talkerTracker))
 	mux.HandleFunc("/api/talkers/volume", handler.TopTalkersVolume(talkerTracker))
-	mux.HandleFunc("/api/dns", handler.DNSSummary(dnsProvider))
+	mux.HandleFunc("/api/dns", handler.DNSSummary(dnsProvider, dnsResolver))
 	mux.HandleFunc("/api/wifi", handler.WiFiSummary(wifiProvider))
 	mux.HandleFunc("/api/conntrack", handler.ConntrackSummary(conntrackTracker))
 	mux.HandleFunc("/api/host", handler.HostDetail(talkerTracker, conntrackTracker, geoDB))
@@ -281,7 +281,7 @@ func main() {
 	mux.HandleFunc("/api/debug/mtu", handler.DebugMTU())
 	mux.HandleFunc("/api/summary", handler.MenuBarSummary(statsCollector, talkerTracker, dnsProvider, wifiProvider, conntrackTracker))
 	mux.HandleFunc("/api/topology", handler.TopologySummary(topoScanner))
-	mux.HandleFunc("/api/events", handler.SSE(statsCollector, talkerTracker, dnsProvider, wifiProvider, conntrackTracker, latencyMonitor, topoScanner, geoDB))
+	mux.HandleFunc("/api/events", handler.SSE(statsCollector, talkerTracker, dnsProvider, wifiProvider, conntrackTracker, latencyMonitor, topoScanner, dnsResolver, geoDB))
 	staticSub, err := fs.Sub(staticFiles, "static")
 	if err != nil {
 		log.Fatalf("Failed to create sub filesystem: %v", err)
