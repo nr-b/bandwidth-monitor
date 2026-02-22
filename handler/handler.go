@@ -20,6 +20,7 @@ import (
 	"bandwidth-monitor/geoip"
 	"bandwidth-monitor/httputil"
 	"bandwidth-monitor/latency"
+	"bandwidth-monitor/netutil"
 	"bandwidth-monitor/resolver"
 	"bandwidth-monitor/speedtest"
 	"bandwidth-monitor/talkers"
@@ -29,85 +30,76 @@ import (
 
 func InterfaceStats(c *collector.Collector) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(c.GetAll())
+		httputil.WriteJSON(w, c.GetAll())
 	}
 }
 
 func InterfaceHistory(c *collector.Collector) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(c.GetHistory())
+		httputil.WriteJSON(w, c.GetHistory())
 	}
 }
 
 func TopTalkersBandwidth(t *talkers.Tracker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(t.TopByBandwidth(10))
+		httputil.WriteJSON(w, t.TopByBandwidth(10))
 	}
 }
 
 func TopTalkersVolume(t *talkers.Tracker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(t.TopByVolume(10))
+		httputil.WriteJSON(w, t.TopByVolume(10))
 	}
 }
 
 func DNSSummary(dp dns.Provider) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
 		if dp == nil {
-			w.Write([]byte("null"))
+			httputil.WriteJSONOrNull(w, nil)
 			return
 		}
-		json.NewEncoder(w).Encode(dp.GetSummary())
+		httputil.WriteJSON(w, dp.GetSummary())
 	}
 }
 
 func WiFiSummary(wp wifi.Provider) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
 		if wp == nil {
-			w.Write([]byte("null"))
+			httputil.WriteJSONOrNull(w, nil)
 			return
 		}
-		json.NewEncoder(w).Encode(wp.GetSummary())
+		httputil.WriteJSON(w, wp.GetSummary())
 	}
 }
 
 func TopologySummary(ts *topology.Scanner) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
 		if ts == nil {
-			w.Write([]byte("null"))
+			httputil.WriteJSONOrNull(w, nil)
 			return
 		}
-		json.NewEncoder(w).Encode(ts.GetOverview())
+		httputil.WriteJSON(w, ts.GetOverview())
 	}
 }
 
 func ConntrackSummary(ct *conntrack.Tracker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
 		if ct == nil {
-			w.Write([]byte("null"))
+			httputil.WriteJSONOrNull(w, nil)
 			return
 		}
-		json.NewEncoder(w).Encode(ct.GetSummary())
+		httputil.WriteJSON(w, ct.GetSummary())
 	}
 }
 
 // LatencyStatus returns the current latency monitoring data.
 func LatencyStatus(lm *latency.Monitor) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
 		if lm == nil {
-			w.Write([]byte("null"))
+			httputil.WriteJSONOrNull(w, nil)
 			return
 		}
-		json.NewEncoder(w).Encode(lm.GetStatus())
+		httputil.WriteJSON(w, lm.GetStatus())
 	}
 }
 
@@ -191,15 +183,13 @@ func HostDetail(t *talkers.Tracker, ct *conntrack.Tracker, geoDB *geoip.DB) http
 			detail.Connections = ct.HostFlows(ip)
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(detail)
+		httputil.WriteJSON(w, detail)
 	}
 }
 
 // MenuBarSummary returns a compact JSON snapshot for menu-bar widgets.
 func MenuBarSummary(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Provider, ctr *conntrack.Tracker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
 		type ifaceBrief struct {
 			Name   string   `json:"name"`
 			Type   string   `json:"type"`
@@ -299,7 +289,7 @@ func MenuBarSummary(c *collector.Collector, t *talkers.Tracker, dp dns.Provider,
 			}
 		}
 
-		json.NewEncoder(w).Encode(out)
+		httputil.WriteJSON(w, out)
 	}
 }
 
@@ -319,44 +309,25 @@ func SpeedTestRun(st *speedtest.Tester) http.HandlerFunc {
 			return
 		}
 
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-		w.Header().Set("X-Accel-Buffering", "no")
-
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "streaming not supported", http.StatusInternalServerError)
-			return
-		}
-
-		for p := range ch {
-			data, _ := json.Marshal(p)
-			w.Write([]byte("data: "))
-			w.Write(data)
-			w.Write([]byte("\n\n"))
-			flusher.Flush()
-		}
+		httputil.StreamChannel(w, ch)
 	}
 }
 
 // SpeedTestResults returns the history of speed test results.
 func SpeedTestResults(st *speedtest.Tester) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
 		results := st.GetResults()
 		response := map[string]interface{}{
 			"running": st.IsRunning(),
 			"results": results,
 		}
-		json.NewEncoder(w).Encode(response)
+		httputil.WriteJSON(w, response)
 	}
 }
 
 // DebugTraceroute runs a native ICMP traceroute and streams progress as SSE.
 func DebugTraceroute(dns *resolver.Resolver) http.HandlerFunc {
-	var mu sync.Mutex
-	running := false
+	var sf httputil.SingleFlight
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
@@ -377,17 +348,10 @@ func DebugTraceroute(dns *resolver.Resolver) http.HandlerFunc {
 		}
 
 		// Rate limit: only one traceroute at a time
-		mu.Lock()
-		if running {
-			mu.Unlock()
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusConflict)
-			json.NewEncoder(w).Encode(map[string]string{"error": "traceroute already running"})
+		if !sf.TryAcquire(w, "traceroute") {
 			return
 		}
-		running = true
-		mu.Unlock()
-		defer func() { mu.Lock(); running = false; mu.Unlock() }()
+		defer sf.Release()
 
 		countStr := r.URL.Query().Get("count")
 		count := 20
@@ -405,32 +369,14 @@ func DebugTraceroute(dns *resolver.Resolver) http.HandlerFunc {
 			}
 		}
 
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-		w.Header().Set("X-Accel-Buffering", "no")
-
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "streaming not supported", http.StatusInternalServerError)
-			return
-		}
-
 		ch := debug.RunTraceroute(target, count, maxTTL, dns)
-		for p := range ch {
-			data, _ := json.Marshal(p)
-			w.Write([]byte("data: "))
-			w.Write(data)
-			w.Write([]byte("\n\n"))
-			flusher.Flush()
-		}
+		httputil.StreamChannel(w, ch)
 	}
 }
 
 // DebugMTU performs a path MTU discovery to a target and streams progress as SSE.
 func DebugMTU() http.HandlerFunc {
-	var mu sync.Mutex
-	running := false
+	var sf httputil.SingleFlight
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
@@ -450,37 +396,13 @@ func DebugMTU() http.HandlerFunc {
 		}
 
 		// Rate limit: only one MTU test at a time
-		mu.Lock()
-		if running {
-			mu.Unlock()
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusConflict)
-			json.NewEncoder(w).Encode(map[string]string{"error": "MTU test already running"})
+		if !sf.TryAcquire(w, "MTU test") {
 			return
 		}
-		running = true
-		mu.Unlock()
-		defer func() { mu.Lock(); running = false; mu.Unlock() }()
-
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-		w.Header().Set("X-Accel-Buffering", "no")
-
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "streaming not supported", http.StatusInternalServerError)
-			return
-		}
+		defer sf.Release()
 
 		ch := debug.RunMTUDiscovery(target)
-		for p := range ch {
-			data, _ := json.Marshal(p)
-			w.Write([]byte("data: "))
-			w.Write(data)
-			w.Write([]byte("\n\n"))
-			flusher.Flush()
-		}
+		httputil.StreamChannel(w, ch)
 	}
 }
 
@@ -521,8 +443,7 @@ func DebugDNS() http.HandlerFunc {
 
 		result := debug.RunDNSCheck(domain, qtype)
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(result)
+		httputil.WriteJSON(w, result)
 	}
 }
 
@@ -548,31 +469,6 @@ func newOriginResolver(geoDB *geoip.DB) *originResolver {
 		geoDB: geoDB,
 		ttl:   10 * time.Minute,
 	}
-}
-
-// cgnatNet is RFC 6598 (100.64.0.0/10) used by Carrier-Grade NAT.
-var cgnatNet = func() *net.IPNet {
-	_, n, _ := net.ParseCIDR("100.64.0.0/10")
-	return n
-}()
-
-// isGlobalUnicast returns true if the IP is a globally routable unicast address.
-// Returns false for private, loopback, link-local, CGNAT, ULA (fc00::/7), etc.
-func isGlobalUnicast(ip net.IP) bool {
-	if ip == nil {
-		return false
-	}
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() {
-		return false
-	}
-	if cgnatNet.Contains(ip) {
-		return false
-	}
-	// IPv6 ULA (fc00::/7) — IsPrivate covers this in Go 1.17+, but be safe
-	if len(ip) == net.IPv6len && ip[0]&0xfe == 0xfc {
-		return false
-	}
-	return ip.IsGlobalUnicast()
 }
 
 // resolve determines the origin location from the WAN interface IPs.
@@ -614,11 +510,11 @@ func (o *originResolver) doResolve(c *collector.Collector) *originGeo {
 				continue
 			}
 			if ip.To4() != nil && wanIPv4 == "" {
-				if isGlobalUnicast(ip) {
+				if netutil.IsGlobalUnicast(ip) {
 					wanIPv4 = ip.String()
 				}
 			} else if ip.To4() == nil && wanIPv6 == "" {
-				if isGlobalUnicast(ip) {
+				if netutil.IsGlobalUnicast(ip) {
 					wanIPv6 = ip.String()
 				}
 			}

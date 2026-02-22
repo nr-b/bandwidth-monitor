@@ -176,3 +176,18 @@ func (db *DB) Lookup(ipStr string) *Result {
 
 	return r
 }
+
+// GeoFields is implemented by any struct that has geo fields to be enriched.
+type GeoFields interface {
+	SetGeo(country, countryName, city string, lat, lon float64, asn uint, asOrg string)
+}
+
+// Enrich populates geo fields on a target struct from the database.
+func (db *DB) Enrich(ipStr string, target GeoFields) {
+	if db == nil || !db.Available() {
+		return
+	}
+	if geo := db.Lookup(ipStr); geo != nil {
+		target.SetGeo(geo.Country, geo.CountryName, geo.City, geo.Latitude, geo.Longitude, geo.ASN, geo.ASOrg)
+	}
+}

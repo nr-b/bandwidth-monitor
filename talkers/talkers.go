@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"bandwidth-monitor/geoip"
+	"bandwidth-monitor/netutil"
 	"bandwidth-monitor/packets"
 	"bandwidth-monitor/resolver"
 
@@ -71,6 +72,17 @@ type hostAccum struct {
 	rxBytes uint64 // towards local nets (download)
 	txBytes uint64 // from local nets (upload)
 	packets uint64
+}
+
+// parsedPkt holds the pre-parsed fields of a single packet for batch processing.
+type parsedPkt struct {
+	srcStr, dstStr       string
+	srcLocal, dstLocal   bool
+	srcSelf, dstSelf     bool
+	srcLoopLL, dstLoopLL bool
+	wireLen              uint64
+	proto                string
+	ipVersion            string
 }
 
 type Tracker struct {
@@ -255,7 +267,7 @@ func (t *Tracker) TopByVolume(n int) []TalkerStat {
 		if ip != nil && ip.IsLoopback() {
 			continue
 		}
-		s.IsLocal = ip != nil && (ip.IsPrivate() || ip.IsLinkLocalUnicast() || t.isLocalNet(ip))
+		s.IsLocal = ip != nil && netutil.IsLocal(ip, t.localNets)
 		list = append(list, *s)
 	}
 	sort.Slice(list, func(i, j int) bool {
@@ -270,7 +282,7 @@ func (t *Tracker) TopByVolume(n int) []TalkerStat {
 		if t.dns != nil {
 			list[i].Hostname = t.dns.LookupAddrAsync(list[i].IP)
 		}
-		t.enrichGeo(&list[i])
+		t.geoDB.Enrich(list[i].IP, &list[i])
 	}
 	return list
 }
@@ -298,7 +310,7 @@ func (t *Tracker) TopByBandwidth(n int) []TalkerStat {
 		if parsedIP != nil && parsedIP.IsLoopback() {
 			continue
 		}
-		isLocal := parsedIP != nil && (parsedIP.IsPrivate() || parsedIP.IsLinkLocalUnicast() || t.isLocalNet(parsedIP))
+		isLocal := parsedIP != nil && netutil.IsLocal(parsedIP, t.localNets)
 		list = append(list, TalkerStat{
 			IP:         ip,
 			TotalBytes: r.bytes,
@@ -323,7 +335,7 @@ func (t *Tracker) TopByBandwidth(n int) []TalkerStat {
 		if t.dns != nil {
 			list[i].Hostname = t.dns.LookupAddrAsync(list[i].IP)
 		}
-		t.enrichGeo(&list[i])
+		t.geoDB.Enrich(list[i].IP, &list[i])
 	}
 	return list
 }
@@ -359,17 +371,6 @@ func (t *Tracker) captureDevice(device string) {
 	}
 	defer ring.Close()
 	log.Printf("talkers: TPACKET_V3 ring on %s", device)
-
-	// Parsed packet for batch processing — stack-allocated, no heap.
-	type parsedPkt struct {
-		srcStr, dstStr       string
-		srcLocal, dstLocal   bool
-		srcSelf, dstSelf     bool
-		srcLoopLL, dstLoopLL bool
-		wireLen              uint64
-		proto                string
-		ipVersion            string
-	}
 
 	// IP string cache: avoids heap-allocating net.IP.String() for every
 	// packet. At 10 MB/s there are ~7000 pps but only 10-100 unique IPs.
@@ -430,8 +431,8 @@ func (t *Tracker) captureDevice(device string) {
 			batch = append(batch, parsedPkt{
 				srcStr:    srcStr,
 				dstStr:    dstStr,
-				srcLocal:  isLocalIP(srcIP) || t.isLocalNet(srcIP),
-				dstLocal:  isLocalIP(dstIP) || t.isLocalNet(dstIP),
+				srcLocal:  netutil.IsLocal(srcIP, t.localNets),
+				dstLocal:  netutil.IsLocal(dstIP, t.localNets),
 				srcSelf:   srcSelf,
 				dstSelf:   dstSelf,
 				srcLoopLL: srcIP.IsLoopback() || srcIP.IsLinkLocalUnicast(),
@@ -457,95 +458,105 @@ func (t *Tracker) captureDevice(device string) {
 		rSlot := t.rateRing[t.rateRingIdx]
 		for i := range batch {
 			p := &batch[i]
-			// Host accounting
-			for _, entry := range []struct {
-				ip     string
-				local  bool
-				loopLL bool
-			}{
-				{p.srcStr, p.srcLocal, p.srcLoopLL},
-				{p.dstStr, p.dstLocal, p.dstLoopLL},
-			} {
-				if entry.loopLL {
-					continue
-				}
-				if _, ok := t.current.hosts[entry.ip]; !ok {
-					if len(t.current.hosts) >= maxHostsPerBucket {
-						continue
-					}
-					t.current.hosts[entry.ip] = &hostAccum{}
-				}
-				t.current.hosts[entry.ip].bytes += p.wireLen
-				t.current.hosts[entry.ip].packets++
-
-				// Rate ring: mirror byte + packet accounting
-				if rSlot != nil {
-					if _, ok := rSlot.hosts[entry.ip]; !ok {
-						rSlot.hosts[entry.ip] = &hostAccum{}
-					}
-					rSlot.hosts[entry.ip].bytes += p.wireLen
-					rSlot.hosts[entry.ip].packets++
-				}
-			}
-
-			// Direction detection
-			if len(t.localNets) > 0 {
-				if p.srcLocal && !p.dstLocal {
-					if h, ok := t.current.hosts[p.dstStr]; ok {
-						h.txBytes += p.wireLen
-					}
-					if rSlot != nil {
-						if h, ok := rSlot.hosts[p.dstStr]; ok {
-							h.txBytes += p.wireLen
-						}
-					}
-				} else if !p.srcLocal && p.dstLocal {
-					if h, ok := t.current.hosts[p.srcStr]; ok {
-						h.rxBytes += p.wireLen
-					}
-					if rSlot != nil {
-						if h, ok := rSlot.hosts[p.srcStr]; ok {
-							h.rxBytes += p.wireLen
-						}
-					}
-				} else if p.srcLocal && p.dstLocal {
-					if p.srcSelf && !p.dstSelf {
-						if h, ok := t.current.hosts[p.dstStr]; ok {
-							h.txBytes += p.wireLen
-						}
-						if h, ok := t.current.hosts[p.srcStr]; ok {
-							h.txBytes += p.wireLen
-						}
-						if rSlot != nil {
-							if h, ok := rSlot.hosts[p.dstStr]; ok {
-								h.txBytes += p.wireLen
-							}
-							if h, ok := rSlot.hosts[p.srcStr]; ok {
-								h.txBytes += p.wireLen
-							}
-						}
-					} else if p.dstSelf && !p.srcSelf {
-						if h, ok := t.current.hosts[p.srcStr]; ok {
-							h.rxBytes += p.wireLen
-						}
-						if h, ok := t.current.hosts[p.dstStr]; ok {
-							h.rxBytes += p.wireLen
-						}
-						if rSlot != nil {
-							if h, ok := rSlot.hosts[p.srcStr]; ok {
-								h.rxBytes += p.wireLen
-							}
-							if h, ok := rSlot.hosts[p.dstStr]; ok {
-								h.rxBytes += p.wireLen
-							}
-						}
-					}
-				}
-			}
+			t.accountPacket(p, t.current, rSlot)
+			t.accountDirection(p, t.current, rSlot)
 			t.current.protoBytes[p.proto] += p.wireLen
 			t.current.ipVerBytes[p.ipVersion] += p.wireLen
 		}
 		t.mu.Unlock()
+	}
+}
+
+// accountPacket updates host byte/packet counters in the current bucket and
+// rate ring slot for both endpoints of a parsed packet.
+// Must be called with t.mu held.
+func (t *Tracker) accountPacket(p *parsedPkt, current *bucket, rSlot *rateSlot) {
+	for _, entry := range []struct {
+		ip     string
+		loopLL bool
+	}{
+		{p.srcStr, p.srcLoopLL},
+		{p.dstStr, p.dstLoopLL},
+	} {
+		if entry.loopLL {
+			continue
+		}
+		if _, ok := current.hosts[entry.ip]; !ok {
+			if len(current.hosts) >= maxHostsPerBucket {
+				continue
+			}
+			current.hosts[entry.ip] = &hostAccum{}
+		}
+		current.hosts[entry.ip].bytes += p.wireLen
+		current.hosts[entry.ip].packets++
+
+		if rSlot != nil {
+			if _, ok := rSlot.hosts[entry.ip]; !ok {
+				rSlot.hosts[entry.ip] = &hostAccum{}
+			}
+			rSlot.hosts[entry.ip].bytes += p.wireLen
+			rSlot.hosts[entry.ip].packets++
+		}
+	}
+}
+
+// accountDirection updates rx/tx byte counters based on local-net direction
+// detection for a parsed packet.
+// Must be called with t.mu held.
+func (t *Tracker) accountDirection(p *parsedPkt, current *bucket, rSlot *rateSlot) {
+	if len(t.localNets) == 0 {
+		return
+	}
+	if p.srcLocal && !p.dstLocal {
+		if h, ok := current.hosts[p.dstStr]; ok {
+			h.txBytes += p.wireLen
+		}
+		if rSlot != nil {
+			if h, ok := rSlot.hosts[p.dstStr]; ok {
+				h.txBytes += p.wireLen
+			}
+		}
+	} else if !p.srcLocal && p.dstLocal {
+		if h, ok := current.hosts[p.srcStr]; ok {
+			h.rxBytes += p.wireLen
+		}
+		if rSlot != nil {
+			if h, ok := rSlot.hosts[p.srcStr]; ok {
+				h.rxBytes += p.wireLen
+			}
+		}
+	} else if p.srcLocal && p.dstLocal {
+		if p.srcSelf && !p.dstSelf {
+			if h, ok := current.hosts[p.dstStr]; ok {
+				h.txBytes += p.wireLen
+			}
+			if h, ok := current.hosts[p.srcStr]; ok {
+				h.txBytes += p.wireLen
+			}
+			if rSlot != nil {
+				if h, ok := rSlot.hosts[p.dstStr]; ok {
+					h.txBytes += p.wireLen
+				}
+				if h, ok := rSlot.hosts[p.srcStr]; ok {
+					h.txBytes += p.wireLen
+				}
+			}
+		} else if p.dstSelf && !p.srcSelf {
+			if h, ok := current.hosts[p.srcStr]; ok {
+				h.rxBytes += p.wireLen
+			}
+			if h, ok := current.hosts[p.dstStr]; ok {
+				h.rxBytes += p.wireLen
+			}
+			if rSlot != nil {
+				if h, ok := rSlot.hosts[p.srcStr]; ok {
+					h.rxBytes += p.wireLen
+				}
+				if h, ok := rSlot.hosts[p.dstStr]; ok {
+					h.rxBytes += p.wireLen
+				}
+			}
+		}
 	}
 }
 
@@ -697,22 +708,15 @@ type ASNStat struct {
 	Connections int    `json:"connections"`
 }
 
-// enrichGeo populates geo fields on a TalkerStat from the MMDB.
-func (t *Tracker) enrichGeo(s *TalkerStat) {
-	if t.geoDB == nil {
-		return
-	}
-	geo := t.geoDB.Lookup(s.IP)
-	if geo == nil {
-		return
-	}
-	s.Country = geo.Country
-	s.CountryName = geo.CountryName
-	s.City = geo.City
-	s.Latitude = geo.Latitude
-	s.Longitude = geo.Longitude
-	s.ASN = geo.ASN
-	s.ASOrg = geo.ASOrg
+// SetGeo implements geoip.GeoFields.
+func (s *TalkerStat) SetGeo(country, countryName, city string, lat, lon float64, asn uint, asOrg string) {
+	s.Country = country
+	s.CountryName = countryName
+	s.City = city
+	s.Latitude = lat
+	s.Longitude = lon
+	s.ASN = asn
+	s.ASOrg = asOrg
 }
 
 // GeoBreakdown holds both per-country and per-ASN traffic summaries,
@@ -762,10 +766,7 @@ func (t *Tracker) GetGeoBreakdown() *GeoBreakdown {
 		// Skip local/private/self IPs — they have no GeoIP data and
 		// inflate the "Unknown" category.
 		parsedIP := net.ParseIP(ip)
-		if parsedIP != nil && (parsedIP.IsPrivate() || parsedIP.IsLoopback() || parsedIP.IsLinkLocalUnicast()) {
-			continue
-		}
-		if parsedIP != nil && t.isLocalNet(parsedIP) {
+		if parsedIP != nil && (parsedIP.IsLoopback() || netutil.IsLocal(parsedIP, t.localNets)) {
 			continue
 		}
 		if _, isSelf := t.selfIPs[ip]; isSelf {
@@ -835,24 +836,6 @@ func (t *Tracker) GetGeoBreakdown() *GeoBreakdown {
 		Countries: countryResult,
 		ASNs:      asnResult,
 	}
-}
-
-// isLocalIP checks if an IP is private, loopback, or link-local.
-// Uses Go's built-in methods — zero allocations.
-func isLocalIP(ip net.IP) bool {
-	return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()
-}
-
-func (t *Tracker) isLocalNet(ip net.IP) bool {
-	if len(t.localNets) == 0 {
-		return false
-	}
-	for _, n := range t.localNets {
-		if n.Contains(ip) {
-			return true
-		}
-	}
-	return false
 }
 
 // BucketPoint is a single 1-minute data point for a host.
@@ -937,7 +920,7 @@ func (t *Tracker) HostTotals(ip string) *TalkerStat {
 	if t.dns != nil {
 		stat.Hostname = t.dns.LookupAddr(ip)
 	}
-	t.enrichGeo(stat)
+	t.geoDB.Enrich(stat.IP, stat)
 	return stat
 }
 

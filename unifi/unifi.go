@@ -2,14 +2,11 @@ package unifi
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"net/http/cookiejar"
-	"sort"
 	"sync"
 	"time"
 
@@ -45,21 +42,14 @@ func New(baseURL, user, pass, site string, pollInterval time.Duration) *Client {
 	if site == "" {
 		site = "default"
 	}
-	jar, _ := cookiejar.New(nil)
 	return &Client{
-		baseURL:  baseURL,
-		user:     user,
-		pass:     pass,
-		site:     site,
-		interval: pollInterval,
-		httpClient: &http.Client{
-			Timeout: 15 * time.Second,
-			Jar:     jar,
-			Transport: httputil.WrapTransport(&http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			}),
-		},
-		stopCh: make(chan struct{}),
+		baseURL:    baseURL,
+		user:       user,
+		pass:       pass,
+		site:       site,
+		interval:   pollInterval,
+		httpClient: httputil.NewInsecureClient(15 * time.Second),
+		stopCh:     make(chan struct{}),
 	}
 }
 
@@ -132,21 +122,10 @@ func (c *Client) poll() {
 		dt = 0
 	}
 
-	sum := c.buildSummary(devices, clients, dt)
+	sum := wifi.BuildSummary("UniFi", c.normalizeAPs(devices), c.normalizeClients(clients), dt, c.prevAP, c.prevSSID, c.prevCli)
 
 	// Store current counters for next delta
-	newAP := make(map[string]wifi.ByteSnap, len(sum.APs))
-	for _, ap := range sum.APs {
-		newAP[ap.MAC] = wifi.ByteSnap{Tx: ap.TxBytes, Rx: ap.RxBytes}
-	}
-	newSSID := make(map[string]wifi.ByteSnap, len(sum.SSIDs))
-	for _, s := range sum.SSIDs {
-		newSSID[s.Name] = wifi.ByteSnap{Tx: s.TxBytes, Rx: s.RxBytes}
-	}
-	newCli := make(map[string]wifi.ByteSnap, len(sum.Clients))
-	for _, cl := range sum.Clients {
-		newCli[cl.MAC] = wifi.ByteSnap{Tx: cl.TxBytes, Rx: cl.RxBytes}
-	}
+	newAP, newSSID, newCli := wifi.StoreSnapshots(sum)
 
 	c.mu.Lock()
 	c.summary = sum
@@ -318,8 +297,8 @@ func (c *Client) fetchClients() ([]rawClient, error) {
 	return cr.Data, nil
 }
 
-func (c *Client) buildSummary(devices []rawDevice, clients []rawClient, dt float64) *wifi.Summary {
-	var aps []wifi.APInfo
+func (c *Client) normalizeAPs(devices []rawDevice) []wifi.NormalizedAP {
+	var aps []wifi.NormalizedAP
 	for _, d := range devices {
 		if d.Type != "uap" {
 			continue
@@ -328,108 +307,26 @@ func (c *Client) buildSummary(devices []rawDevice, clients []rawClient, dt float
 		if d.State == 1 {
 			status = "connected"
 		}
-		ap := wifi.APInfo{
-			Name:       d.Name,
-			Model:      d.Model,
-			MAC:        d.MAC,
-			IP:         d.IP,
-			Version:    d.Version,
-			Status:     status,
-			NumClients: d.NumSta,
-			Uptime:     d.Uptime,
-			TxBytes:    d.TxBytes,
-			RxBytes:    d.RxBytes,
-		}
-		if dt > 0 {
-			if prev, ok := c.prevAP[d.MAC]; ok {
-				ap.TxRate, ap.RxRate = wifi.ComputeRates(d.TxBytes, d.RxBytes, prev, dt)
-			}
-		}
-		aps = append(aps, ap)
+		aps = append(aps, wifi.NormalizedAP{
+			Name: d.Name, Model: d.Model, MAC: d.MAC, IP: d.IP,
+			Version: d.Version, Status: status, NumClients: d.NumSta,
+			Uptime: d.Uptime, TxBytes: d.TxBytes, RxBytes: d.RxBytes,
+		})
 	}
-	sort.Slice(aps, func(i, j int) bool { return aps[i].Name < aps[j].Name })
+	return aps
+}
 
-	type ssidAgg struct {
-		count   int
-		txBytes int64
-		rxBytes int64
-	}
-	ssidMap := make(map[string]*ssidAgg)
-	totalWireless := 0
+func (c *Client) normalizeClients(clients []rawClient) []wifi.NormalizedClient {
+	var ncs []wifi.NormalizedClient
 	for _, cl := range clients {
-		if cl.IsWired {
-			continue
-		}
-		totalWireless++
-		if cl.ESSID != "" {
-			a, ok := ssidMap[cl.ESSID]
-			if !ok {
-				a = &ssidAgg{}
-				ssidMap[cl.ESSID] = a
-			}
-			a.count++
-			a.txBytes += cl.TxBytes
-			a.rxBytes += cl.RxBytes
-		}
+		ncs = append(ncs, wifi.NormalizedClient{
+			MAC: cl.MAC, Hostname: cl.Hostname, IP: cl.IP, SSID: cl.ESSID,
+			APMAC: cl.APMAC, Signal: cl.Signal, Channel: cl.Channel,
+			Radio: cl.Radio, TxBytes: cl.TxBytes, RxBytes: cl.RxBytes,
+			IsWireless: !cl.IsWired,
+		})
 	}
-
-	var ssids []wifi.SSIDStat
-	for name, a := range ssidMap {
-		s := wifi.SSIDStat{Name: name, NumClients: a.count, TxBytes: a.txBytes, RxBytes: a.rxBytes}
-		if dt > 0 {
-			if prev, ok := c.prevSSID[name]; ok {
-				s.TxRate, s.RxRate = wifi.ComputeRates(a.txBytes, a.rxBytes, prev, dt)
-			}
-		}
-		ssids = append(ssids, s)
-	}
-	sort.Slice(ssids, func(i, j int) bool { return ssids[i].NumClients > ssids[j].NumClients })
-
-	// Build AP MAC → name lookup
-	apNames := make(map[string]string)
-	for _, ap := range aps {
-		apNames[ap.MAC] = ap.Name
-	}
-
-	// Build per-client list (wireless only), sorted by total traffic descending
-	var clientInfos []wifi.ClientInfo
-	for _, cl := range clients {
-		if cl.IsWired {
-			continue
-		}
-		ci := wifi.ClientInfo{
-			MAC:      cl.MAC,
-			Hostname: cl.Hostname,
-			IP:       cl.IP,
-			SSID:     cl.ESSID,
-			APMAC:    cl.APMAC,
-			APName:   apNames[cl.APMAC],
-			Signal:   cl.Signal,
-			Channel:  cl.Channel,
-			Radio:    cl.Radio,
-			TxBytes:  cl.TxBytes,
-			RxBytes:  cl.RxBytes,
-		}
-		if dt > 0 {
-			if prev, ok := c.prevCli[cl.MAC]; ok {
-				ci.TxRate, ci.RxRate = wifi.ComputeRates(cl.TxBytes, cl.RxBytes, prev, dt)
-			}
-		}
-		clientInfos = append(clientInfos, ci)
-	}
-	sort.Slice(clientInfos, func(i, j int) bool {
-		return (clientInfos[i].TxBytes + clientInfos[i].RxBytes) >
-			(clientInfos[j].TxBytes + clientInfos[j].RxBytes)
-	})
-
-	return &wifi.Summary{
-		ProviderName: "UniFi",
-		TotalAPs:     len(aps),
-		TotalClients: totalWireless,
-		APs:          aps,
-		SSIDs:        ssids,
-		Clients:      clientInfos,
-	}
+	return ncs
 }
 
 func (c *Client) String() string {

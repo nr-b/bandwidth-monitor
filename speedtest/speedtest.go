@@ -203,45 +203,20 @@ func measurePing(server string, samples int) (avgMs, jitterMs float64, err error
 	return avgMs, jitterMs, nil
 }
 
-func measureDownload(server string, ch chan<- Progress) (float64, error) {
-	const (
-		duration    = 15 * time.Second
-		parallelism = 6
-	)
-
+// measureThroughput runs parallelism goroutines calling workerFn for the
+// given duration, reporting progress on ch under the given phase name.
+// Returns the measured throughput in Mbps.
+func measureThroughput(phase string, duration time.Duration, parallelism int, workerFn func(deadline time.Time, counter *int64, mu *sync.Mutex), ch chan<- Progress) (float64, error) {
 	var totalBytes int64
 	var mu sync.Mutex
 	deadline := time.Now().Add(duration)
 
 	var wg sync.WaitGroup
-
 	for i := 0; i < parallelism; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			client := &http.Client{
-				Timeout:   duration + 5*time.Second,
-				Transport: httputil.WrapTransport(nil),
-			}
-			buf := make([]byte, 256*1024)
-			for time.Now().Before(deadline) {
-				resp, e := client.Get(server + "/downloading")
-				if e != nil {
-					return
-				}
-				for time.Now().Before(deadline) {
-					n, e := resp.Body.Read(buf)
-					if n > 0 {
-						mu.Lock()
-						totalBytes += int64(n)
-						mu.Unlock()
-					}
-					if e != nil {
-						break
-					}
-				}
-				resp.Body.Close()
-			}
+			workerFn(deadline, &totalBytes, &mu)
 		}()
 	}
 
@@ -270,7 +245,7 @@ loop:
 			b := totalBytes
 			mu.Unlock()
 			mbps := (float64(b) * 8) / (elapsed * 1e6)
-			ch <- Progress{Phase: "download", Percent: pct, Value: mbps}
+			ch <- Progress{Phase: phase, Percent: pct, Value: mbps}
 		}
 	}
 
@@ -280,12 +255,47 @@ loop:
 
 	elapsed := time.Since(startTime).Seconds()
 	if elapsed == 0 || b == 0 {
-		return 0, fmt.Errorf("no data downloaded")
+		return 0, fmt.Errorf("no data transferred during %s", phase)
 	}
 
 	mbps := (float64(b) * 8) / (elapsed * 1e6)
-	ch <- Progress{Phase: "download", Percent: 100, Value: mbps}
+	ch <- Progress{Phase: phase, Percent: 100, Value: mbps}
 	return mbps, nil
+}
+
+func measureDownload(server string, ch chan<- Progress) (float64, error) {
+	const (
+		duration    = 15 * time.Second
+		parallelism = 6
+	)
+
+	workerFn := func(deadline time.Time, counter *int64, mu *sync.Mutex) {
+		client := &http.Client{
+			Timeout:   duration + 5*time.Second,
+			Transport: httputil.WrapTransport(nil),
+		}
+		buf := make([]byte, 256*1024)
+		for time.Now().Before(deadline) {
+			resp, e := client.Get(server + "/downloading")
+			if e != nil {
+				return
+			}
+			for time.Now().Before(deadline) {
+				n, e := resp.Body.Read(buf)
+				if n > 0 {
+					mu.Lock()
+					*counter += int64(n)
+					mu.Unlock()
+				}
+				if e != nil {
+					break
+				}
+			}
+			resp.Body.Close()
+		}
+	}
+
+	return measureThroughput("download", duration, parallelism, workerFn, ch)
 }
 
 func measureUpload(server string, ch chan<- Progress) (float64, error) {
@@ -295,87 +305,37 @@ func measureUpload(server string, ch chan<- Progress) (float64, error) {
 		chunkSize   = 4 * 1024 * 1024
 	)
 
-	var totalBytes int64
-	var mu sync.Mutex
-	deadline := time.Now().Add(duration)
+	workerFn := func(deadline time.Time, counter *int64, mu *sync.Mutex) {
+		client := &http.Client{
+			Timeout:   duration + 5*time.Second,
+			Transport: httputil.WrapTransport(nil),
+		}
+		data := make([]byte, chunkSize)
+		rand.Read(data)
 
-	var wg sync.WaitGroup
-
-	for i := 0; i < parallelism; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			client := &http.Client{
-				Timeout:   duration + 5*time.Second,
-				Transport: httputil.WrapTransport(nil),
+		for time.Now().Before(deadline) {
+			reader := &countingReader{
+				data:    data,
+				mu:      mu,
+				counter: counter,
 			}
-			data := make([]byte, chunkSize)
-			rand.Read(data)
-
-			for time.Now().Before(deadline) {
-				reader := &countingReader{
-					data:    data,
-					mu:      &mu,
-					counter: &totalBytes,
-				}
-				req, e := http.NewRequest("POST", server+"/upload", reader)
-				if e != nil {
-					return
-				}
-				req.ContentLength = int64(chunkSize)
-				req.Header.Set("Content-Type", "application/octet-stream")
-
-				resp, e := client.Do(req)
-				if e != nil {
-					continue
-				}
-				io.Copy(io.Discard, resp.Body)
-				resp.Body.Close()
+			req, e := http.NewRequest("POST", server+"/upload", reader)
+			if e != nil {
+				return
 			}
-		}()
-	}
+			req.ContentLength = int64(chunkSize)
+			req.Header.Set("Content-Type", "application/octet-stream")
 
-	startTime := time.Now()
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-
-loop:
-	for {
-		select {
-		case <-done:
-			break loop
-		case <-ticker.C:
-			elapsed := time.Since(startTime).Seconds()
-			pct := (elapsed / duration.Seconds()) * 100
-			if pct > 100 {
-				pct = 100
+			resp, e := client.Do(req)
+			if e != nil {
+				continue
 			}
-			mu.Lock()
-			b := totalBytes
-			mu.Unlock()
-			mbps := (float64(b) * 8) / (elapsed * 1e6)
-			ch <- Progress{Phase: "upload", Percent: pct, Value: mbps}
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
 		}
 	}
 
-	mu.Lock()
-	b := totalBytes
-	mu.Unlock()
-
-	elapsed := time.Since(startTime).Seconds()
-	if elapsed == 0 || b == 0 {
-		return 0, fmt.Errorf("no data uploaded")
-	}
-
-	mbps := (float64(b) * 8) / (elapsed * 1e6)
-	ch <- Progress{Phase: "upload", Percent: 100, Value: mbps}
-	return mbps, nil
+	return measureThroughput("upload", duration, parallelism, workerFn, ch)
 }
 
 type countingReader struct {

@@ -2,6 +2,8 @@
 // (UniFi, Omada, etc.), following the same pattern as the dns package.
 package wifi
 
+import "sort"
+
 // Provider is implemented by any WiFi controller stats backend.
 type Provider interface {
 	GetSummary() *Summary
@@ -86,4 +88,120 @@ func ComputeRates(curTx, curRx int64, prev ByteSnap, dt float64) (float64, float
 	txRate := Clamp(float64(curTx-prev.Tx) / dt)
 	rxRate := Clamp(float64(curRx-prev.Rx) / dt)
 	return txRate, rxRate
+}
+
+// NormalizedAP is a controller-agnostic AP representation for BuildSummary.
+type NormalizedAP struct {
+	Name, Model, MAC, IP, Version, Status string
+	NumClients                            int
+	Uptime, TxBytes, RxBytes              int64
+}
+
+// NormalizedClient is a controller-agnostic client for BuildSummary.
+type NormalizedClient struct {
+	MAC, Hostname, IP, SSID, APMAC, APName string
+	Signal, Channel                        int
+	Radio                                  string
+	TxBytes, RxBytes                       int64
+	IsWireless                             bool
+}
+
+// BuildSummary creates a Summary from normalized AP and client data.
+// It handles SSID aggregation, rate computation, and sorting.
+func BuildSummary(providerName string, rawAPs []NormalizedAP, rawClients []NormalizedClient, dt float64, prevAP, prevSSID, prevCli map[string]ByteSnap) *Summary {
+	// Build APs
+	var aps []APInfo
+	for _, d := range rawAPs {
+		ap := APInfo{Name: d.Name, Model: d.Model, MAC: d.MAC, IP: d.IP, Version: d.Version, Status: d.Status, NumClients: d.NumClients, Uptime: d.Uptime, TxBytes: d.TxBytes, RxBytes: d.RxBytes}
+		if dt > 0 {
+			if prev, ok := prevAP[d.MAC]; ok {
+				ap.TxRate, ap.RxRate = ComputeRates(d.TxBytes, d.RxBytes, prev, dt)
+			}
+		}
+		aps = append(aps, ap)
+	}
+	sort.Slice(aps, func(i, j int) bool { return aps[i].Name < aps[j].Name })
+
+	// SSID aggregation
+	type ssidAcc struct {
+		count int
+		tx    int64
+		rx    int64
+	}
+	ssidMap := make(map[string]*ssidAcc)
+	totalWireless := 0
+	for _, cl := range rawClients {
+		if !cl.IsWireless {
+			continue
+		}
+		totalWireless++
+		if cl.SSID != "" {
+			a, ok := ssidMap[cl.SSID]
+			if !ok {
+				a = &ssidAcc{}
+				ssidMap[cl.SSID] = a
+			}
+			a.count++
+			a.tx += cl.TxBytes
+			a.rx += cl.RxBytes
+		}
+	}
+	var ssids []SSIDStat
+	for name, a := range ssidMap {
+		s := SSIDStat{Name: name, NumClients: a.count, TxBytes: a.tx, RxBytes: a.rx}
+		if dt > 0 {
+			if prev, ok := prevSSID[name]; ok {
+				s.TxRate, s.RxRate = ComputeRates(a.tx, a.rx, prev, dt)
+			}
+		}
+		ssids = append(ssids, s)
+	}
+	sort.Slice(ssids, func(i, j int) bool { return ssids[i].NumClients > ssids[j].NumClients })
+
+	// AP name lookup
+	apNames := make(map[string]string, len(aps))
+	for _, ap := range aps {
+		apNames[ap.MAC] = ap.Name
+	}
+
+	// Clients
+	var clients []ClientInfo
+	for _, cl := range rawClients {
+		if !cl.IsWireless {
+			continue
+		}
+		apName := cl.APName
+		if apName == "" {
+			apName = apNames[cl.APMAC]
+		}
+		ci := ClientInfo{MAC: cl.MAC, Hostname: cl.Hostname, IP: cl.IP, SSID: cl.SSID, APMAC: cl.APMAC, APName: apName, Signal: cl.Signal, Channel: cl.Channel, Radio: cl.Radio, TxBytes: cl.TxBytes, RxBytes: cl.RxBytes}
+		if dt > 0 {
+			if prev, ok := prevCli[cl.MAC]; ok {
+				ci.TxRate, ci.RxRate = ComputeRates(cl.TxBytes, cl.RxBytes, prev, dt)
+			}
+		}
+		clients = append(clients, ci)
+	}
+	sort.Slice(clients, func(i, j int) bool {
+		return (clients[i].TxBytes + clients[i].RxBytes) > (clients[j].TxBytes + clients[j].RxBytes)
+	})
+
+	return &Summary{ProviderName: providerName, TotalAPs: len(aps), TotalClients: totalWireless, APs: aps, SSIDs: ssids, Clients: clients}
+}
+
+// StoreSnapshots returns prev-maps for the next delta cycle from a Summary.
+func StoreSnapshots(sum *Summary) (ap, ssid, cli map[string]ByteSnap) {
+	ap = make(map[string]ByteSnap, len(sum.APs))
+	for _, a := range sum.APs {
+		ap[a.MAC] = ByteSnap{Tx: a.TxBytes, Rx: a.RxBytes}
+	}
+	ssid = make(map[string]ByteSnap, len(sum.SSIDs))
+	for _, s := range sum.SSIDs {
+		ssid[s.Name] = ByteSnap{Tx: s.TxBytes, Rx: s.RxBytes}
+	}
+	cli = make(map[string]ByteSnap, len(sum.Clients))
+	for _, c := range sum.Clients {
+		cli[c.MAC] = ByteSnap{Tx: c.TxBytes, Rx: c.RxBytes}
+	}
+	return
 }
