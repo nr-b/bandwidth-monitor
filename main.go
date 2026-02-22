@@ -30,6 +30,7 @@ import (
 	"bandwidth-monitor/resolver"
 	"bandwidth-monitor/speedtest"
 	"bandwidth-monitor/talkers"
+	"bandwidth-monitor/topology"
 	"bandwidth-monitor/unifi"
 	"bandwidth-monitor/version"
 	"bandwidth-monitor/wifi"
@@ -250,6 +251,19 @@ func main() {
 	latencyMonitor := latency.New(latencyTargets)
 	go latencyMonitor.Run()
 
+	topoScanner := topology.New(dnsResolver, wifiProvider, localNets, 30*time.Second)
+	topoScanner.SetWANInterfacesFunc(func() []string {
+		var names []string
+		for _, iface := range statsCollector.GetAll() {
+			if iface.WAN {
+				names = append(names, iface.Name)
+			}
+		}
+		return names
+	})
+	go topoScanner.Run()
+	log.Println("Network topology scanner enabled")
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/interfaces", handler.InterfaceStats(statsCollector))
 	mux.HandleFunc("/api/interfaces/history", handler.InterfaceHistory(statsCollector))
@@ -266,7 +280,8 @@ func main() {
 	mux.HandleFunc("/api/debug/dns", handler.DebugDNS())
 	mux.HandleFunc("/api/debug/mtu", handler.DebugMTU())
 	mux.HandleFunc("/api/summary", handler.MenuBarSummary(statsCollector, talkerTracker, dnsProvider, wifiProvider, conntrackTracker))
-	mux.HandleFunc("/api/events", handler.SSE(statsCollector, talkerTracker, dnsProvider, wifiProvider, conntrackTracker, latencyMonitor, geoDB))
+	mux.HandleFunc("/api/topology", handler.TopologySummary(topoScanner))
+	mux.HandleFunc("/api/events", handler.SSE(statsCollector, talkerTracker, dnsProvider, wifiProvider, conntrackTracker, latencyMonitor, topoScanner, geoDB))
 	staticSub, err := fs.Sub(staticFiles, "static")
 	if err != nil {
 		log.Fatalf("Failed to create sub filesystem: %v", err)
@@ -332,6 +347,7 @@ func main() {
 		wifiProvider.Stop()
 	}
 	conntrackTracker.Stop()
+	topoScanner.Stop()
 	latencyMonitor.Stop()
 	dnsResolver.Stop()
 }

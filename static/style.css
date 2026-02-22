@@ -786,6 +786,12 @@ canvas { outline: none; }
 .wifi-stat-value.clients { color: var(--rx); }
 .wifi-stat-value.ssids { color: var(--tx); }
 
+.wifi-stat-value.net-nodes { color: var(--text-0); }
+.wifi-stat-value.net-gw { color: var(--accent); font-size: 15px; }
+.wifi-stat-value.net-aps { color: #34d399; }
+.wifi-stat-value.net-clients { color: var(--rx); }
+.wifi-stat-value.net-sources { color: var(--text-1); }
+
 /* Signal strength badges */
 .signal-badge {
     display: inline-block;
@@ -868,7 +874,7 @@ canvas { outline: none; }
 .wifi-ssid-table th.ssid-bar-col { width: 28%; }
 
 @media (max-width: 900px) {
-    .wifi-stats-row { grid-template-columns: 1fr; }
+    .wifi-stats-row { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
 }
 
 /* ── NAT / Conntrack Section ── */
@@ -1288,3 +1294,21 @@ canvas { outline: none; }
 
 .ip-clickable { cursor: pointer; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 2px; }
 .ip-clickable:hover { color: var(--accent); }
+
+/* ── Network Topology Tab ── */
+.net-type-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 10px; font-size: 11px;
+    font-weight: 600; text-transform: capitalize;
+    background: var(--bg-2); color: var(--text-1);
+}
+.net-type-gateway { background: rgba(34,211,238,0.12); color: #22d3ee; }
+.net-type-router  { background: rgba(96,165,250,0.12); color: #60a5fa; }
+.net-type-switch  { background: rgba(167,139,250,0.12); color: #a78bfa; }
+.net-type-ap      { background: rgba(52,211,153,0.12); color: #34d399; }
+.net-type-self    { background: rgba(251,191,36,0.12); color: #fbbf24; }
+.net-type-client  { background: rgba(113,113,122,0.12); color: #a1a1aa; }\n.net-type-wan_gw  { background: rgba(249,115,22,0.12); color: #f97316; }\n.net-type-tunnel  { background: rgba(139,92,246,0.12); color: #8b5cf6; }
+
+#networkTopologySVG {
+    background: var(--bg-1); border-radius: 8px;
+}

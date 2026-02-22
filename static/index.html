@@ -33,6 +33,7 @@
             <button class="main-nav-tab" data-tab="nat" onclick="window._switchTab('nat')">NAT</button>
             <button class="main-nav-tab" data-tab="dns" onclick="window._switchTab('dns')">DNS</button>
             <button class="main-nav-tab" data-tab="wifi" onclick="window._switchTab('wifi')">WiFi</button>
+            <button class="main-nav-tab" data-tab="network" onclick="window._switchTab('network')">Network</button>
             <button class="main-nav-tab" data-tab="monitor" onclick="window._switchTab('monitor')">Monitor</button>
             <button class="main-nav-tab" data-tab="speedtest" onclick="window._switchTab('speedtest')">Speed Test</button>
             <button class="main-nav-tab" data-tab="debug" onclick="window._switchTab('debug')">Debug</button>
@@ -680,6 +681,97 @@
             </div>
         </div>
         </div><!-- /tabWifi -->
+
+        <div class="tab-panel" id="tabNetwork">
+
+        <div id="networkNoData" class="card" style="padding:32px;text-align:center;color:var(--text-2)">
+            <p>No topology data yet &mdash; waiting for first scan&hellip;</p>
+        </div>
+
+        <div id="networkHasData" style="display:none">
+
+        <!-- Summary stats -->
+        <div class="wifi-stats-row" style="grid-template-columns:repeat(5,1fr)" id="networkStatsRow">
+            <div class="wifi-stat-card">
+                <div class="wifi-stat-label">Total Nodes</div>
+                <div class="wifi-stat-value net-nodes" id="netTotalNodes">0</div>
+            </div>
+            <div class="wifi-stat-card">
+                <div class="wifi-stat-label">Gateway</div>
+                <div class="wifi-stat-value net-gw" id="netGateway">&mdash;</div>
+            </div>
+            <div class="wifi-stat-card">
+                <div class="wifi-stat-label">Access Points</div>
+                <div class="wifi-stat-value net-aps" id="netTotalAPs">0</div>
+            </div>
+            <div class="wifi-stat-card">
+                <div class="wifi-stat-label">Clients</div>
+                <div class="wifi-stat-value net-clients" id="netTotalClients">0</div>
+            </div>
+            <div class="wifi-stat-card">
+                <div class="wifi-stat-label">Discovery Sources</div>
+                <div class="wifi-stat-value net-sources" id="netSources" style="font-size:14px">&mdash;</div>
+            </div>
+        </div>
+
+        <!-- Topology visualization -->
+        <div class="card" style="margin-bottom:16px">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">Network Topology</div>
+                    <div class="card-subtitle">Approximate local network map &mdash; derived from ARP, NDP, LLDP, and controller data</div>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center">
+                    <select id="networkLayout" class="wifi-client-sort" onchange="window._updateNetworkLayout()">
+                        <option value="tree" selected>Tree</option>
+                        <option value="radial">Radial</option>
+                    </select>
+                </div>
+            </div>
+            <div id="networkTopologyContainer" style="width:100%;min-height:500px;position:relative;overflow:hidden">
+                <svg id="networkTopologySVG" style="width:100%;height:500px"></svg>
+            </div>
+        </div>
+
+        <!-- Client table -->
+        <div class="card" style="margin-bottom:16px">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">Discovered Clients</div>
+                    <div class="card-subtitle" id="networkClientCount">0 nodes discovered</div>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center">
+                    <input type="text" id="networkClientSearch" placeholder="Filter by name, IP, MAC…" style="padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg-2);color:var(--text-0);font-size:13px;width:200px;outline:none" oninput="window._filterNetworkClients()">
+                    <select id="networkClientSort" class="wifi-client-sort" onchange="window._filterNetworkClients()">
+                        <option value="type">Sort: Type</option>
+                        <option value="name">Sort: Name</option>
+                        <option value="ip">Sort: IP</option>
+                        <option value="source">Sort: Source</option>
+                    </select>
+                </div>
+            </div>
+            <div style="overflow-x:auto">
+                <table class="wifi-client-table">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Name / Hostname</th>
+                            <th>IP(s)</th>
+                            <th>MAC</th>
+                            <th>Interface</th>
+                            <th>SSID</th>
+                            <th>Signal</th>
+                            <th>State</th>
+                            <th>Source</th>
+                        </tr>
+                    </thead>
+                    <tbody id="networkClientTable"></tbody>
+                </table>
+            </div>
+        </div>
+
+        </div><!-- /networkHasData -->
+        </div><!-- /tabNetwork -->
 
         <div class="tab-panel" id="tabMonitor">
 
