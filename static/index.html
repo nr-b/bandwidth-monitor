@@ -1039,6 +1039,19 @@
         </div>
     </div>
 
-    <script src="app.js" defer></script>
+    <!-- Shared utilities -->
+    <script src="js/utils.js" defer></script>
+    <!-- Tab modules (order: tabs before core, core calls connect) -->
+    <script src="js/tabs/traffic.js" defer></script>
+    <script src="js/tabs/dns.js" defer></script>
+    <script src="js/tabs/wifi.js" defer></script>
+    <script src="js/tabs/nat.js" defer></script>
+    <script src="js/tabs/monitor.js" defer></script>
+    <script src="js/tabs/speedtest.js" defer></script>
+    <script src="js/tabs/debug.js" defer></script>
+    <script src="js/tabs/network.js" defer></script>
+    <script src="js/components/host-modal.js" defer></script>
+    <!-- Core (SSE, dispatch) — must load last -->
+    <script src="js/core.js" defer></script>
 </body>
 </html>

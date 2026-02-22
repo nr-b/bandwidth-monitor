@@ -1,0 +1,196 @@
+(function() {
+    'use strict';
+    var BM = window.BM;
+
+    var _stRunning = false;
+
+    function drawGauge(canvasId, value, max, color) {
+        var canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        var dpr = window.devicePixelRatio || 1;
+        var dw = canvas.offsetWidth, dh = canvas.offsetHeight;
+        if (!dw || !dh) return;
+        canvas.width = dw * dpr; canvas.height = dh * dpr;
+        var c = canvas.getContext('2d');
+        c.scale(dpr, dpr);
+
+        var cx = dw / 2, cy = dh - 10;
+        var r = Math.min(cx - 10, cy - 5);
+        var startAngle = Math.PI;
+        var endAngle = 2 * Math.PI;
+
+        c.beginPath();
+        c.arc(cx, cy, r, startAngle, endAngle);
+        c.lineWidth = 8;
+        c.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--bg-3').trim() || '#1f1f23';
+        c.lineCap = 'round';
+        c.stroke();
+
+        if (value > 0) {
+            var pct = Math.min(value / max, 1);
+            var valAngle = startAngle + pct * Math.PI;
+            c.beginPath();
+            c.arc(cx, cy, r, startAngle, valAngle);
+            c.lineWidth = 8;
+            c.strokeStyle = color;
+            c.lineCap = 'round';
+            c.stroke();
+        }
+    }
+
+    function updateSpeedTestGauges(ping, download, upload, jitter) {
+        var pingEl = document.getElementById('stPingValue');
+        var downEl = document.getElementById('stDownValue');
+        var upEl = document.getElementById('stUpValue');
+        var jitterEl = document.getElementById('stJitterValue');
+
+        pingEl.textContent = ping >= 0 ? ping.toFixed(1) : '--';
+        downEl.textContent = download >= 0 ? download.toFixed(1) : '--';
+        upEl.textContent = upload >= 0 ? upload.toFixed(1) : '--';
+        jitterEl.textContent = jitter >= 0 ? jitter.toFixed(1) : '--';
+
+        drawGauge('stPingGauge', ping >= 0 ? ping : 0, 100, '#22d3ee');
+        drawGauge('stDownGauge', download >= 0 ? download : 0, 1000, '#3b82f6');
+        drawGauge('stUpGauge', upload >= 0 ? upload : 0, 1000, '#a78bfa');
+        drawGauge('stJitterGauge', jitter >= 0 ? jitter : 0, 50, '#f59e0b');
+    }
+
+    function renderSpeedTestHistory(results) {
+        var tb = document.getElementById('speedtestHistory');
+        if (!results || !results.length) {
+            tb.innerHTML = '<tr><td colspan="6" class="empty-state">No tests yet &mdash; click Start Test</td></tr>';
+            return;
+        }
+        var h = '';
+        for (var i = 0; i < results.length; i++) {
+            var r = results[i];
+            var d = new Date(r.timestamp);
+            var dateStr = d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
+            h += '<tr>';
+            h += '<td><span class="' + BM.rankClass(i) + '">' + (i + 1) + '</span></td>';
+            h += '<td style="font-size:12px;white-space:nowrap">' + dateStr + '</td>';
+            h += '<td style="font-variant-numeric:tabular-nums;font-weight:600;color:var(--rx)">' + r.download_mbps.toFixed(1) + ' Mbps</td>';
+            h += '<td style="font-variant-numeric:tabular-nums;font-weight:600;color:var(--tx)">' + r.upload_mbps.toFixed(1) + ' Mbps</td>';
+            h += '<td style="font-variant-numeric:tabular-nums">' + r.ping_ms.toFixed(1) + ' ms</td>';
+            h += '<td style="font-variant-numeric:tabular-nums">' + r.jitter_ms.toFixed(1) + ' ms</td>';
+            h += '</tr>';
+        }
+        tb.innerHTML = h;
+    }
+
+    BM.loadSpeedTestHistory = function() {
+        fetch('/api/speedtest/results').then(function(r) { return r.json(); }).then(function(data) {
+            if (data.running) {
+                document.getElementById('speedtestBtn').disabled = true;
+                document.getElementById('speedtestBtn').textContent = 'Running...';
+                _stRunning = true;
+            }
+            renderSpeedTestHistory(data.results || []);
+            if (data.results && data.results.length) {
+                var last = data.results[0];
+                updateSpeedTestGauges(last.ping_ms, last.download_mbps, last.upload_mbps, last.jitter_ms);
+            }
+        }).catch(function() {});
+    };
+
+    window._runSpeedTest = function() {
+        if (_stRunning) return;
+        _stRunning = true;
+
+        var btn = document.getElementById('speedtestBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="speedtest-spinner"></span> Running...';
+
+        var wrap = document.getElementById('speedtestProgressWrap');
+        wrap.style.display = '';
+        var bar = document.getElementById('speedtestProgressBar');
+        var phase = document.getElementById('speedtestPhase');
+        updateSpeedTestGauges(-1, -1, -1, -1);
+        bar.style.width = '0%';
+        phase.textContent = 'Connecting...';
+
+        var currentPing = -1;
+        var currentDownload = -1;
+        var currentUpload = -1;
+        var currentJitter = -1;
+
+        fetch('/api/speedtest/run', { method: 'POST' }).then(function(resp) {
+            if (resp.status === 409) {
+                phase.textContent = 'Test already running';
+                return;
+            }
+            var reader = resp.body.getReader();
+            var decoder = new TextDecoder();
+            var buffer = '';
+
+            function processChunk() {
+                return reader.read().then(function(result) {
+                    if (result.done) return;
+                    buffer += decoder.decode(result.value, { stream: true });
+                    var lines = buffer.split('\n');
+                    buffer = lines.pop();
+
+                    for (var i = 0; i < lines.length; i++) {
+                        var line = lines[i].trim();
+                        if (!line.startsWith('data: ')) continue;
+                        try {
+                            var p = JSON.parse(line.substring(6));
+                            handleProgress(p);
+                        } catch(e) {}
+                    }
+                    return processChunk();
+                });
+            }
+
+            function handleProgress(p) {
+                if (p.phase === 'ping') {
+                    phase.textContent = 'Measuring latency...';
+                    bar.style.width = (p.percent * 0.15) + '%';
+                    bar.className = 'speedtest-progress-bar-fill ping';
+                    if (p.percent >= 100 && p.value > 0) {
+                        currentPing = p.value;
+                    }
+                    updateSpeedTestGauges(currentPing, currentDownload, currentUpload, currentJitter);
+                } else if (p.phase === 'download') {
+                    currentDownload = p.value;
+                    phase.textContent = 'Testing download... ' + p.value.toFixed(1) + ' Mbps';
+                    bar.style.width = (15 + p.percent * 0.40) + '%';
+                    bar.className = 'speedtest-progress-bar-fill download';
+                    updateSpeedTestGauges(currentPing, currentDownload, currentUpload, currentJitter);
+                } else if (p.phase === 'upload') {
+                    currentUpload = p.value;
+                    phase.textContent = 'Testing upload... ' + p.value.toFixed(1) + ' Mbps';
+                    bar.style.width = (55 + p.percent * 0.40) + '%';
+                    bar.className = 'speedtest-progress-bar-fill upload';
+                    updateSpeedTestGauges(currentPing, currentDownload, currentUpload, currentJitter);
+                } else if (p.phase === 'done' && p.result) {
+                    phase.textContent = 'Complete!';
+                    bar.style.width = '100%';
+                    bar.className = 'speedtest-progress-bar-fill done';
+                    var r = p.result;
+                    updateSpeedTestGauges(r.ping_ms, r.download_mbps, r.upload_mbps, r.jitter_ms);
+                    BM.loadSpeedTestHistory();
+                    finishTest();
+                } else if (p.phase === 'error') {
+                    phase.textContent = 'Error — test failed';
+                    bar.className = 'speedtest-progress-bar-fill error';
+                    finishTest();
+                }
+            }
+
+            return processChunk();
+        }).catch(function(e) {
+            phase.textContent = 'Connection error';
+            finishTest();
+        });
+
+        function finishTest() {
+            _stRunning = false;
+            btn.disabled = false;
+            btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><polygon points="5 3 19 12 5 21 5 3"/></svg> Start Test';
+            setTimeout(function() {
+                wrap.style.display = 'none';
+            }, 3000);
+        }
+    };
+})();
