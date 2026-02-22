@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"bandwidth-monitor/httputil"
+	"bandwidth-monitor/poller"
 	"bandwidth-monitor/wifi"
 )
 
@@ -23,7 +24,7 @@ type Client struct {
 	httpClient *http.Client
 	mu         sync.RWMutex
 	summary    *wifi.Summary
-	stopCh     chan struct{}
+	poller.Runner
 
 	// API variant detection
 	unifiOS   bool   // true = UDM/UDR/CloudKey Gen2+, false = legacy controller
@@ -42,38 +43,19 @@ func New(baseURL, user, pass, site string, pollInterval time.Duration) *Client {
 	if site == "" {
 		site = "default"
 	}
-	return &Client{
+	c := &Client{
 		baseURL:    baseURL,
 		user:       user,
 		pass:       pass,
 		site:       site,
 		interval:   pollInterval,
 		httpClient: httputil.NewInsecureClient(15 * time.Second),
-		stopCh:     make(chan struct{}),
 	}
+	c.Runner.Init()
+	return c
 }
 
-func (c *Client) Run() {
-	c.poll()
-	ticker := time.NewTicker(c.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			c.poll()
-		case <-c.stopCh:
-			return
-		}
-	}
-}
-
-func (c *Client) Stop() {
-	select {
-	case <-c.stopCh:
-	default:
-		close(c.stopCh)
-	}
-}
+func (c *Client) Run() { c.Runner.Run(c.interval, c.poll) }
 
 func (c *Client) GetSummary() *wifi.Summary {
 	c.mu.RLock()

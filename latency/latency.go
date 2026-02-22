@@ -16,10 +16,10 @@ import (
 	"time"
 
 	"bandwidth-monitor/httputil"
+	"bandwidth-monitor/icmputil"
+	"bandwidth-monitor/poller"
 
 	"golang.org/x/net/icmp"
-	"golang.org/x/net/ipv4"
-	"golang.org/x/net/ipv6"
 )
 
 const (
@@ -85,7 +85,7 @@ type Monitor struct {
 	targets []resolvedTarget
 	mu      sync.RWMutex
 	state   map[string]*targetState
-	stopCh  chan struct{}
+	poller.Runner
 }
 
 type resolvedTarget struct {
@@ -172,8 +172,8 @@ func New(targets []string) *Monitor {
 	m := &Monitor{
 		targets: resolved,
 		state:   make(map[string]*targetState, len(resolved)),
-		stopCh:  make(chan struct{}),
 	}
+	m.Runner.Init()
 	for _, t := range resolved {
 		st := &targetState{}
 		if t.ipv4 != nil {
@@ -204,27 +204,11 @@ func (m *Monitor) Run() {
 		log.Printf("  %s (v4=%s, v6=%s)", t.name, v4s, v6s)
 	}
 
-	ticker := time.NewTicker(probeInterval)
-	defer ticker.Stop()
-	m.probeAll()
-	for {
-		select {
-		case <-ticker.C:
-			m.probeAll()
-		case <-m.stopCh:
-			return
-		}
-	}
+	m.Runner.Run(probeInterval, m.probeAll)
 }
 
 // Stop terminates the probe loop.
-func (m *Monitor) Stop() {
-	select {
-	case <-m.stopCh:
-	default:
-		close(m.stopCh)
-	}
-}
+func (m *Monitor) Stop() { m.Runner.Stop() }
 
 // GetStatus returns the current status of all targets.
 func (m *Monitor) GetStatus() []TargetStatus {
@@ -449,77 +433,11 @@ var (
 )
 
 func pingOneV4(conn *icmp.PacketConn, dest net.IP, seq int) float64 {
-	id := uint16(os.Getpid() & 0xFFFF)
-	msg := icmp.Message{
-		Type: ipv4.ICMPTypeEcho, Code: 0,
-		Body: &icmp.Echo{ID: int(id), Seq: seq, Data: []byte("bwmon-lat")},
-	}
-	wb, err := msg.Marshal(nil)
-	if err != nil {
-		return -1
-	}
-	dst := &net.IPAddr{IP: dest}
-	conn.SetDeadline(time.Now().Add(icmpTimeout))
-	start := time.Now()
-	if _, err := conn.WriteTo(wb, dst); err != nil {
-		return -1
-	}
-	rb := make([]byte, 1500)
-	for {
-		n, _, err := conn.ReadFrom(rb)
-		if err != nil {
-			return -1
-		}
-		rtt := float64(time.Since(start).Microseconds()) / 1000.0
-		rm, err := icmp.ParseMessage(1, rb[:n])
-		if err != nil {
-			continue
-		}
-		if rm.Type == ipv4.ICMPTypeEchoReply {
-			if echo, ok := rm.Body.(*icmp.Echo); ok {
-				if uint16(echo.ID) == id {
-					return rtt
-				}
-			}
-		}
-	}
+	return icmputil.PingOne(conn, dest, uint16(os.Getpid()&0xFFFF), uint16(seq), 1, icmpTimeout)
 }
 
 func pingOneV6(conn *icmp.PacketConn, dest net.IP, seq int) float64 {
-	id := uint16(os.Getpid() & 0xFFFF)
-	msg := icmp.Message{
-		Type: ipv6.ICMPTypeEchoRequest, Code: 0,
-		Body: &icmp.Echo{ID: int(id), Seq: seq, Data: []byte("bwmon-lat")},
-	}
-	wb, err := msg.Marshal(nil)
-	if err != nil {
-		return -1
-	}
-	dst := &net.IPAddr{IP: dest}
-	conn.SetDeadline(time.Now().Add(icmpTimeout))
-	start := time.Now()
-	if _, err := conn.WriteTo(wb, dst); err != nil {
-		return -1
-	}
-	rb := make([]byte, 1500)
-	for {
-		n, _, err := conn.ReadFrom(rb)
-		if err != nil {
-			return -1
-		}
-		rtt := float64(time.Since(start).Microseconds()) / 1000.0
-		rm, err := icmp.ParseMessage(58, rb[:n])
-		if err != nil {
-			continue
-		}
-		if rm.Type == ipv6.ICMPTypeEchoReply {
-			if echo, ok := rm.Body.(*icmp.Echo); ok {
-				if uint16(echo.ID) == id {
-					return rtt
-				}
-			}
-		}
-	}
+	return icmputil.PingOne(conn, dest, uint16(os.Getpid()&0xFFFF), uint16(seq), 58, icmpTimeout)
 }
 
 func (m *Monitor) probeHTTPS(client *http.Client, hostname string) float64 {

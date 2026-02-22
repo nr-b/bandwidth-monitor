@@ -20,6 +20,7 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl"
 
 	"bandwidth-monitor/netutil"
+	"bandwidth-monitor/poller"
 	"bandwidth-monitor/resolver"
 	"bandwidth-monitor/wifi"
 )
@@ -91,9 +92,9 @@ type Scanner struct {
 	dns          *resolver.Resolver
 	wifiProvider wifi.Provider
 	localNets    []*net.IPNet
-	stopCh       chan struct{}
-	interval     time.Duration
-	wanIfaces    func() []string // returns names of WAN interfaces
+	poller.Runner
+	interval  time.Duration
+	wanIfaces func() []string // returns names of WAN interfaces
 }
 
 // New creates a topology scanner.
@@ -101,13 +102,14 @@ func New(dns *resolver.Resolver, wifiProvider wifi.Provider, localNets []*net.IP
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
-	return &Scanner{
+	s := &Scanner{
 		dns:          dns,
 		wifiProvider: wifiProvider,
 		localNets:    localNets,
-		stopCh:       make(chan struct{}),
 		interval:     interval,
 	}
+	s.Runner.Init()
+	return s
 }
 
 // SetWANInterfacesFunc sets the callback used to determine WAN interface names.
@@ -118,28 +120,7 @@ func (s *Scanner) SetWANInterfacesFunc(fn func() []string) {
 }
 
 // Run starts the periodic scan loop. Call in a goroutine.
-func (s *Scanner) Run() {
-	s.scan()
-	ticker := time.NewTicker(s.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			s.scan()
-		case <-s.stopCh:
-			return
-		}
-	}
-}
-
-// Stop terminates the scan loop.
-func (s *Scanner) Stop() {
-	select {
-	case <-s.stopCh:
-	default:
-		close(s.stopCh)
-	}
-}
+func (s *Scanner) Run() { s.Runner.Run(s.interval, s.scan) }
 
 // GetOverview returns the latest topology snapshot.
 func (s *Scanner) GetOverview() *Overview {

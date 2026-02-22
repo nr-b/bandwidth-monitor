@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"bandwidth-monitor/poller"
+
 	"github.com/oschwald/maxminddb-golang"
 )
 
@@ -27,7 +29,7 @@ type DB struct {
 	asn     *maxminddb.Reader
 	mu      sync.RWMutex
 	cache   map[string]*Result
-	stopCh  chan struct{}
+	poller.Runner
 }
 
 // cityRecord is the minimal struct for MMDB city/country lookups.
@@ -55,9 +57,9 @@ type asnRecord struct {
 // will gracefully return partial results.
 func Open(countryPath, asnPath string) (*DB, error) {
 	db := &DB{
-		cache:  make(map[string]*Result, 4096),
-		stopCh: make(chan struct{}),
+		cache: make(map[string]*Result, 4096),
 	}
+	db.Runner.Init()
 
 	if countryPath != "" {
 		if _, err := os.Stat(countryPath); err == nil {
@@ -93,29 +95,18 @@ const (
 // pruneLoop periodically clears the GeoIP cache to prevent unbounded growth.
 // MMDB lookups are fast (~1µs) so rebuilding the cache is cheap.
 func (db *DB) pruneLoop() {
-	ticker := time.NewTicker(geoCachePruneInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			db.mu.Lock()
-			if len(db.cache) > geoCacheMaxSize {
-				db.cache = make(map[string]*Result, 4096)
-			}
-			db.mu.Unlock()
-		case <-db.stopCh:
-			return
+	db.Runner.Run(geoCachePruneInterval, func() {
+		db.mu.Lock()
+		if len(db.cache) > geoCacheMaxSize {
+			db.cache = make(map[string]*Result, 4096)
 		}
-	}
+		db.mu.Unlock()
+	})
 }
 
 // Close releases the database readers and stops the pruning goroutine.
 func (db *DB) Close() {
-	select {
-	case <-db.stopCh:
-	default:
-		close(db.stopCh)
-	}
+	db.Runner.Stop()
 	if db.country != nil {
 		db.country.Close()
 	}

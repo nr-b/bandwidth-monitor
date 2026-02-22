@@ -14,6 +14,7 @@ import (
 
 	"bandwidth-monitor/geoip"
 	"bandwidth-monitor/netutil"
+	"bandwidth-monitor/poller"
 	"bandwidth-monitor/resolver"
 
 	ct "github.com/ti-mo/conntrack"
@@ -136,10 +137,10 @@ type Tracker struct {
 	available   bool
 	sockBufSize int // netlink socket receive buffer size
 	errCount    int // consecutive dump errors (for log rate-limiting)
-	stopCh      chan struct{}
-	geoDB       *geoip.DB
-	dns         *resolver.Resolver
-	conn        *ct.Conn // persistent netlink connection
+	poller.Runner
+	geoDB *geoip.DB
+	dns   *resolver.Resolver
+	conn  *ct.Conn // persistent netlink connection
 }
 
 // Default and maximum netlink socket buffer sizes.
@@ -152,13 +153,14 @@ const (
 // localNets defines which IPs are considered local/LAN (used to split
 // top sources vs top destinations into LAN clients vs remote hosts).
 func New(localNets []*net.IPNet, geoDB *geoip.DB, dns *resolver.Resolver) *Tracker {
-	return &Tracker{
+	t := &Tracker{
 		localNets:   localNets,
 		sockBufSize: defaultSockBuf,
-		stopCh:      make(chan struct{}),
 		geoDB:       geoDB,
 		dns:         dns,
 	}
+	t.Runner.Init()
+	return t
 }
 
 // Run opens a netlink connection to verify conntrack is available, then starts
@@ -192,22 +194,12 @@ func (t *Tracker) Run() {
 	t.available = true
 	log.Println("conntrack: netlink connection established")
 
-	t.poll()
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			t.poll()
-		case <-t.stopCh:
-			return
-		}
-	}
+	t.Runner.Run(pollInterval, t.poll)
 }
 
 // Stop terminates the polling loop.
 func (t *Tracker) Stop() {
-	close(t.stopCh)
+	t.Runner.Stop()
 	if t.conn != nil {
 		t.conn.Close()
 		t.conn = nil
