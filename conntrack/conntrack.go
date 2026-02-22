@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"net/netip"
 	"os"
 	"sort"
 	"strconv"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"bandwidth-monitor/geoip"
+	"bandwidth-monitor/netutil"
 	"bandwidth-monitor/resolver"
 
 	ct "github.com/ti-mo/conntrack"
@@ -96,6 +96,15 @@ type HostStat struct {
 	City        string `json:"city,omitempty"`
 	ASN         uint   `json:"asn,omitempty"`
 	ASOrg       string `json:"as_org,omitempty"`
+}
+
+// SetGeo implements geoip.GeoFields.
+func (h *HostStat) SetGeo(country, countryName, city string, lat, lon float64, asn uint, asOrg string) {
+	h.Country = country
+	h.CountryName = countryName
+	h.City = city
+	h.ASN = asn
+	h.ASOrg = asOrg
 }
 
 // Summary holds aggregated conntrack data.
@@ -320,11 +329,11 @@ func (t *Tracker) poll() {
 		s.NATTypes[e.NATType]++
 
 		// Classify: local sources → LAN clients, non-local destinations → remote hosts
-		if t.isLocal(e.OrigSrc) {
+		if netutil.IsLocalStr(e.OrigSrc, t.localNets) {
 			srcCount[e.OrigSrc]++
 			srcBytes[e.OrigSrc] += e.Bytes
 		}
-		if !t.isLocal(e.OrigDst) && !t.isLoopback(e.OrigDst) {
+		if !netutil.IsLocalStr(e.OrigDst, t.localNets) && !net.ParseIP(e.OrigDst).IsLoopback() {
 			dstCount[e.OrigDst]++
 			dstBytes[e.OrigDst] += e.Bytes
 		}
@@ -480,15 +489,7 @@ func (t *Tracker) enrichHosts(hosts []HostStat) {
 		}
 
 		// GeoIP
-		if t.geoDB != nil && t.geoDB.Available() {
-			if geo := t.geoDB.Lookup(ip); geo != nil {
-				hosts[i].Country = geo.Country
-				hosts[i].CountryName = geo.CountryName
-				hosts[i].City = geo.City
-				hosts[i].ASN = geo.ASN
-				hosts[i].ASOrg = geo.ASOrg
-			}
-		}
+		t.geoDB.Enrich(ip, &hosts[i])
 	}
 }
 
@@ -541,39 +542,4 @@ func readIntFile(path string) int {
 	}
 	v, _ := strconv.Atoi(strings.TrimSpace(string(data)))
 	return v
-}
-
-// isLocal checks if an IP string falls within any of the configured local networks.
-// If no local networks are configured, it falls back to RFC1918/ULA checks.
-func (t *Tracker) isLocal(ipStr string) bool {
-	addr, err := netip.ParseAddr(ipStr)
-	if err != nil {
-		return false
-	}
-	ip := addr.As16()
-	netIP := net.IP(ip[:])
-	if addr.Is4() {
-		netIP = netIP[12:16]
-	}
-
-	if len(t.localNets) > 0 {
-		for _, n := range t.localNets {
-			if n.Contains(netIP) {
-				return true
-			}
-		}
-		return false
-	}
-
-	// Fallback: RFC1918 + RFC4193 (ULA)
-	return addr.IsPrivate() || addr.IsLinkLocalUnicast()
-}
-
-// isLoopback checks if an IP is a loopback address.
-func (t *Tracker) isLoopback(ipStr string) bool {
-	addr, err := netip.ParseAddr(ipStr)
-	if err != nil {
-		return false
-	}
-	return addr.IsLoopback()
 }

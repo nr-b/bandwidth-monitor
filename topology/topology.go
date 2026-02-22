@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	vnl "github.com/vishvananda/netlink"
 	"golang.zx2c4.com/wireguard/wgctrl"
 
+	"bandwidth-monitor/netutil"
 	"bandwidth-monitor/resolver"
 	"bandwidth-monitor/wifi"
 )
@@ -153,8 +155,8 @@ func (s *Scanner) scan() {
 	selfNode := s.discoverSelf(nodeMap)
 	gwNode := s.discoverGateway(nodeMap, selfNode)
 	s.discoverWAN(nodeMap, linkSet, selfNode)
-	s.readARPTable(nodeMap)
-	s.readNDPTable(nodeMap)
+	s.readNeighTable(nodeMap, vnl.FAMILY_V4, "arp")
+	s.readNeighTable(nodeMap, vnl.FAMILY_V6, "ndp")
 	s.readLLDP(nodeMap, linkSet)
 	s.mergeWiFiController(nodeMap, linkSet)
 	s.resolveHostnames(nodeMap)
@@ -411,7 +413,7 @@ func (s *Scanner) discoverWireGuard(nodeMap map[string]*Node, linkSet map[string
 				ones, _ := aip.Mask.Size()
 				if (aip.IP.To4() != nil && ones == 32) || (aip.IP.To4() == nil && ones == 128) {
 					ipStr := aip.IP.String()
-					if !containsStr(ips, ipStr) {
+					if !slices.Contains(ips, ipStr) {
 						ips = append(ips, ipStr)
 					}
 				}
@@ -558,13 +560,13 @@ func neighStateStr(state int) string {
 	}
 }
 
-// ── ARP table (via netlink) ────────────────────────────────────────
+// ── Neighbor table (ARP/NDP via netlink) ──────────────────────────────────
 
-func (s *Scanner) readARPTable(nodeMap map[string]*Node) {
+func (s *Scanner) readNeighTable(nodeMap map[string]*Node, family int, sourceTag string) {
 	ifaceNames := nlIfaceNames()
-	neighbors, err := vnl.NeighList(0, vnl.FAMILY_V4)
+	neighbors, err := vnl.NeighList(0, family)
 	if err != nil {
-		log.Printf("topology: netlink NeighList IPv4: %v", err)
+		log.Printf("topology: netlink NeighList %s: %v", sourceTag, err)
 		return
 	}
 
@@ -573,7 +575,7 @@ func (s *Scanner) readARPTable(nodeMap map[string]*Node) {
 			continue
 		}
 		ip := n.IP.String()
-		if !s.isLocalIP(ip) {
+		if !netutil.IsLocalStr(ip, s.localNets) {
 			continue
 		}
 
@@ -586,57 +588,7 @@ func (s *Scanner) readARPTable(nodeMap map[string]*Node) {
 		state := neighStateStr(n.State)
 
 		if existing, ok := nodeMap[mac]; ok {
-			if !containsStr(existing.IPs, ip) {
-				existing.IPs = append(existing.IPs, ip)
-			}
-			if existing.Iface == "" {
-				existing.Iface = iface
-			}
-			if !strings.Contains(existing.Source, "arp") {
-				existing.Source += ",arp"
-			}
-		} else {
-			nodeMap[mac] = &Node{
-				ID:     mac,
-				MAC:    mac,
-				IPs:    []string{ip},
-				Type:   NodeClient,
-				Iface:  iface,
-				State:  state,
-				Source: "arp",
-			}
-		}
-	}
-}
-
-// ── NDP table (via netlink) ────────────────────────────────────────
-
-func (s *Scanner) readNDPTable(nodeMap map[string]*Node) {
-	ifaceNames := nlIfaceNames()
-	neighbors, err := vnl.NeighList(0, vnl.FAMILY_V6)
-	if err != nil {
-		return
-	}
-
-	for _, n := range neighbors {
-		if !neighValid(n) {
-			continue
-		}
-		ip := n.IP.String()
-		if !s.isLocalIP(ip) {
-			continue
-		}
-
-		mac := strings.ToLower(n.HardwareAddr.String())
-		// Skip if this MAC is already tracked as a WAN gateway
-		if _, isWAN := nodeMap["wan-"+mac]; isWAN {
-			continue
-		}
-		iface := ifaceNames[n.LinkIndex]
-		state := neighStateStr(n.State)
-
-		if existing, ok := nodeMap[mac]; ok {
-			if !containsStr(existing.IPs, ip) {
+			if !slices.Contains(existing.IPs, ip) {
 				existing.IPs = append(existing.IPs, ip)
 			}
 			if existing.Iface == "" {
@@ -645,8 +597,8 @@ func (s *Scanner) readNDPTable(nodeMap map[string]*Node) {
 			if existing.State == "" {
 				existing.State = state
 			}
-			if !strings.Contains(existing.Source, "ndp") {
-				existing.Source += ",ndp"
+			if !strings.Contains(existing.Source, sourceTag) {
+				existing.Source += "," + sourceTag
 			}
 		} else {
 			nodeMap[mac] = &Node{
@@ -656,7 +608,7 @@ func (s *Scanner) readNDPTable(nodeMap map[string]*Node) {
 				Type:   NodeClient,
 				Iface:  iface,
 				State:  state,
-				Source: "ndp",
+				Source: sourceTag,
 			}
 		}
 	}
@@ -748,7 +700,7 @@ func (s *Scanner) parseLLDPCtlKeyValue(data string, nodeMap map[string]*Node, li
 			if existing.Hostname == "" && ni.sysName != "" {
 				existing.Hostname = ni.sysName
 			}
-			if ni.mgmtIP != "" && !containsStr(existing.IPs, ni.mgmtIP) {
+			if ni.mgmtIP != "" && !slices.Contains(existing.IPs, ni.mgmtIP) {
 				existing.IPs = append(existing.IPs, ni.mgmtIP)
 			}
 			if !strings.Contains(existing.Source, "lldp") {
@@ -825,7 +777,7 @@ func (s *Scanner) parseLLDPCLI(data string, nodeMap map[string]*Node, linkSet ma
 			if existing.Hostname == "" && sysName != "" {
 				existing.Hostname = sysName
 			}
-			if mgmtIP != "" && !containsStr(existing.IPs, mgmtIP) {
+			if mgmtIP != "" && !slices.Contains(existing.IPs, mgmtIP) {
 				existing.IPs = append(existing.IPs, mgmtIP)
 			}
 			if !strings.Contains(existing.Source, "lldp") {
@@ -908,7 +860,7 @@ func (s *Scanner) mergeWiFiController(nodeMap map[string]*Node, linkSet map[stri
 			if existing.Hostname == "" && ap.Name != "" {
 				existing.Hostname = ap.Name
 			}
-			if ap.IP != "" && !containsStr(existing.IPs, ap.IP) {
+			if ap.IP != "" && !slices.Contains(existing.IPs, ap.IP) {
 				existing.IPs = append(existing.IPs, ap.IP)
 			}
 			if !strings.Contains(existing.Source, providerName) {
@@ -939,7 +891,7 @@ func (s *Scanner) mergeWiFiController(nodeMap map[string]*Node, linkSet map[stri
 		apMAC := strings.ToLower(cl.APMAC)
 
 		if existing, ok := nodeMap[mac]; ok {
-			if cl.IP != "" && !containsStr(existing.IPs, cl.IP) {
+			if cl.IP != "" && !slices.Contains(existing.IPs, cl.IP) {
 				existing.IPs = append(existing.IPs, cl.IP)
 			}
 			if existing.Hostname == "" && cl.Hostname != "" {
@@ -1060,44 +1012,4 @@ func (s *Scanner) inferLinks(nodeMap map[string]*Node, linkSet map[string]*Link,
 			}
 		}
 	}
-}
-
-// ── Helpers ───────────────────────────────────────────────────────
-
-func containsStr(ss []string, s string) bool {
-	for _, v := range ss {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
-
-// CGNAT range 100.64.0.0/10
-var cgnatNet = func() *net.IPNet {
-	_, n, _ := net.ParseCIDR("100.64.0.0/10")
-	return n
-}()
-
-// isLocalIP returns true if the IP belongs to the configured local networks.
-// If no local networks are configured, falls back to RFC1918/link-local checks.
-// WAN-side addresses (CGNAT, public IPs, etc.) return false.
-func (s *Scanner) isLocalIP(ipStr string) bool {
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		return false
-	}
-	if len(s.localNets) > 0 {
-		for _, n := range s.localNets {
-			if n.Contains(ip) {
-				return true
-			}
-		}
-		return false
-	}
-	// No localNets configured — use heuristic: private + link-local, exclude CGNAT
-	if cgnatNet.Contains(ip) {
-		return false
-	}
-	return ip.IsPrivate() || ip.IsLinkLocalUnicast()
 }

@@ -2,7 +2,6 @@ package pihole
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -111,16 +110,11 @@ type historyResp struct {
 // baseURL should be like "http://pi.hole" or "https://192.168.1.2" (no trailing slash).
 func New(baseURL, password string, pollInterval time.Duration) *Client {
 	return &Client{
-		baseURL:  baseURL,
-		password: password,
-		interval: pollInterval,
-		httpClient: &http.Client{
-			Timeout: 15 * time.Second,
-			Transport: httputil.WrapTransport(&http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			}),
-		},
-		stopCh: make(chan struct{}),
+		baseURL:    baseURL,
+		password:   password,
+		interval:   pollInterval,
+		httpClient: httputil.NewInsecureClient(15 * time.Second),
+		stopCh:     make(chan struct{}),
 	}
 }
 
