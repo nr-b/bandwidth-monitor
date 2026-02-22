@@ -13,20 +13,21 @@ import (
 	"time"
 
 	"bandwidth-monitor/httputil"
+	"bandwidth-monitor/poller"
 	"bandwidth-monitor/wifi"
 )
 
 // Client polls an Omada controller for WiFi stats.
 type Client struct {
-	baseURL   string
-	user      string
-	pass      string
-	siteName  string
-	interval  time.Duration
-	httpC     *http.Client
-	mu        sync.RWMutex
-	summary   *wifi.Summary
-	stopCh    chan struct{}
+	baseURL  string
+	user     string
+	pass     string
+	siteName string
+	interval time.Duration
+	httpC    *http.Client
+	mu       sync.RWMutex
+	summary  *wifi.Summary
+	poller.Runner
 	token     string
 	omadaCID  string
 	siteID    string
@@ -43,40 +44,20 @@ func New(baseURL, user, pass, siteName string, pollInterval time.Duration) *Clie
 	if siteName == "" {
 		siteName = "Default"
 	}
-	return &Client{
+	c := &Client{
 		baseURL:  strings.TrimRight(baseURL, "/"),
 		user:     user,
 		pass:     pass,
 		siteName: siteName,
 		interval: pollInterval,
 		httpC:    httputil.NewInsecureClient(15 * time.Second),
-		stopCh:   make(chan struct{}),
 	}
+	c.Runner.Init()
+	return c
 }
 
 // Run starts the polling loop. Call in a goroutine.
-func (c *Client) Run() {
-	c.poll()
-	ticker := time.NewTicker(c.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			c.poll()
-		case <-c.stopCh:
-			return
-		}
-	}
-}
-
-// Stop terminates the polling loop.
-func (c *Client) Stop() {
-	select {
-	case <-c.stopCh:
-	default:
-		close(c.stopCh)
-	}
-}
+func (c *Client) Run() { c.Runner.Run(c.interval, c.poll) }
 
 // GetSummary returns the latest WiFi summary (nil if no data yet).
 func (c *Client) GetSummary() *wifi.Summary {

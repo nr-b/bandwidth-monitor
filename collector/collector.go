@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"bandwidth-monitor/poller"
+
 	vnl "github.com/vishvananda/netlink"
 )
 
@@ -68,7 +70,7 @@ type Collector struct {
 	spanPrevRx     uint64
 	spanPrevTx     uint64
 	spanHasPrev    bool
-	stopCh         chan struct{}
+	poller.Runner
 }
 
 type rawStat struct {
@@ -100,7 +102,7 @@ func New(vpnStatusFiles map[string]string, allowedIfaces []string) *Collector {
 	if err != nil {
 		log.Printf("collector: failed to create persistent netlink handle: %v (will use per-call sockets)", err)
 	}
-	return &Collector{
+	c := &Collector{
 		current:        make(map[string]*InterfaceStat),
 		previous:       make(map[string]*rawStat),
 		history:        make(map[string][]HistoryPoint),
@@ -109,8 +111,9 @@ func New(vpnStatusFiles map[string]string, allowedIfaces []string) *Collector {
 		allowedIfaces:  allowed,
 		nlHandle:       nlh,
 		addrCache:      make(map[int][]string),
-		stopCh:         make(chan struct{}),
 	}
+	c.Runner.Init()
+	return c
 }
 
 // EnableSPAN activates pcap-based direction detection on a SPAN/mirror port.
@@ -124,27 +127,17 @@ func (c *Collector) Run() {
 	if c.span != nil {
 		go c.span.run()
 	}
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-	c.poll()
-	for {
-		select {
-		case <-ticker.C:
-			c.poll()
-		case <-c.stopCh:
-			return
-		}
-	}
+	c.Runner.Run(pollInterval, c.poll)
 }
 
 func (c *Collector) Stop() {
+	c.Runner.Stop()
 	if c.span != nil {
 		c.span.stop()
 	}
 	if c.nlHandle != nil {
 		c.nlHandle.Close()
 	}
-	close(c.stopCh)
 }
 
 func (c *Collector) GetAll() []InterfaceStat {

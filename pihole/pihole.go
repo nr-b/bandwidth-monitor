@@ -13,6 +13,7 @@ import (
 
 	"bandwidth-monitor/dns"
 	"bandwidth-monitor/httputil"
+	"bandwidth-monitor/poller"
 )
 
 // Client polls a Pi-hole v6 instance for DNS statistics.
@@ -29,7 +30,7 @@ type Client struct {
 	sid       string
 	sidExpiry time.Time
 
-	stopCh chan struct{}
+	poller.Runner
 }
 
 // snapshot holds the combined data from multiple Pi-hole API calls.
@@ -109,38 +110,18 @@ type historyResp struct {
 // New creates a Pi-hole v6 API client.
 // baseURL should be like "http://pi.hole" or "https://192.168.1.2" (no trailing slash).
 func New(baseURL, password string, pollInterval time.Duration) *Client {
-	return &Client{
+	c := &Client{
 		baseURL:    baseURL,
 		password:   password,
 		interval:   pollInterval,
 		httpClient: httputil.NewInsecureClient(15 * time.Second),
-		stopCh:     make(chan struct{}),
 	}
+	c.Runner.Init()
+	return c
 }
 
 // Run starts the polling loop. Call in a goroutine.
-func (c *Client) Run() {
-	c.poll()
-	ticker := time.NewTicker(c.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			c.poll()
-		case <-c.stopCh:
-			return
-		}
-	}
-}
-
-// Stop terminates the polling loop.
-func (c *Client) Stop() {
-	select {
-	case <-c.stopCh:
-	default:
-		close(c.stopCh)
-	}
-}
+func (c *Client) Run() { c.Runner.Run(c.interval, c.poll) }
 
 // authenticate obtains (or reuses) a session ID from the Pi-hole API.
 func (c *Client) authenticate() (string, error) {

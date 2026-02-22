@@ -12,6 +12,7 @@ import (
 
 	"bandwidth-monitor/dns"
 	"bandwidth-monitor/httputil"
+	"bandwidth-monitor/poller"
 )
 
 const apiBase = "https://api.nextdns.io"
@@ -26,7 +27,7 @@ type Client struct {
 	mu    sync.RWMutex
 	stats *snapshot
 
-	stopCh chan struct{}
+	poller.Runner
 }
 
 type snapshot struct {
@@ -59,38 +60,18 @@ type statusTSEntry struct {
 
 // New creates a NextDNS API client.
 func New(profile, apiKey string, pollInterval time.Duration) *Client {
-	return &Client{
+	c := &Client{
 		profile:  profile,
 		apiKey:   apiKey,
 		interval: pollInterval,
 		httpC:    &http.Client{Timeout: 15 * time.Second, Transport: httputil.WrapTransport(nil)},
-		stopCh:   make(chan struct{}),
 	}
+	c.Runner.Init()
+	return c
 }
 
 // Run starts the polling loop. Call in a goroutine.
-func (c *Client) Run() {
-	c.poll()
-	ticker := time.NewTicker(c.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			c.poll()
-		case <-c.stopCh:
-			return
-		}
-	}
-}
-
-// Stop terminates the polling loop.
-func (c *Client) Stop() {
-	select {
-	case <-c.stopCh:
-	default:
-		close(c.stopCh)
-	}
-}
+func (c *Client) Run() { c.Runner.Run(c.interval, c.poll) }
 
 func (c *Client) poll() {
 	snap := &snapshot{}

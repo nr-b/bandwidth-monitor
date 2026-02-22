@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"bandwidth-monitor/poller"
+
 	mdns "github.com/miekg/dns"
 )
 
@@ -45,7 +47,7 @@ type Resolver struct {
 	maxTTL  time.Duration
 	timeout time.Duration
 	server  string // DNS server address (host:port)
-	stopCh  chan struct{}
+	poller.Runner
 }
 
 // New creates a Resolver that reads /etc/resolv.conf for the system resolver.
@@ -66,42 +68,29 @@ func New() *Resolver {
 		maxTTL:  DefaultMaxTTL,
 		timeout: DefaultTimeout,
 		server:  server,
-		stopCh:  make(chan struct{}),
 	}
+	r.Runner.Init()
 	go r.pruneLoop()
 	return r
 }
 
 // Stop terminates the cache pruning goroutine.
-func (r *Resolver) Stop() {
-	select {
-	case <-r.stopCh:
-	default:
-		close(r.stopCh)
-	}
-}
+func (r *Resolver) Stop() { r.Runner.Stop() }
 
 const pruneInterval = 5 * time.Minute
 
 // pruneLoop periodically removes expired entries from the cache.
 func (r *Resolver) pruneLoop() {
-	ticker := time.NewTicker(pruneInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			now := time.Now()
-			r.mu.Lock()
-			for ip, entry := range r.cache {
-				if now.After(entry.expires) {
-					delete(r.cache, ip)
-				}
+	r.Runner.Run(pruneInterval, func() {
+		now := time.Now()
+		r.mu.Lock()
+		for ip, entry := range r.cache {
+			if now.After(entry.expires) {
+				delete(r.cache, ip)
 			}
-			r.mu.Unlock()
-		case <-r.stopCh:
-			return
 		}
-	}
+		r.mu.Unlock()
+	})
 }
 
 // LookupAddr performs a synchronous reverse-DNS lookup for ip, returning the
