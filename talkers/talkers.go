@@ -526,31 +526,38 @@ func (t *Tracker) accountDirection(p *parsedPkt, current *bucket, rSlot *rateSlo
 			}
 		}
 	} else if p.srcLocal && p.dstLocal {
+		// Both endpoints are local. Use selfIPs to determine direction.
+		// "srcSelf → dstClient" means the router is forwarding TO the client,
+		// so from the CLIENT's perspective this is download (rx).
+		// "srcClient → dstSelf" means the client is sending through the router,
+		// so from the CLIENT's perspective this is upload (tx).
 		if p.srcSelf && !p.dstSelf {
+			// Router → Client: client is downloading (rx)
 			if h, ok := current.hosts[p.dstStr]; ok {
-				h.txBytes += p.wireLen
+				h.rxBytes += p.wireLen
 			}
 			if h, ok := current.hosts[p.srcStr]; ok {
 				h.txBytes += p.wireLen
 			}
 			if rSlot != nil {
 				if h, ok := rSlot.hosts[p.dstStr]; ok {
-					h.txBytes += p.wireLen
+					h.rxBytes += p.wireLen
 				}
 				if h, ok := rSlot.hosts[p.srcStr]; ok {
 					h.txBytes += p.wireLen
 				}
 			}
 		} else if p.dstSelf && !p.srcSelf {
+			// Client → Router: client is uploading (tx)
 			if h, ok := current.hosts[p.srcStr]; ok {
-				h.rxBytes += p.wireLen
+				h.txBytes += p.wireLen
 			}
 			if h, ok := current.hosts[p.dstStr]; ok {
 				h.rxBytes += p.wireLen
 			}
 			if rSlot != nil {
 				if h, ok := rSlot.hosts[p.srcStr]; ok {
-					h.rxBytes += p.wireLen
+					h.txBytes += p.wireLen
 				}
 				if h, ok := rSlot.hosts[p.dstStr]; ok {
 					h.rxBytes += p.wireLen
