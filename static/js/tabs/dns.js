@@ -85,12 +85,12 @@
         // ── Top DNS Clients pie chart ──
         fillDoughnut(dnsClientsChart, document.getElementById('dnsClientsLegend'),
             dns.top_clients || [],
-            function(c) { return c.ip || 'Unknown'; },
+            function(c) { return c.hostname ? c.hostname + ' (' + c.ip + ')' : (c.ip || 'Unknown'); },
             function(c) { return c.count || 0; },
             function(v) { return v.toLocaleString() + ' queries'; }
         );
         fillDetailTable('dnsClientsTable', dns.top_clients || [],
-            function(c) { return c.ip || 'Unknown'; },
+            function(c) { return c.hostname ? c.hostname + ' <span style="color:var(--text-2);font-size:11px">(' + c.ip + ')</span>' : (c.ip || 'Unknown'); },
             function(c) { return c.count || 0; },
             function(v) { return v.toLocaleString(); }, 'bw'
         );

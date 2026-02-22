@@ -36,8 +36,9 @@ type DomainStat struct {
 
 // ClientStat is a single client IP + count entry.
 type ClientStat struct {
-	IP    string `json:"ip"`
-	Count int    `json:"count"`
+	IP       string `json:"ip"`
+	Hostname string `json:"hostname,omitempty"`
+	Count    int    `json:"count"`
 }
 
 // UpstreamStat is a single upstream server entry.
