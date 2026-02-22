@@ -182,6 +182,19 @@ Pre-built packages are available from [GitHub Releases](https://github.com/awlx/
 
 #### Debian / Ubuntu
 
+**APT Repository (recommended):**
+
+```bash
+curl -fsSL https://awlx.github.io/bandwidth-monitor/bandwidth-monitor.gpg.key \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/bandwidth-monitor.gpg
+echo "deb [signed-by=/etc/apt/keyrings/bandwidth-monitor.gpg] https://awlx.github.io/bandwidth-monitor stable main" \
+  | sudo tee /etc/apt/sources.list.d/bandwidth-monitor.list
+sudo apt update
+sudo apt install bandwidth-monitor
+```
+
+**Manual install:**
+
 ```bash
 sudo dpkg -i bandwidth-monitor_*.deb
 sudo vi /etc/bandwidth-monitor/env
