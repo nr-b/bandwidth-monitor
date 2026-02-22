@@ -50,6 +50,7 @@ type TalkerStat struct {
 	RxRate      float64 `json:"rx_rate"`
 	TxRate      float64 `json:"tx_rate"`
 	Packets     uint64  `json:"packets"`
+	IsLocal     bool    `json:"is_local,omitempty"`
 }
 
 type bucket struct {
@@ -244,21 +245,17 @@ func (t *Tracker) TopByVolume(n int) []TalkerStat {
 	t.mu.RUnlock()
 
 	// Step 2: Sort + trim before enrichment to avoid unnecessary work
-	// Only include external IPs in the top talkers list
 	list := make([]TalkerStat, 0, len(totals))
 	for _, s := range totals {
 		ip := net.ParseIP(s.IP)
-		if ip != nil && (ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()) {
-			continue
-		}
-		// Skip IPs on local subnets (e.g. LAN clients with global IPv6)
-		if ip != nil && t.isLocalNet(ip) {
-			continue
-		}
 		// Skip the router's own IPs (WAN, VPN tunnel endpoints, etc)
 		if _, isSelf := t.selfIPs[s.IP]; isSelf {
 			continue
 		}
+		if ip != nil && ip.IsLoopback() {
+			continue
+		}
+		s.IsLocal = ip != nil && (ip.IsPrivate() || ip.IsLinkLocalUnicast() || t.isLocalNet(ip))
 		list = append(list, *s)
 	}
 	sort.Slice(list, func(i, j int) bool {
@@ -291,21 +288,17 @@ func (t *Tracker) TopByBandwidth(n int) []TalkerStat {
 	t.mu.RUnlock()
 
 	// Step 2: Build stats, sort, and trim before enrichment
-	// Only include external IPs in the top talkers list
 	list := make([]TalkerStat, 0, len(rates))
 	for ip, r := range rates {
 		parsedIP := net.ParseIP(ip)
-		if parsedIP != nil && (parsedIP.IsPrivate() || parsedIP.IsLoopback() || parsedIP.IsLinkLocalUnicast()) {
-			continue
-		}
-		// Skip IPs on local subnets (e.g. LAN clients with global IPv6)
-		if parsedIP != nil && t.isLocalNet(parsedIP) {
-			continue
-		}
 		// Skip the router's own IPs (WAN, VPN tunnel endpoints, etc)
 		if _, isSelf := t.selfIPs[ip]; isSelf {
 			continue
 		}
+		if parsedIP != nil && parsedIP.IsLoopback() {
+			continue
+		}
+		isLocal := parsedIP != nil && (parsedIP.IsPrivate() || parsedIP.IsLinkLocalUnicast() || t.isLocalNet(parsedIP))
 		list = append(list, TalkerStat{
 			IP:         ip,
 			TotalBytes: r.bytes,
@@ -315,6 +308,7 @@ func (t *Tracker) TopByBandwidth(n int) []TalkerStat {
 			RxRate:     float64(r.rxBytes) / elapsed,
 			TxRate:     float64(r.txBytes) / elapsed,
 			Packets:    r.packets,
+			IsLocal:    isLocal,
 		})
 	}
 	sort.Slice(list, func(i, j int) bool {

@@ -23,6 +23,7 @@ import (
 	"bandwidth-monitor/resolver"
 	"bandwidth-monitor/speedtest"
 	"bandwidth-monitor/talkers"
+	"bandwidth-monitor/topology"
 	"bandwidth-monitor/wifi"
 )
 
@@ -73,6 +74,17 @@ func WiFiSummary(wp wifi.Provider) http.HandlerFunc {
 			return
 		}
 		json.NewEncoder(w).Encode(wp.GetSummary())
+	}
+}
+
+func TopologySummary(ts *topology.Scanner) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if ts == nil {
+			w.Write([]byte("null"))
+			return
+		}
+		json.NewEncoder(w).Encode(ts.GetOverview())
 	}
 }
 
@@ -657,7 +669,7 @@ func fetchExternalIP() string {
 }
 
 // buildPayload assembles the JSON payload sent over the SSE stream.
-func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Provider, ct *conntrack.Tracker, lm *latency.Monitor, origin *originResolver) map[string]interface{} {
+func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Provider, ct *conntrack.Tracker, lm *latency.Monitor, ts *topology.Scanner, origin *originResolver) map[string]interface{} {
 	geo := t.GetGeoBreakdown()
 	payload := map[string]interface{}{
 		"interfaces":    c.GetAll(),
@@ -697,6 +709,11 @@ func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, w
 	if lm != nil {
 		payload["latency"] = lm.GetStatus()
 	}
+	if ts != nil {
+		if ov := ts.GetOverview(); ov != nil {
+			payload["topology"] = ov
+		}
+	}
 	return payload
 }
 
@@ -708,7 +725,7 @@ func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, w
 // backed up (e.g. hibernating laptop, congested link), only the most recent
 // payload is kept — preventing kernel send-buffer buildup (same backpressure
 // logic that PR #18 added to the old WebSocket handler).
-func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Provider, ct *conntrack.Tracker, lm *latency.Monitor, geoDB *geoip.DB) http.HandlerFunc {
+func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Provider, ct *conntrack.Tracker, lm *latency.Monitor, ts *topology.Scanner, geoDB *geoip.DB) http.HandlerFunc {
 	origin := newOriginResolver(geoDB)
 	return func(w http.ResponseWriter, r *http.Request) {
 		flusher, ok := w.(http.Flusher)
@@ -740,7 +757,7 @@ func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Pr
 		}()
 
 		// Send initial payload immediately.
-		data, err := json.Marshal(buildPayload(c, t, dp, wp, ct, lm, origin))
+		data, err := json.Marshal(buildPayload(c, t, dp, wp, ct, lm, ts, origin))
 		if err != nil {
 			close(sendCh)
 			return
@@ -759,7 +776,7 @@ func SSE(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Pr
 			case <-writerDone:
 				return
 			case <-ticker.C:
-				data, err := json.Marshal(buildPayload(c, t, dp, wp, ct, lm, origin))
+				data, err := json.Marshal(buildPayload(c, t, dp, wp, ct, lm, ts, origin))
 				if err != nil {
 					continue
 				}

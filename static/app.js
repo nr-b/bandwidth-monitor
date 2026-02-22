@@ -34,7 +34,7 @@
 
     window._switchTab = function(tab) {
         _activeTab = tab;
-        var panels = { traffic: 'tabTraffic', nat: 'tabNat', dns: 'tabDns', wifi: 'tabWifi', monitor: 'tabMonitor', speedtest: 'tabSpeedtest', debug: 'tabDebug' };
+        var panels = { traffic: 'tabTraffic', nat: 'tabNat', dns: 'tabDns', wifi: 'tabWifi', network: 'tabNetwork', monitor: 'tabMonitor', speedtest: 'tabSpeedtest', debug: 'tabDebug' };
         for (var k in panels) {
             var p = document.getElementById(panels[k]);
             if (p) p.classList.toggle('active', k === tab);
@@ -55,18 +55,20 @@
 
     function _renderTab(tab, d, force) {
         var bw = d.top_bandwidth || [], vol = d.top_volume || [];
+        var bwRemote = bw.filter(function(t) { return !t.is_local; });
+        var volRemote = vol.filter(function(t) { return !t.is_local; });
         if (tab === 'traffic') {
             updateProtoChart(d.protocols);
             updateIPVersions(d.ip_versions);
             updateCountries(d.countries);
             updateASNs(d.asns);
-            renderTalkers('bwTable', bw, 'rate_bytes', formatRate, 'bw');
-            renderTalkers('volTable', vol, 'total_bytes', formatBytes, 'vol');
+            renderTalkers('bwTable', bwRemote, 'rate_bytes', formatRate, 'bw');
+            renderTalkers('volTable', volRemote, 'total_bytes', formatBytes, 'vol');
             if (!_historyLoaded) loadInterfaceHistory();
         } else if (tab === 'monitor') {
             var now = Date.now();
             if (force || !window._lastMapUpdate || now - window._lastMapUpdate > 5000) {
-                updateWorldMap(d.countries, bw, d.origin_country, d.origin_lat, d.origin_lon);
+                updateWorldMap(d.countries, bwRemote, d.origin_country, d.origin_lat, d.origin_lon);
                 window._lastMapUpdate = now;
             }
             if (force || !window._lastLatUpdate || now - window._lastLatUpdate > 2000) {
@@ -77,6 +79,8 @@
             updateDNS(d.dns || null);
         } else if (tab === 'wifi') {
             updateWiFi(d.wifi || null);
+        } else if (tab === 'network') {
+            updateNetwork(d.topology || null, d.top_bandwidth || []);
         } else if (tab === 'nat') {
             updateNAT(d.conntrack || null);
         }
@@ -85,7 +89,7 @@
     // Restore tab from URL hash on load
     (function() {
         var hash = location.hash.replace('#', '');
-        var validTabs = ['traffic', 'nat', 'dns', 'wifi', 'monitor', 'speedtest', 'debug'];
+        var validTabs = ['traffic', 'nat', 'dns', 'wifi', 'network', 'monitor', 'speedtest', 'debug'];
         if (hash && validTabs.indexOf(hash) !== -1) {
             // Defer to ensure DOM is ready
             setTimeout(function() { window._switchTab(hash); }, 0);
@@ -2892,4 +2896,457 @@
     }
 
     connect();
+
+    // ── Network Topology Tab ──────────────────────────────────────────
+
+    var _lastTopology = null;
+    var _lastBandwidth = [];
+
+    function updateNetwork(topo, bandwidth) {
+        if (!topo || !topo.nodes || !topo.nodes.length) {
+            document.getElementById('networkNoData').style.display = '';
+            document.getElementById('networkHasData').style.display = 'none';
+            return;
+        }
+        document.getElementById('networkNoData').style.display = 'none';
+        document.getElementById('networkHasData').style.display = '';
+
+        _lastTopology = topo;
+        _lastBandwidth = bandwidth || [];
+
+        // Summary stats
+        var nodes = topo.nodes || [];
+        var aps = nodes.filter(function(n) { return n.type === 'ap'; });
+        var clients = nodes.filter(function(n) { return n.type === 'client'; });
+        var gw = nodes.filter(function(n) { return n.type === 'gateway'; });
+        var sources = {};
+        nodes.forEach(function(n) {
+            (n.source || '').split(',').forEach(function(s) { if (s) sources[s] = true; });
+        });
+
+        document.getElementById('netTotalNodes').textContent = nodes.length;
+        document.getElementById('netTotalAPs').textContent = aps.length;
+        document.getElementById('netTotalClients').textContent = clients.length;
+        document.getElementById('netSources').textContent = Object.keys(sources).join(', ') || '—';
+
+        if (gw.length > 0) {
+            var gwn = gw[0];
+            document.getElementById('netGateway').textContent = gwn.hostname || (gwn.ips && gwn.ips[0]) || gwn.mac || '—';
+        } else {
+            document.getElementById('netGateway').textContent = '—';
+        }
+
+        document.getElementById('networkClientCount').textContent = nodes.length + ' nodes discovered';
+
+        renderNetworkTopology(topo, _lastBandwidth);
+        window._filterNetworkClients();
+    }
+
+    // ── Client table rendering ──
+
+    window._filterNetworkClients = function() {
+        if (!_lastTopology) return;
+        var nodes = (_lastTopology.nodes || []).slice();
+        var filter = ((document.getElementById('networkClientSearch') || {}).value || '').toLowerCase();
+        var sortKey = ((document.getElementById('networkClientSort') || {}).value || 'type');
+
+        if (filter) {
+            nodes = nodes.filter(function(n) {
+                return (n.hostname || '').toLowerCase().indexOf(filter) !== -1 ||
+                       (n.ips || []).join(' ').toLowerCase().indexOf(filter) !== -1 ||
+                       (n.mac || '').toLowerCase().indexOf(filter) !== -1 ||
+                       (n.type || '').toLowerCase().indexOf(filter) !== -1 ||
+                       (n.ssid || '').toLowerCase().indexOf(filter) !== -1 ||
+                       (n.source || '').toLowerCase().indexOf(filter) !== -1;
+            });
+        }
+
+        if (sortKey === 'name') {
+            nodes.sort(function(a, b) { return (a.hostname || a.mac || '').localeCompare(b.hostname || b.mac || ''); });
+        } else if (sortKey === 'ip') {
+            nodes.sort(function(a, b) { return ((a.ips||[])[0]||'').localeCompare(((b.ips||[])[0]||''), undefined, {numeric:true}); });
+        } else if (sortKey === 'source') {
+            nodes.sort(function(a, b) { return (a.source||'').localeCompare(b.source||''); });
+        }
+        // default 'type': already sorted by backend
+
+        var tb = document.getElementById('networkClientTable');
+        if (!nodes.length) {
+            tb.innerHTML = '<tr><td colspan="9" class="empty-state">' + (filter ? 'No matching nodes' : 'No nodes discovered') + '</td></tr>';
+            return;
+        }
+        var h = '';
+        for (var i = 0; i < nodes.length; i++) {
+            var n = nodes[i];
+            var typeIcon = nodeTypeIcon(n.type);
+            var sigStr = '';
+            if (n.signal && n.signal !== 0) {
+                sigStr = n.signal + ' dBm';
+            }
+            h += '<tr>';
+            h += '<td><span class="net-type-badge net-type-' + n.type + '">' + typeIcon + ' ' + n.type + '</span></td>';
+            h += '<td>' + (n.hostname || '<span style="color:var(--text-2)">—</span>') + '</td>';
+            h += '<td style="font-family:JetBrains Mono,monospace;font-size:12px">' + formatClickableIPs(n.ips) + '</td>';
+            h += '<td style="font-family:JetBrains Mono,monospace;font-size:12px">' + (n.mac || '—') + '</td>';
+            h += '<td>' + (n.iface || '—') + '</td>';
+            h += '<td>' + (n.ssid || '—') + '</td>';
+            h += '<td>' + (sigStr || '—') + '</td>';
+            h += '<td>' + (n.state || '—') + '</td>';
+            h += '<td><span style="font-size:11px">' + (n.source || '—') + '</span></td>';
+            h += '</tr>';
+        }
+        tb.innerHTML = h;
+    };
+
+    function formatClickableIPs(ips) {
+        if (!ips || !ips.length) return '—';
+        return ips.map(function(ip) {
+            return '<span class="ip-clickable" data-ip="' + ip + '">' + ip + '</span>';
+        }).join('<br>');
+    }
+
+    function nodeTypeIcon(type) {
+        switch (type) {
+            case 'gateway': return '🌐';
+            case 'wan_gw': return '🏢';
+            case 'tunnel': return '🔒';
+            case 'switch': return '🔲';
+            case 'ap': return '📡';
+            case 'self': return '💻';
+            case 'client': return '📱';
+            default: return '❓';
+        }
+    }
+
+    // ── SVG Topology Visualization ──
+
+    var _networkLayout = 'tree';
+    window._updateNetworkLayout = function() {
+        _networkLayout = (document.getElementById('networkLayout') || {}).value || 'tree';
+        if (_lastTopology) renderNetworkTopology(_lastTopology, _lastBandwidth);
+    };
+
+    function renderNetworkTopology(topo, bandwidth) {
+        var svg = document.getElementById('networkTopologySVG');
+        if (!svg) return;
+        var container = document.getElementById('networkTopologyContainer');
+        var W = container.clientWidth || 800;
+        var nodes = topo.nodes || [];
+        var links = topo.links || [];
+        bandwidth = bandwidth || [];
+
+        if (nodes.length === 0) {
+            svg.innerHTML = '<text x="50%" y="50%" text-anchor="middle" fill="var(--text-2)" font-size="14">No topology data</text>';
+            return;
+        }
+
+        // Build IP → rate lookup from bandwidth data
+        var ipRates = {};
+        for (var bi = 0; bi < bandwidth.length; bi++) {
+            var t = bandwidth[bi];
+            if (t.ip) ipRates[t.ip] = { rx: t.rx_rate || 0, tx: t.tx_rate || 0, total: t.rate_bytes || 0, hostname: t.hostname || '' };
+        }
+
+        // Build node → rate lookup (match any IP of a node)
+        var nodeRates = {};
+        var maxNodeRate = 1;
+        nodes.forEach(function(n) {
+            var best = { rx: 0, tx: 0, total: 0 };
+            (n.ips || []).forEach(function(ip) {
+                if (ipRates[ip] && ipRates[ip].total > best.total) best = ipRates[ip];
+            });
+            if (best.total > 0) {
+                nodeRates[n.id] = best;
+                if (best.total > maxNodeRate) maxNodeRate = best.total;
+            }
+        });
+
+        // Build adjacency and node lookup
+        var nodeById = {};
+        nodes.forEach(function(n) { nodeById[n.id] = n; });
+
+        // Find the topmost root: tunnel > wan_gw > gateway > self > first node
+        var rootId = null;
+        var typePriority = { 'tunnel': 0, 'wan_gw': 1, 'gateway': 2, 'self': 3 };
+        var bestPrio = 99;
+        nodes.forEach(function(n) {
+            var p = typePriority[n.type];
+            if (p !== undefined && p < bestPrio) {
+                bestPrio = p;
+                rootId = n.id;
+            }
+        });
+        if (!rootId) rootId = topo.gateway || topo.self_node || nodes[0].id;
+        if (!nodeById[rootId]) rootId = nodes[0].id;
+
+        // Build children map from links — follow source→target direction.
+        // Links are: tunnel→wan_gw, wan_gw→self, self→ap, ap→client, etc.
+        var childrenMap = {};
+        var linkedSet = {};
+        links.forEach(function(l) {
+            var parent = l.source, child = l.target;
+            if (!childrenMap[parent]) childrenMap[parent] = [];
+            childrenMap[parent].push({ id: child, link: l });
+            linkedSet[child] = true;
+            linkedSet[parent] = true;
+        });
+
+        // Assign orphans under root
+        nodes.forEach(function(n) {
+            if (!linkedSet[n.id] && n.id !== rootId) {
+                if (!childrenMap[rootId]) childrenMap[rootId] = [];
+                childrenMap[rootId].push({ id: n.id, link: { source: rootId, target: n.id, type: 'wired' } });
+            }
+        });
+
+        // Sort children at every node for stable layout across refreshes
+        for (var parentId in childrenMap) {
+            childrenMap[parentId].sort(function(a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });
+        }
+
+        // Compute layout
+        var layout = _networkLayout;
+        var nodePositions = {};
+
+        if (layout === 'radial') {
+            computeRadialLayout(rootId, childrenMap, nodeById, nodePositions, W, nodes.length);
+        } else {
+            computeTreeLayout(rootId, childrenMap, nodeById, nodePositions, W, nodes.length);
+        }
+
+        // Compute SVG height from positions
+        var maxY = 100;
+        for (var id in nodePositions) {
+            if (nodePositions[id].y + 40 > maxY) maxY = nodePositions[id].y + 40;
+        }
+        var H = Math.max(500, maxY + 60);
+        svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+        svg.style.height = H + 'px';
+
+        var svgHtml = '';
+        var textCol = getComputedStyle(document.documentElement).getPropertyValue('--text-0').trim() || '#fafafa';
+        var textCol2 = getComputedStyle(document.documentElement).getPropertyValue('--text-2').trim() || '#71717a';
+        var lineCol = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#27272a';
+        var rxCol = getComputedStyle(document.documentElement).getPropertyValue('--rx').trim() || '#22d3ee';
+
+        // Draw links
+        var rxColor = '#34d399';
+        var txColor = '#f97316';
+        links.forEach(function(l) {
+            var from = nodePositions[l.source];
+            var to = nodePositions[l.target];
+            if (!from || !to) return;
+            var dash = '';
+            var col = lineCol;
+            var sw = '1.5';
+            if (l.type === 'wireless') { dash = 'stroke-dasharray="6 4"'; col = rxCol; }
+            else if (l.type === 'tunnel') { dash = 'stroke-dasharray="8 3"'; col = '#8b5cf6'; sw = '2'; }
+            else if (l.type === 'wan') { col = '#f97316'; sw = '2'; }
+
+            // Check if the child node has traffic
+            var childRate = nodeRates[l.target] || nodeRates[l.source];
+            if (childRate && childRate.total > 0) {
+                // Compute perpendicular offset so RX/TX lines don't overlap
+                var dx = to.x - from.x;
+                var dy = to.y - from.y;
+                var len = Math.sqrt(dx * dx + dy * dy) || 1;
+                var perpX = -dy / len;
+                var perpY = dx / len;
+
+                // Independent line widths per direction
+                var rxRatio = Math.min(childRate.rx / maxNodeRate, 1);
+                var txRatio = Math.min(childRate.tx / maxNodeRate, 1);
+                var rxSw = (1.5 + rxRatio * 3).toFixed(1);
+                var txSw = (1.5 + txRatio * 3).toFixed(1);
+                var sep = Math.max(2, Math.min(5, Math.max(parseFloat(rxSw), parseFloat(txSw)) * 0.8));
+
+                // Base line (dim center line)
+                svgHtml += '<line x1="' + from.x + '" y1="' + from.y + '" x2="' + to.x + '" y2="' + to.y + '" stroke="' + lineCol + '" stroke-width="1" opacity="0.15"/>';
+
+                // RX flow (download: parent → child direction, green) — offset left
+                if (childRate.rx > 0) {
+                    var rxOp = (0.3 + rxRatio * 0.5).toFixed(2);
+                    var rx1x = (from.x + perpX * sep).toFixed(1), rx1y = (from.y + perpY * sep).toFixed(1);
+                    var rx2x = (to.x + perpX * sep).toFixed(1), rx2y = (to.y + perpY * sep).toFixed(1);
+                    svgHtml += '<line x1="' + rx1x + '" y1="' + rx1y + '" x2="' + rx2x + '" y2="' + rx2y + '" stroke="' + rxColor + '" stroke-width="' + rxSw + '" stroke-dasharray="6 4" opacity="' + rxOp + '" stroke-linecap="round"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.5s" repeatCount="indefinite"/></line>';
+                }
+                // TX flow (upload: child → parent direction, orange) — offset right
+                if (childRate.tx > 0) {
+                    var txOp = (0.3 + txRatio * 0.5).toFixed(2);
+                    var tx1x = (to.x - perpX * sep).toFixed(1), tx1y = (to.y - perpY * sep).toFixed(1);
+                    var tx2x = (from.x - perpX * sep).toFixed(1), tx2y = (from.y - perpY * sep).toFixed(1);
+                    svgHtml += '<line x1="' + tx1x + '" y1="' + tx1y + '" x2="' + tx2x + '" y2="' + tx2y + '" stroke="' + txColor + '" stroke-width="' + txSw + '" stroke-dasharray="6 4" opacity="' + txOp + '" stroke-linecap="round"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.5s" repeatCount="indefinite"/></line>';
+                }
+
+                // Invisible wider hover target with tooltip
+                var tip = (childRate.hostname || l.target) + ': \u2193 ' + formatRate(childRate.rx) + ' \u2191 ' + formatRate(childRate.tx);
+                svgHtml += '<line x1="' + from.x + '" y1="' + from.y + '" x2="' + to.x + '" y2="' + to.y + '" stroke="transparent" stroke-width="12" style="cursor:pointer" class="net-link-hover" data-tip="' + escSvg(tip) + '"/>';
+            } else {
+                // Static link (no traffic)
+                svgHtml += '<line x1="' + from.x + '" y1="' + from.y + '" x2="' + to.x + '" y2="' + to.y + '" stroke="' + col + '" stroke-width="' + sw + '" ' + dash + ' opacity="0.6"/>';
+            }
+            if (l.label) {
+                var mx = (from.x + to.x) / 2;
+                var my = (from.y + to.y) / 2;
+                svgHtml += '<text x="' + mx + '" y="' + (my - 4) + '" text-anchor="middle" font-size="9" fill="' + textCol2 + '">' + escSvg(l.label) + '</text>';
+            }
+        });
+
+        // Draw nodes
+        for (var nid in nodePositions) {
+            var pos = nodePositions[nid];
+            var node = nodeById[nid];
+            if (!node) continue;
+            var r = nodeRadius(node.type);
+            var fill = nodeColor(node.type);
+            svgHtml += '<circle cx="' + pos.x + '" cy="' + pos.y + '" r="' + r + '" fill="' + fill + '" stroke="' + fill + '" stroke-width="2" fill-opacity="0.15"/>';
+            svgHtml += '<text x="' + pos.x + '" y="' + (pos.y + 4) + '" text-anchor="middle" font-size="' + (r > 14 ? 14 : 11) + '" fill="' + fill + '">' + nodeTypeEmoji(node.type) + '</text>';
+            var label = node.hostname || (node.ips && node.ips[0]) || node.mac || node.id;
+            if (label.length > 20) label = label.substring(0, 18) + '…';
+            svgHtml += '<text x="' + pos.x + '" y="' + (pos.y + r + 14) + '" text-anchor="middle" font-size="11" fill="' + textCol + '">' + escSvg(label) + '</text>';
+            svgHtml += '<text x="' + pos.x + '" y="' + (pos.y + r + 26) + '" text-anchor="middle" font-size="9" fill="' + textCol2 + '">' + node.type + '</text>';
+        }
+
+        svg.innerHTML = svgHtml;
+
+        // Tooltip for link hover
+        var tipEl = document.getElementById('netTooltip');
+        if (!tipEl) {
+            tipEl = document.createElement('div');
+            tipEl.id = 'netTooltip';
+            tipEl.style.cssText = 'position:fixed;pointer-events:none;background:var(--card);color:var(--text-0);border:1px solid var(--border);padding:6px 10px;border-radius:6px;font-size:12px;font-family:Inter,sans-serif;z-index:9999;display:none;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.15)';
+            document.body.appendChild(tipEl);
+        }
+        svg.addEventListener('mousemove', function(e) {
+            var el = e.target.closest('.net-link-hover');
+            if (el) {
+                tipEl.textContent = el.getAttribute('data-tip');
+                tipEl.style.display = '';
+                tipEl.style.left = (e.clientX + 12) + 'px';
+                tipEl.style.top = (e.clientY - 8) + 'px';
+            } else {
+                tipEl.style.display = 'none';
+            }
+        });
+        svg.addEventListener('mouseleave', function() { tipEl.style.display = 'none'; });
+    }
+
+    function computeTreeLayout(rootId, childrenMap, nodeById, positions, W, totalNodes) {
+        var levels = [];
+        var visited = {};
+        var queue = [{ id: rootId, depth: 0 }];
+        visited[rootId] = true;
+        while (queue.length > 0) {
+            var item = queue.shift();
+            if (!levels[item.depth]) levels[item.depth] = [];
+            levels[item.depth].push(item.id);
+            var kids = childrenMap[item.id] || [];
+            for (var i = 0; i < kids.length; i++) {
+                if (!visited[kids[i].id]) {
+                    visited[kids[i].id] = true;
+                    queue.push({ id: kids[i].id, depth: item.depth + 1 });
+                }
+            }
+        }
+        for (var id in nodeById) {
+            if (!visited[id]) {
+                if (!levels[levels.length - 1]) levels.push([]);
+                levels[levels.length - 1].push(id);
+            }
+        }
+
+        var yGap = Math.max(80, Math.min(120, 500 / (levels.length || 1)));
+        var padding = 60;
+        for (var d = 0; d < levels.length; d++) {
+            var row = levels[d];
+            var xGap = (W - 2 * padding) / (row.length + 1);
+            for (var j = 0; j < row.length; j++) {
+                positions[row[j]] = { x: padding + xGap * (j + 1), y: 40 + d * yGap };
+            }
+        }
+    }
+
+    function computeRadialLayout(rootId, childrenMap, nodeById, positions, W, totalNodes) {
+        var cx = W / 2, cy = 250;
+        positions[rootId] = { x: cx, y: cy };
+
+        var visited = {};
+        visited[rootId] = true;
+        var rings = [[rootId]];
+        var current = [rootId];
+        while (current.length > 0) {
+            var next = [];
+            for (var i = 0; i < current.length; i++) {
+                var kids = childrenMap[current[i]] || [];
+                for (var j = 0; j < kids.length; j++) {
+                    if (!visited[kids[j].id]) {
+                        visited[kids[j].id] = true;
+                        next.push(kids[j].id);
+                    }
+                }
+            }
+            if (next.length > 0) rings.push(next);
+            current = next;
+        }
+        var orphans = [];
+        for (var id in nodeById) {
+            if (!visited[id]) orphans.push(id);
+        }
+        if (orphans.length > 0) rings.push(orphans);
+
+        var radiusStep = Math.min(180, (Math.min(W, 500) - 80) / (rings.length || 1));
+        for (var ri = 1; ri < rings.length; ri++) {
+            var ring = rings[ri];
+            var radius = ri * radiusStep;
+            for (var ni = 0; ni < ring.length; ni++) {
+                var angle = (2 * Math.PI * ni) / ring.length - Math.PI / 2;
+                positions[ring[ni]] = {
+                    x: cx + radius * Math.cos(angle),
+                    y: cy + radius * Math.sin(angle)
+                };
+            }
+        }
+    }
+
+    function nodeRadius(type) {
+        switch (type) {
+            case 'gateway': return 22;
+            case 'wan_gw': return 20;
+            case 'tunnel': return 20;
+            case 'switch': return 18;
+            case 'ap': return 18;
+            case 'self': return 18;
+            default: return 14;
+        }
+    }
+
+    function nodeColor(type) {
+        switch (type) {
+            case 'gateway': return '#22d3ee';
+            case 'wan_gw': return '#f97316';
+            case 'tunnel': return '#8b5cf6';
+            case 'switch': return '#a78bfa';
+            case 'ap': return '#34d399';
+            case 'self': return '#fbbf24';
+            case 'client': return '#71717a';
+            default: return '#71717a';
+        }
+    }
+
+    function nodeTypeEmoji(type) {
+        switch (type) {
+            case 'gateway': return '&#x1F310;';
+            case 'wan_gw': return '&#x1F3E2;';
+            case 'tunnel': return '&#x1F512;';
+            case 'switch': return '&#x1F532;';
+            case 'ap': return '&#x1F4E1;';
+            case 'self': return '&#x1F4BB;';
+            case 'client': return '&#x1F4F1;';
+            default: return '?';
+        }
+    }
+
+    function escSvg(s) {
+        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
 })();
