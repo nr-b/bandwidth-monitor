@@ -357,16 +357,15 @@ func main() {
 // filename (e.g. "app.js") → 8-char hex hash.
 func computeAssetVersions(embedded embed.FS) map[string]string {
 	versions := make(map[string]string)
-	for _, name := range []string{"static/app.js", "static/style.css"} {
+	for _, name := range []string{"static/js/core.js", "static/style.css"} {
 		data, err := embedded.ReadFile(name)
 		if err != nil {
 			continue
 		}
 		h := sha256.Sum256(data)
-		// basename
-		parts := strings.Split(name, "/")
-		base := parts[len(parts)-1]
-		versions[base] = hex.EncodeToString(h[:4]) // 8 hex chars
+		// Use the path relative to static/ as key (e.g. "js/core.js", "style.css")
+		relPath := strings.TrimPrefix(name, "static/")
+		versions[relPath] = hex.EncodeToString(h[:4])
 	}
 	return versions
 }
