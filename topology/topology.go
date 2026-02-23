@@ -52,20 +52,22 @@ const (
 // Node represents a discovered network entity.
 type Node struct {
 	ID       string   `json:"id"`
-	MAC      string   `json:"mac"`
-	IPs      []string `json:"ips"`
-	Hostname string   `json:"hostname"`
-	Vendor   string   `json:"vendor"`
-	Type     NodeType `json:"type"`
-	SSID     string   `json:"ssid,omitempty"`
-	Signal   int      `json:"signal,omitempty"`
-	Radio    string   `json:"radio,omitempty"`
-	Model    string   `json:"model,omitempty"`
-	APName   string   `json:"ap_name,omitempty"`
-	Iface    string   `json:"iface,omitempty"`
-	State    string   `json:"state,omitempty"`
-	Source   string   `json:"source"`
-	LastSeen int64    `json:"last_seen,omitempty"`
+	MAC         string   `json:"mac"`
+	IPs         []string `json:"ips"`
+	Hostname    string   `json:"hostname"`
+	Vendor      string   `json:"vendor"`
+	Type        NodeType `json:"type"`
+	DeviceClass string   `json:"device_class,omitempty"`
+	DevCat      int      `json:"-"` // UniFi device category (internal, not serialized)
+	SSID        string   `json:"ssid,omitempty"`
+	Signal      int      `json:"signal,omitempty"`
+	Radio       string   `json:"radio,omitempty"`
+	Model       string   `json:"model,omitempty"`
+	APName      string   `json:"ap_name,omitempty"`
+	Iface       string   `json:"iface,omitempty"`
+	State       string   `json:"state,omitempty"`
+	Source      string   `json:"source"`
+	LastSeen    int64    `json:"last_seen,omitempty"`
 }
 
 // Link represents a connection between two nodes.
@@ -141,6 +143,7 @@ func (s *Scanner) scan() {
 	s.readLLDP(nodeMap, linkSet)
 	s.mergeWiFiController(nodeMap, linkSet)
 	s.resolveHostnames(nodeMap)
+	classifyDevices(nodeMap)
 	s.inferLinks(nodeMap, linkSet, selfNode, gwNode)
 
 	now := time.Now().UnixMilli()
@@ -597,6 +600,34 @@ func nlIfaceNames() map[int]string {
 	return m
 }
 
+// buildVLANParentMap returns a map from VLAN interface name to its parent
+// physical interface name (e.g. "vlan3000" -> "enp3s0").
+func buildVLANParentMap() map[string]string {
+	links, err := vnl.LinkList()
+	if err != nil {
+		return nil
+	}
+	idxToName := make(map[int]string, len(links))
+	for _, l := range links {
+		if a := l.Attrs(); a != nil {
+			idxToName[a.Index] = a.Name
+		}
+	}
+	m := make(map[string]string)
+	for _, l := range links {
+		a := l.Attrs()
+		if a == nil {
+			continue
+		}
+		if a.ParentIndex > 0 {
+			if parent, ok := idxToName[a.ParentIndex]; ok {
+				m[a.Name] = parent
+			}
+		}
+	}
+	return m
+}
+
 // neighValid returns true if a neighbor entry has a resolved hardware address.
 func neighValid(n vnl.Neigh) bool {
 	if len(n.HardwareAddr) == 0 {
@@ -696,7 +727,13 @@ var lldpPortDescRe = regexp.MustCompile(`PortDescr:\s+(.+)`)
 func (s *Scanner) readLLDP(nodeMap map[string]*Node, linkSet map[string]*Link) {
 	out, err := exec.Command("lldpctl", "-f", "keyvalue").Output()
 	if err != nil {
+		out, err = exec.Command("/usr/sbin/lldpctl", "-f", "keyvalue").Output()
+	}
+	if err != nil {
 		out, err = exec.Command("lldpcli", "show", "neighbors", "details").Output()
+		if err != nil {
+			out, err = exec.Command("/usr/sbin/lldpcli", "show", "neighbors", "details").Output()
+		}
 		if err != nil {
 			return
 		}
@@ -708,13 +745,16 @@ func (s *Scanner) readLLDP(nodeMap map[string]*Node, linkSet map[string]*Link) {
 
 func (s *Scanner) parseLLDPCtlKeyValue(data string, nodeMap map[string]*Node, linkSet map[string]*Link) {
 	type neighborInfo struct {
-		localIface string
-		chassisMAC string
-		portID     string
-		portDesc   string
-		sysName    string
-		sysDesc    string
-		mgmtIP     string
+		localIface  string
+		chassisMAC  string
+		portID      string
+		portDesc    string
+		sysName     string
+		sysDesc     string
+		mgmtIP      string
+		capBridge   bool
+		capRouter   bool
+		capWLAN     bool
 	}
 
 	neighbors := make(map[string]*neighborInfo)
@@ -755,6 +795,12 @@ func (s *Scanner) parseLLDPCtlKeyValue(data string, nodeMap map[string]*Node, li
 			ni.sysDesc = val
 		case rest == "chassis.mgmt-ip":
 			ni.mgmtIP = val
+		case strings.HasSuffix(rest, "Bridge.enabled"):
+			ni.capBridge = strings.ToLower(val) == "on"
+		case strings.HasSuffix(rest, "Router.enabled"):
+			ni.capRouter = strings.ToLower(val) == "on"
+		case strings.HasSuffix(rest, "Wlan.enabled"):
+			ni.capWLAN = strings.ToLower(val) == "on"
 		}
 	}
 
@@ -763,7 +809,7 @@ func (s *Scanner) parseLLDPCtlKeyValue(data string, nodeMap map[string]*Node, li
 			continue
 		}
 		mac := ni.chassisMAC
-		nodeType := classifyLLDP(ni.sysDesc)
+		nodeType := classifyLLDPEx(ni.sysDesc, ni.capBridge, ni.capRouter, ni.capWLAN)
 
 		if existing, ok := nodeMap[mac]; ok {
 			existing.Type = promoteType(existing.Type, nodeType)
@@ -772,6 +818,9 @@ func (s *Scanner) parseLLDPCtlKeyValue(data string, nodeMap map[string]*Node, li
 			}
 			if ni.mgmtIP != "" && !slices.Contains(existing.IPs, ni.mgmtIP) {
 				existing.IPs = append(existing.IPs, ni.mgmtIP)
+			}
+			if existing.Iface == "" {
+				existing.Iface = ni.localIface
 			}
 			if !strings.Contains(existing.Source, "lldp") {
 				existing.Source += ",lldp"
@@ -787,6 +836,7 @@ func (s *Scanner) parseLLDPCtlKeyValue(data string, nodeMap map[string]*Node, li
 				IPs:      ips,
 				Hostname: ni.sysName,
 				Type:     nodeType,
+				Iface:    ni.localIface,
 				Source:   "lldp",
 			}
 		}
@@ -883,6 +933,10 @@ func (s *Scanner) parseLLDPCLI(data string, nodeMap map[string]*Node, linkSet ma
 }
 
 func classifyLLDP(sysDesc string) NodeType {
+	return classifyLLDPEx(sysDesc, false, false, false)
+}
+
+func classifyLLDPEx(sysDesc string, capBridge, capRouter, capWLAN bool) NodeType {
 	lower := strings.ToLower(sysDesc)
 	switch {
 	case strings.Contains(lower, "router") || strings.Contains(lower, "gateway"):
@@ -891,9 +945,18 @@ func classifyLLDP(sysDesc string) NodeType {
 		return NodeSwitch
 	case strings.Contains(lower, "access point") || strings.Contains(lower, "wireless"):
 		return NodeAP
-	default:
-		return NodeClient
 	}
+	// Fall back to LLDP capabilities
+	if capRouter {
+		return NodeGateway
+	}
+	if capWLAN {
+		return NodeAP
+	}
+	if capBridge {
+		return NodeSwitch
+	}
+	return NodeClient
 }
 
 func promoteType(existing, candidate NodeType) NodeType {
@@ -919,12 +982,58 @@ func (s *Scanner) mergeWiFiController(nodeMap map[string]*Node, linkSet map[stri
 
 	providerName := strings.ToLower(summary.ProviderName)
 
+	// Build uplink map and device type index from controller data so we
+	// can resolve uplink chains.  The controller sometimes reports an AP
+	// as a switch's uplink when they share a cable (daisy-chain).  We walk
+	// the chain to find the real infrastructure parent (switch or gateway).
+	uplinkOf := make(map[string]string) // MAC -> uplink MAC
+	deviceType := make(map[string]string) // MAC -> "ap"/"switch"
+	for _, ap := range summary.APs {
+		mac := strings.ToLower(ap.MAC)
+		deviceType[mac] = "ap"
+		if ul := strings.ToLower(ap.UplinkMAC); ul != "" {
+			uplinkOf[mac] = ul
+		}
+	}
+	for _, sw := range summary.Switches {
+		mac := strings.ToLower(sw.MAC)
+		deviceType[mac] = "switch"
+		if ul := strings.ToLower(sw.UplinkMAC); ul != "" {
+			uplinkOf[mac] = ul
+		}
+	}
+
+	// resolveUplink walks the uplink chain to find the nearest switch,
+	// gateway, or non-AP device.  Prevents routing switches through APs.
+	resolveUplink := func(startMAC string) string {
+		ul := uplinkOf[startMAC]
+		seen := map[string]bool{startMAC: true}
+		for i := 0; i < 10 && ul != ""; i++ {
+			if seen[ul] {
+				break // cycle
+			}
+			seen[ul] = true
+			dt := deviceType[ul]
+			if dt != "ap" {
+				return ul // switch, gateway, or unknown (e.g. LLDP switch)
+			}
+			// Uplink is an AP — keep walking
+			next := uplinkOf[ul]
+			if next == "" {
+				return ul // dead end, use the AP
+			}
+			ul = next
+		}
+		return ul
+	}
+
 	// Register APs
 	for _, ap := range summary.APs {
 		mac := strings.ToLower(ap.MAC)
 		if mac == "" {
 			continue
 		}
+		uplinkMAC := strings.ToLower(ap.UplinkMAC)
 		if existing, ok := nodeMap[mac]; ok {
 			existing.Type = NodeAP
 			existing.Model = ap.Model
@@ -952,6 +1061,15 @@ func (s *Scanner) mergeWiFiController(nodeMap map[string]*Node, linkSet map[stri
 				Source:   providerName,
 			}
 		}
+		// Link AP to its uplink device (switch or gateway)
+		if uplinkMAC != "" {
+			linkKey := fmt.Sprintf("%s|%s", uplinkMAC, mac)
+			linkSet[linkKey] = &Link{
+				SourceID: uplinkMAC,
+				TargetID: mac,
+				Type:     LinkWired,
+			}
+		}
 	}
 
 	// Register switches from WiFi controller
@@ -960,6 +1078,7 @@ func (s *Scanner) mergeWiFiController(nodeMap map[string]*Node, linkSet map[stri
 		if mac == "" {
 			continue
 		}
+		uplinkMAC := strings.ToLower(resolveUplink(mac))
 		if existing, ok := nodeMap[mac]; ok {
 			existing.Type = promoteType(existing.Type, NodeSwitch)
 			existing.Model = sw.Model
@@ -987,6 +1106,15 @@ func (s *Scanner) mergeWiFiController(nodeMap map[string]*Node, linkSet map[stri
 				Source:   providerName,
 			}
 		}
+		// Link switch to its uplink device
+		if uplinkMAC != "" {
+			linkKey := fmt.Sprintf("%s|%s", uplinkMAC, mac)
+			linkSet[linkKey] = &Link{
+				SourceID: uplinkMAC,
+				TargetID: mac,
+				Type:     LinkWired,
+			}
+		}
 	}
 
 	// Register wireless clients and link them to their AP
@@ -1008,6 +1136,9 @@ func (s *Scanner) mergeWiFiController(nodeMap map[string]*Node, linkSet map[stri
 			existing.Signal = cl.Signal
 			existing.Radio = cl.Radio
 			existing.APName = cl.APName
+			if cl.DevCat != 0 {
+				existing.DevCat = cl.DevCat
+			}
 			if !strings.Contains(existing.Source, providerName) {
 				existing.Source += "," + providerName
 			}
@@ -1026,6 +1157,7 @@ func (s *Scanner) mergeWiFiController(nodeMap map[string]*Node, linkSet map[stri
 				Signal:   cl.Signal,
 				Radio:    cl.Radio,
 				APName:   cl.APName,
+				DevCat:   cl.DevCat,
 				Source:   providerName,
 			}
 		}
@@ -1099,6 +1231,187 @@ func (s *Scanner) resolveHostnames(nodeMap map[string]*Node) {
 	}
 }
 
+// ── Device classification ─────────────────────────────────────────
+
+// classifyDevices assigns a DeviceClass to client nodes based on hostname
+// patterns, UniFi device category, and MAC OUI (manufacturer prefix).
+func classifyDevices(nodeMap map[string]*Node) {
+	for _, node := range nodeMap {
+		if node.Type != NodeClient {
+			continue
+		}
+		// 1. Try hostname-based classification first (most specific)
+		if dc := classifyByHostname(node.Hostname); dc != "" {
+			node.DeviceClass = dc
+			continue
+		}
+		// 2. Try UniFi device category
+		if dc := classifyByDevCat(node.DevCat); dc != "" {
+			node.DeviceClass = dc
+			continue
+		}
+		// 3. Fall back to vendor-based classification via MAC OUI
+		if dc := classifyByOUI(node.MAC); dc != "" {
+			node.DeviceClass = dc
+		}
+	}
+}
+
+// classifyByDevCat maps UniFi dev_cat IDs to device classes.
+func classifyByDevCat(devCat int) string {
+	switch devCat {
+	case 1:
+		return "computer"
+	case 4:
+		return "phone"
+	case 6:
+		return "gaming"
+	case 7:
+		return "media"
+	case 13:
+		return "camera"
+	case 14:
+		return "printer"
+	case 15:
+		return "iot"
+	default:
+		return ""
+	}
+}
+
+// classifyByOUI classifies devices by their MAC address OUI prefix.
+func classifyByOUI(mac string) string {
+	if len(mac) < 8 {
+		return ""
+	}
+	oui := strings.ToLower(mac[:8])
+
+	// Camera manufacturers
+	cameraOUIs := []string{
+		"3c:64:cf", // Reolink
+		"98:03:8e", // Reolink
+		"98:ba:5f", // Reolink
+		"ec:71:db", // Reolink
+		"b4:6d:83", // Reolink
+		"54:c4:15", // Reolink
+		"28:29:86", // Reolink
+		"c8:02:8f", // Hikvision
+		"04:02:ca", // Hikvision
+		"44:19:b6", // Hikvision
+		"7c:09:b6", // Hikvision
+		"c0:56:e3", // Hikvision
+		"a4:cf:12", // Dahua
+		"3c:ef:8c", // Dahua
+		"40:f4:fd", // Dahua
+		"e0:50:8b", // Dahua
+		"ec:71:db", // Amcrest
+		"9c:8e:cd", // Amcrest
+		"00:40:8c", // Axis
+		"ac:cc:8e", // Axis
+		"b8:a4:4f", // Axis
+	}
+	for _, prefix := range cameraOUIs {
+		if oui == prefix {
+			return "camera"
+		}
+	}
+
+	// IoT manufacturers
+	iotOUIs := []string{
+		"d8:f1:5b", // Espressif (ESP32/ESP8266)
+		"24:6f:28", // Espressif
+		"ac:67:b2", // Espressif
+		"7c:df:a1", // Espressif
+		"c4:4f:33", // Espressif
+		"e8:68:e7", // Espressif
+		"34:94:54", // Espressif
+		"08:3a:f2", // Espressif
+		"2c:f4:32", // Espressif
+		"ec:fa:bc", // Espressif
+		"e0:98:06", // Shelly
+		"c8:2e:18", // Shelly
+	}
+	for _, prefix := range iotOUIs {
+		if oui == prefix {
+			return "iot"
+		}
+	}
+
+	return ""
+}
+
+func classifyByHostname(hostname string) string {
+	h := strings.ToLower(hostname)
+	if h == "" {
+		return ""
+	}
+
+	// Cameras
+	for _, p := range []string{"cam-", "cam.", "camera", "ipcam", "hikvision", "reolink", "dahua", "amcrest", "axis-", "flir-"} {
+		if strings.Contains(h, p) {
+			return "camera"
+		}
+	}
+
+	// IoT / Smart Home
+	for _, p := range []string{"tasmota", "shelly", "esp32-", "esp-", "esp8266", "eve.", "hue-", "ikea-", "zigbee", "zwave", "sonoff", "tuya", "meross", "wled-", "mqtt-"} {
+		if strings.Contains(h, p) {
+			return "iot"
+		}
+	}
+
+	// Voice assistants
+	for _, p := range []string{"home-assistant-voice", "echo-", "alexa", "google-home", "homepod", "nest-hub"} {
+		if strings.Contains(h, p) {
+			return "voice"
+		}
+	}
+
+	// Phones / Tablets
+	for _, p := range []string{"iphone", "ipad", "pixel-", "galaxy-", "android-", "oneplus", "huawei-", "xiaomi-"} {
+		if strings.Contains(h, p) {
+			return "phone"
+		}
+	}
+
+	// Computers
+	for _, p := range []string{"macbook", "imac", "mac-mini", "macpro", "desktop-", "laptop-", "thinkpad", "surface-", "xps-"} {
+		if strings.Contains(h, p) {
+			return "computer"
+		}
+	}
+
+	// Media / Entertainment
+	for _, p := range []string{"teufel", "sonos", "chromecast", "appletv", "apple-tv", "fire-tv", "firetv", "roku", "shield", "plex", "kodi"} {
+		if strings.Contains(h, p) {
+			return "media"
+		}
+	}
+
+	// NAS / Servers
+	for _, p := range []string{"diskstation", "synology", "nas-", "nas.", "qnap", "proxmox", "truenas", "freenas", "unraid"} {
+		if strings.Contains(h, p) {
+			return "server"
+		}
+	}
+
+	// Printers
+	for _, p := range []string{"printer", "epson", "canon-", "brother-", "hp-print", "laserjet", "officejet"} {
+		if strings.Contains(h, p) {
+			return "printer"
+		}
+	}
+
+	// Gaming
+	for _, p := range []string{"playstation", "ps5-", "ps4-", "xbox", "nintendo", "switch-", "steamdeck"} {
+		if strings.Contains(h, p) {
+			return "gaming"
+		}
+	}
+
+	return ""
+}
+
 // ── Link inference ────────────────────────────────────────────────
 
 func (s *Scanner) inferLinks(nodeMap map[string]*Node, linkSet map[string]*Link, selfID string, gwNode *Node) {
@@ -1132,19 +1445,68 @@ func (s *Scanner) inferLinks(nodeMap map[string]*Node, linkSet map[string]*Link,
 	}
 
 	// Collect switches and build an interface-to-switch index so we can
-	// route wired clients through the correct switch.
+	// route wired clients through the correct switch.  If multiple switches
+	// share the same interface, mark it ambiguous to avoid random assignment.
 	var switches []string
 	switchByIface := make(map[string]string)
+	ambiguousIface := make(map[string]bool)
 	for mac, node := range nodeMap {
 		if node.Type == NodeSwitch {
 			switches = append(switches, mac)
 			if node.Iface != "" {
+				if _, exists := switchByIface[node.Iface]; exists {
+					ambiguousIface[node.Iface] = true
+				}
 				switchByIface[node.Iface] = mac
 			}
 		}
 	}
+	for iface := range ambiguousIface {
+		delete(switchByIface, iface)
+	}
 
-	// Ensure every switch has an upstream link to the gateway.
+	// Build a VLAN-to-parent-interface map so devices on VLAN interfaces
+	// can be routed through the switch on the parent physical interface.
+	vlanParent := buildVLANParentMap()
+
+	// lookupSwitch resolves an interface name to its switch, checking the
+	// direct interface first, then falling back to its VLAN parent.
+	lookupSwitch := func(iface string) (string, bool) {
+		if swMAC, ok := switchByIface[iface]; ok {
+			return swMAC, true
+		}
+		if parent, ok := vlanParent[iface]; ok {
+			if swMAC, ok := switchByIface[parent]; ok {
+				return swMAC, true
+			}
+		}
+		return "", false
+	}
+
+	// Ensure every switch has an upstream link.  If there's an LLDP-
+	// discovered switch on the gateway's local interface, route other
+	// switches through it (it's the physical uplink switch).
+	var uplinkSwitch string
+	if gwNode != nil {
+		// Find the self node's primary interface
+		selfIface := ""
+		if self, ok := nodeMap[selfID]; ok {
+			selfIface = self.Iface
+		}
+		// Find LLDP switches on the same interface as the gateway/self
+		for _, swMAC := range switches {
+			sw := nodeMap[swMAC]
+			if sw == nil {
+				continue
+			}
+			isLLDP := strings.Contains(sw.Source, "lldp")
+			if isLLDP && sw.Iface != "" && (sw.Iface == selfIface || selfIface == "") {
+				uplinkSwitch = swMAC
+				break
+			}
+		}
+	}
+
 	for _, swMAC := range switches {
 		if hasUpstream[swMAC] {
 			continue
@@ -1152,11 +1514,21 @@ func (s *Scanner) inferLinks(nodeMap map[string]*Node, linkSet map[string]*Link,
 		if gwNode == nil {
 			continue
 		}
-		linkKey := fmt.Sprintf("%s|%s", gwNode.ID, swMAC)
-		linkSet[linkKey] = &Link{
-			SourceID: gwNode.ID,
-			TargetID: swMAC,
-			Type:     LinkWired,
+		// Route through the uplink switch if this is a different switch
+		if uplinkSwitch != "" && swMAC != uplinkSwitch {
+			linkKey := fmt.Sprintf("%s|%s", uplinkSwitch, swMAC)
+			linkSet[linkKey] = &Link{
+				SourceID: uplinkSwitch,
+				TargetID: swMAC,
+				Type:     LinkWired,
+			}
+		} else {
+			linkKey := fmt.Sprintf("%s|%s", gwNode.ID, swMAC)
+			linkSet[linkKey] = &Link{
+				SourceID: gwNode.ID,
+				TargetID: swMAC,
+				Type:     LinkWired,
+			}
 		}
 		hasUpstream[swMAC] = true
 	}
@@ -1176,7 +1548,7 @@ func (s *Scanner) inferLinks(nodeMap map[string]*Node, linkSet map[string]*Link,
 		}
 		target := ""
 		if node.Iface != "" {
-			if swMAC, ok := switchByIface[node.Iface]; ok {
+			if swMAC, ok := lookupSwitch(node.Iface); ok {
 				target = swMAC
 			}
 		}
@@ -1214,7 +1586,7 @@ func (s *Scanner) inferLinks(nodeMap map[string]*Node, linkSet map[string]*Link,
 		target := ""
 		// Wired clients (no SSID) on a known switch interface
 		if node.SSID == "" && node.Iface != "" {
-			if swMAC, ok := switchByIface[node.Iface]; ok {
+			if swMAC, ok := lookupSwitch(node.Iface); ok {
 				target = swMAC
 			}
 		}

@@ -37,14 +37,16 @@ type APInfo struct {
 	RxBytes    int64   `json:"rx_bytes"`
 	TxRate     float64 `json:"tx_rate"`
 	RxRate     float64 `json:"rx_rate"`
+	UplinkMAC  string  `json:"uplink_mac,omitempty"`
 }
 
 // SwitchInfo describes a managed switch discovered from a WiFi controller.
 type SwitchInfo struct {
-	Name  string `json:"name"`
-	Model string `json:"model"`
-	MAC   string `json:"mac"`
-	IP    string `json:"ip"`
+	Name      string `json:"name"`
+	Model     string `json:"model"`
+	MAC       string `json:"mac"`
+	IP        string `json:"ip"`
+	UplinkMAC string `json:"uplink_mac,omitempty"`
 }
 
 // SSIDStat aggregates per-SSID stats.
@@ -73,6 +75,7 @@ type ClientInfo struct {
 	RxBytes   int64   `json:"rx_bytes"`
 	TxRate    float64 `json:"tx_rate"`
 	RxRate    float64 `json:"rx_rate"`
+	DevCat    int     `json:"dev_cat,omitempty"`
 }
 
 // ByteSnap stores TX/RX byte counters for rate delta computation.
@@ -106,11 +109,13 @@ type NormalizedAP struct {
 	Name, Model, MAC, IP, Version, Status string
 	NumClients                            int
 	Uptime, TxBytes, RxBytes              int64
+	UplinkMAC                             string
 }
 
 // NormalizedSwitch is a controller-agnostic switch representation.
 type NormalizedSwitch struct {
 	Name, Model, MAC, IP string
+	UplinkMAC            string
 }
 
 // NormalizedClient is a controller-agnostic client for BuildSummary.
@@ -120,6 +125,7 @@ type NormalizedClient struct {
 	Radio                                             string
 	TxBytes, RxBytes                                  int64
 	IsWireless                                        bool
+	DevCat                                            int
 }
 
 // BuildSummary creates a Summary from normalized AP, switch, and client data.
@@ -128,7 +134,7 @@ func BuildSummary(providerName string, rawAPs []NormalizedAP, rawSwitches []Norm
 	// Build APs
 	var aps []APInfo
 	for _, d := range rawAPs {
-		ap := APInfo{Name: d.Name, Model: d.Model, MAC: d.MAC, IP: d.IP, Version: d.Version, Status: d.Status, NumClients: d.NumClients, Uptime: d.Uptime, TxBytes: d.TxBytes, RxBytes: d.RxBytes}
+		ap := APInfo{Name: d.Name, Model: d.Model, MAC: d.MAC, IP: d.IP, Version: d.Version, Status: d.Status, NumClients: d.NumClients, Uptime: d.Uptime, TxBytes: d.TxBytes, RxBytes: d.RxBytes, UplinkMAC: d.UplinkMAC}
 		if dt > 0 {
 			if prev, ok := prevAP[d.MAC]; ok {
 				ap.TxRate, ap.RxRate = ComputeRates(d.TxBytes, d.RxBytes, prev, dt)
@@ -190,7 +196,7 @@ func BuildSummary(providerName string, rawAPs []NormalizedAP, rawSwitches []Norm
 		if apName == "" {
 			apName = apNames[cl.APMAC]
 		}
-		ci := ClientInfo{MAC: cl.MAC, Hostname: cl.Hostname, IP: cl.IP, SSID: cl.SSID, APMAC: cl.APMAC, APName: apName, Signal: cl.Signal, Channel: cl.Channel, Radio: cl.Radio, TxBytes: cl.TxBytes, RxBytes: cl.RxBytes}
+		ci := ClientInfo{MAC: cl.MAC, Hostname: cl.Hostname, IP: cl.IP, SSID: cl.SSID, APMAC: cl.APMAC, APName: apName, Signal: cl.Signal, Channel: cl.Channel, Radio: cl.Radio, TxBytes: cl.TxBytes, RxBytes: cl.RxBytes, DevCat: cl.DevCat}
 		if dt > 0 {
 			if prev, ok := prevCli[cl.MAC]; ok {
 				ci.TxRate, ci.RxRate = ComputeRates(cl.TxBytes, cl.RxBytes, prev, dt)
@@ -205,7 +211,7 @@ func BuildSummary(providerName string, rawAPs []NormalizedAP, rawSwitches []Norm
 	// Build switches
 	var switches []SwitchInfo
 	for _, d := range rawSwitches {
-		switches = append(switches, SwitchInfo{Name: d.Name, Model: d.Model, MAC: d.MAC, IP: d.IP})
+		switches = append(switches, SwitchInfo{Name: d.Name, Model: d.Model, MAC: d.MAC, IP: d.IP, UplinkMAC: d.UplinkMAC})
 	}
 
 	// Build wired clients with switch association (for topology)

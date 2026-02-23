@@ -155,6 +155,7 @@ type rawDevice struct {
 	Uptime    int64  `json:"uptimeLong"`
 	TxBytes   int64  `json:"tx"`
 	RxBytes   int64  `json:"rx"`
+	UplinkMAC string `json:"uplinkDeviceMac"`
 }
 
 type deviceList struct {
@@ -350,6 +351,7 @@ func (c *Client) normalizeAPs(devices []rawDevice) []wifi.NormalizedAP {
 			Name: d.Name, Model: d.Model, MAC: d.MAC, IP: d.IP,
 			Version: d.Version, Status: status, NumClients: d.ClientNum,
 			Uptime: d.Uptime, TxBytes: d.TxBytes, RxBytes: d.RxBytes,
+			UplinkMAC: d.UplinkMAC,
 		})
 	}
 	return aps
@@ -363,6 +365,7 @@ func (c *Client) normalizeSwitches(devices []rawDevice) []wifi.NormalizedSwitch 
 		}
 		switches = append(switches, wifi.NormalizedSwitch{
 			Name: d.Name, Model: d.Model, MAC: d.MAC, IP: d.IP,
+			UplinkMAC: d.UplinkMAC,
 		})
 	}
 	return switches

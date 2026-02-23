@@ -199,17 +199,22 @@ type deviceResponse struct {
 }
 
 type rawDevice struct {
-	Type    string `json:"type"`
-	Name    string `json:"name"`
-	Model   string `json:"model"`
-	MAC     string `json:"mac"`
-	IP      string `json:"ip"`
-	Version string `json:"version"`
-	State   int    `json:"state"`
-	NumSta  int    `json:"num_sta"`
-	Uptime  int64  `json:"uptime"`
-	TxBytes int64  `json:"tx_bytes"`
-	RxBytes int64  `json:"rx_bytes"`
+	Type      string    `json:"type"`
+	Name      string    `json:"name"`
+	Model     string    `json:"model"`
+	MAC       string    `json:"mac"`
+	IP        string    `json:"ip"`
+	Version   string    `json:"version"`
+	State     int       `json:"state"`
+	NumSta    int       `json:"num_sta"`
+	Uptime    int64     `json:"uptime"`
+	TxBytes   int64     `json:"tx_bytes"`
+	RxBytes   int64     `json:"rx_bytes"`
+	Uplink    rawUplink `json:"uplink"`
+}
+
+type rawUplink struct {
+	UplinkMAC string `json:"uplink_mac"`
 }
 
 type clientResponse struct {
@@ -234,6 +239,7 @@ type rawClient struct {
 	Radio    string `json:"radio"`
 	TxRate   int    `json:"tx_rate"`
 	RxRate   int    `json:"rx_rate"`
+	DevCat   int    `json:"dev_cat"`
 }
 
 func (c *Client) fetchDevices() ([]rawDevice, error) {
@@ -294,6 +300,7 @@ func (c *Client) normalizeAPs(devices []rawDevice) []wifi.NormalizedAP {
 			Name: d.Name, Model: d.Model, MAC: d.MAC, IP: d.IP,
 			Version: d.Version, Status: status, NumClients: d.NumSta,
 			Uptime: d.Uptime, TxBytes: d.TxBytes, RxBytes: d.RxBytes,
+			UplinkMAC: d.Uplink.UplinkMAC,
 		})
 	}
 	return aps
@@ -307,6 +314,7 @@ func (c *Client) normalizeSwitches(devices []rawDevice) []wifi.NormalizedSwitch 
 		}
 		switches = append(switches, wifi.NormalizedSwitch{
 			Name: d.Name, Model: d.Model, MAC: d.MAC, IP: d.IP,
+			UplinkMAC: d.Uplink.UplinkMAC,
 		})
 	}
 	return switches
@@ -320,6 +328,7 @@ func (c *Client) normalizeClients(clients []rawClient) []wifi.NormalizedClient {
 			APMAC: cl.APMAC, Signal: cl.Signal, Channel: cl.Channel,
 			Radio: cl.Radio, TxBytes: cl.TxBytes, RxBytes: cl.RxBytes,
 			SwitchMAC:  cl.SwMac,
+			DevCat:     cl.DevCat,
 			IsWireless: !cl.IsWired,
 		})
 	}
