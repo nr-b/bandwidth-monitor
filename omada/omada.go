@@ -105,7 +105,7 @@ func (c *Client) poll() {
 	if c.lastPoll.IsZero() {
 		dt = 0
 	}
-	sum := wifi.BuildSummary("Omada", c.normalizeAPs(devices), c.normalizeClients(clients), dt, c.prevAP, c.prevSSID, c.prevCli)
+	sum := wifi.BuildSummary("Omada", c.normalizeAPs(devices), c.normalizeSwitches(devices), c.normalizeClients(clients), dt, c.prevAP, c.prevSSID, c.prevCli)
 
 	newAP, newSSID, newCli := wifi.StoreSnapshots(sum)
 
@@ -162,19 +162,20 @@ type deviceList struct {
 }
 
 type rawClient struct {
-	MAC      string `json:"mac"`
-	Name     string `json:"name"`
-	Hostname string `json:"hostName"`
-	IP       string `json:"ip"`
-	SSID     string `json:"ssid"`
-	APMAC    string `json:"apMac"`
-	APName   string `json:"apName"`
-	SignalDB int    `json:"signalLevel"`
-	Channel  int    `json:"channel"`
-	RadioID  int    `json:"radioId"`
-	TxBytes  int64  `json:"trafficUp"`
-	RxBytes  int64  `json:"trafficDown"`
-	Wireless bool   `json:"wireless"`
+	MAC       string `json:"mac"`
+	Name      string `json:"name"`
+	Hostname  string `json:"hostName"`
+	IP        string `json:"ip"`
+	SSID      string `json:"ssid"`
+	APMAC     string `json:"apMac"`
+	APName    string `json:"apName"`
+	SignalDB  int    `json:"signalLevel"`
+	Channel   int    `json:"channel"`
+	RadioID   int    `json:"radioId"`
+	TxBytes   int64  `json:"trafficUp"`
+	RxBytes   int64  `json:"trafficDown"`
+	Wireless  bool   `json:"wireless"`
+	SwitchMac string `json:"switchMac"`
 }
 
 type clientList struct {
@@ -252,7 +253,7 @@ func (c *Client) fetchDevices() ([]rawDevice, error) {
 }
 
 func (c *Client) fetchClients() ([]rawClient, error) {
-	body, err := c.getJSON(c.sitePrefix()+"/clients?currentPage=1&currentPageSize=5000&filters.wireless=true", nil)
+	body, err := c.getJSON(c.sitePrefix()+"/clients?currentPage=1&currentPageSize=5000", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -354,6 +355,19 @@ func (c *Client) normalizeAPs(devices []rawDevice) []wifi.NormalizedAP {
 	return aps
 }
 
+func (c *Client) normalizeSwitches(devices []rawDevice) []wifi.NormalizedSwitch {
+	var switches []wifi.NormalizedSwitch
+	for _, d := range devices {
+		if d.Type != "switch" {
+			continue
+		}
+		switches = append(switches, wifi.NormalizedSwitch{
+			Name: d.Name, Model: d.Model, MAC: d.MAC, IP: d.IP,
+		})
+	}
+	return switches
+}
+
 func (c *Client) normalizeClients(clients []rawClient) []wifi.NormalizedClient {
 	var ncs []wifi.NormalizedClient
 	for _, cl := range clients {
@@ -366,6 +380,7 @@ func (c *Client) normalizeClients(clients []rawClient) []wifi.NormalizedClient {
 			APMAC: cl.APMAC, APName: cl.APName, Signal: cl.SignalDB,
 			Channel: cl.Channel, Radio: radioName(cl.RadioID),
 			TxBytes: cl.TxBytes, RxBytes: cl.RxBytes,
+			SwitchMAC:  cl.SwitchMac,
 			IsWireless: cl.Wireless,
 		})
 	}

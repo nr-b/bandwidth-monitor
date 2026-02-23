@@ -351,6 +351,95 @@ func (s *Scanner) discoverWANGateway(nodeMap map[string]*Node, linkSet map[strin
 		}
 		wanIDs = append(wanIDs, id)
 	}
+
+	// Handle point-to-point WAN interfaces (PPP, etc.) that have no ARP
+	// neighbors.  Use the route peer address or the interface IP itself.
+	if len(wanIDs) == 0 {
+		wanIDs = s.discoverPPPWAN(nodeMap, linkSet, selfNode, wanSet)
+	}
+
+	return wanIDs
+}
+
+// discoverPPPWAN discovers WAN gateways on point-to-point interfaces (like
+// ppp0) that have no ARP neighbors.  It looks at routes for a peer address
+// or falls back to the remote endpoint IP from the interface itself.
+func (s *Scanner) discoverPPPWAN(nodeMap map[string]*Node, linkSet map[string]*Link, selfNode string, wanSet map[string]bool) []string {
+	var wanIDs []string
+
+	// Check routes for WAN-interface-specific peer IPs
+	routes, err := vnl.RouteList(nil, vnl.FAMILY_V4)
+	if err != nil {
+		return nil
+	}
+	ifaceNames := nlIfaceNames()
+
+	for _, r := range routes {
+		iface := ifaceNames[r.LinkIndex]
+		if !wanSet[iface] {
+			continue
+		}
+		// Point-to-point default route: either Dst==nil or Dst==0.0.0.0/0
+		if r.Dst != nil {
+			ones, bits := r.Dst.Mask.Size()
+			if ones != 0 || bits == 0 {
+				continue
+			}
+		}
+		// For PPP: get the peer/remote IP from the interface addresses
+		link, err := vnl.LinkByIndex(r.LinkIndex)
+		if err != nil {
+			continue
+		}
+		addrs, err := vnl.AddrList(link, vnl.FAMILY_V4)
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			if addr.Peer != nil && addr.Peer.IP != nil && !addr.Peer.IP.IsUnspecified() {
+				peerIP := addr.Peer.IP.String()
+				id := "wan-ppp-" + iface
+				if _, exists := nodeMap[id]; exists {
+					continue
+				}
+				nodeMap[id] = &Node{
+					ID:       id,
+					IPs:      []string{peerIP},
+					Hostname: "WAN (" + iface + ")",
+					Type:     NodeWANGW,
+					Iface:    iface,
+					Source:   "route",
+				}
+				linkKey := fmt.Sprintf("%s|%s", id, selfNode)
+				linkSet[linkKey] = &Link{
+					SourceID: id,
+					TargetID: selfNode,
+					Type:     LinkWAN,
+					Label:    iface,
+				}
+				wanIDs = append(wanIDs, id)
+			}
+		}
+		// If no peer address found, create a placeholder WAN node
+		if len(wanIDs) == 0 {
+			id := "wan-ppp-" + iface
+			nodeMap[id] = &Node{
+				ID:       id,
+				Hostname: "WAN (" + iface + ")",
+				Type:     NodeWANGW,
+				Iface:    iface,
+				Source:   "route",
+			}
+			linkKey := fmt.Sprintf("%s|%s", id, selfNode)
+			linkSet[linkKey] = &Link{
+				SourceID: id,
+				TargetID: selfNode,
+				Type:     LinkWAN,
+				Label:    iface,
+			}
+			wanIDs = append(wanIDs, id)
+		}
+	}
 	return wanIDs
 }
 
@@ -830,6 +919,7 @@ func (s *Scanner) mergeWiFiController(nodeMap map[string]*Node, linkSet map[stri
 
 	providerName := strings.ToLower(summary.ProviderName)
 
+	// Register APs
 	for _, ap := range summary.APs {
 		mac := strings.ToLower(ap.MAC)
 		if mac == "" {
@@ -864,6 +954,42 @@ func (s *Scanner) mergeWiFiController(nodeMap map[string]*Node, linkSet map[stri
 		}
 	}
 
+	// Register switches from WiFi controller
+	for _, sw := range summary.Switches {
+		mac := strings.ToLower(sw.MAC)
+		if mac == "" {
+			continue
+		}
+		if existing, ok := nodeMap[mac]; ok {
+			existing.Type = promoteType(existing.Type, NodeSwitch)
+			existing.Model = sw.Model
+			if existing.Hostname == "" && sw.Name != "" {
+				existing.Hostname = sw.Name
+			}
+			if sw.IP != "" && !slices.Contains(existing.IPs, sw.IP) {
+				existing.IPs = append(existing.IPs, sw.IP)
+			}
+			if !strings.Contains(existing.Source, providerName) {
+				existing.Source += "," + providerName
+			}
+		} else {
+			ips := []string{}
+			if sw.IP != "" {
+				ips = []string{sw.IP}
+			}
+			nodeMap[mac] = &Node{
+				ID:       mac,
+				MAC:      mac,
+				IPs:      ips,
+				Hostname: sw.Name,
+				Type:     NodeSwitch,
+				Model:    sw.Model,
+				Source:   providerName,
+			}
+		}
+	}
+
+	// Register wireless clients and link them to their AP
 	for _, cl := range summary.Clients {
 		mac := strings.ToLower(cl.MAC)
 		if mac == "" {
@@ -914,6 +1040,40 @@ func (s *Scanner) mergeWiFiController(nodeMap map[string]*Node, linkSet map[stri
 			}
 		}
 	}
+
+	// Register wired clients with switch associations
+	for _, cl := range summary.WiredClients {
+		mac := strings.ToLower(cl.MAC)
+		swMAC := strings.ToLower(cl.SwitchMAC)
+		if mac == "" || swMAC == "" {
+			continue
+		}
+		// Only create the link if both the client and the switch are known nodes
+		if _, clientExists := nodeMap[mac]; !clientExists {
+			continue
+		}
+		if _, switchExists := nodeMap[swMAC]; !switchExists {
+			continue
+		}
+		if existing, ok := nodeMap[mac]; ok {
+			if cl.IP != "" && !slices.Contains(existing.IPs, cl.IP) {
+				existing.IPs = append(existing.IPs, cl.IP)
+			}
+			if existing.Hostname == "" && cl.Hostname != "" {
+				existing.Hostname = cl.Hostname
+			}
+			if !strings.Contains(existing.Source, providerName) {
+				existing.Source += "," + providerName
+			}
+		}
+		// Create switch -> wired client link
+		linkKey := fmt.Sprintf("%s|%s", swMAC, mac)
+		linkSet[linkKey] = &Link{
+			SourceID: swMAC,
+			TargetID: mac,
+			Type:     LinkWired,
+		}
+	}
 }
 
 // ── Hostname resolution ───────────────────────────────────────────
@@ -942,6 +1102,7 @@ func (s *Scanner) resolveHostnames(nodeMap map[string]*Node) {
 // ── Link inference ────────────────────────────────────────────────
 
 func (s *Scanner) inferLinks(nodeMap map[string]*Node, linkSet map[string]*Link, selfID string, gwNode *Node) {
+	// Resolve placeholder "self" targets to the actual self MAC.
 	for key, link := range linkSet {
 		if link.TargetID == "self" {
 			link.TargetID = selfID
@@ -951,23 +1112,98 @@ func (s *Scanner) inferLinks(nodeMap map[string]*Node, linkSet map[string]*Link,
 		}
 	}
 
-	if gwNode != nil && selfID != "" {
-		linkKey := fmt.Sprintf("%s|%s", selfID, gwNode.ID)
+	// Link self to gateway (gateway is the upstream parent of self).
+	if gwNode != nil && selfID != "" && selfID != gwNode.ID {
+		linkKey := fmt.Sprintf("%s|%s", gwNode.ID, selfID)
 		if _, exists := linkSet[linkKey]; !exists {
 			linkSet[linkKey] = &Link{
-				SourceID: selfID,
-				TargetID: gwNode.ID,
+				SourceID: gwNode.ID,
+				TargetID: selfID,
 				Type:     LinkWired,
 			}
 		}
 	}
 
+	// hasUpstream tracks which nodes are a TARGET of some link, meaning
+	// they already have an upstream parent in the tree.
+	hasUpstream := make(map[string]bool)
+	for _, link := range linkSet {
+		hasUpstream[link.TargetID] = true
+	}
+
+	// Collect switches and build an interface-to-switch index so we can
+	// route wired clients through the correct switch.
+	var switches []string
+	switchByIface := make(map[string]string)
+	for mac, node := range nodeMap {
+		if node.Type == NodeSwitch {
+			switches = append(switches, mac)
+			if node.Iface != "" {
+				switchByIface[node.Iface] = mac
+			}
+		}
+	}
+
+	// Ensure every switch has an upstream link to the gateway.
+	for _, swMAC := range switches {
+		if hasUpstream[swMAC] {
+			continue
+		}
+		if gwNode == nil {
+			continue
+		}
+		linkKey := fmt.Sprintf("%s|%s", gwNode.ID, swMAC)
+		linkSet[linkKey] = &Link{
+			SourceID: gwNode.ID,
+			TargetID: swMAC,
+			Type:     LinkWired,
+		}
+		hasUpstream[swMAC] = true
+	}
+
+	// Ensure every AP has an upstream link.  APs may already be linked
+	// as sources of wireless client links, but they still need a parent
+	// connection (to a switch on the same interface, or to the gateway).
+	for mac, node := range nodeMap {
+		if node.Type != NodeAP {
+			continue
+		}
+		if hasUpstream[mac] {
+			continue
+		}
+		if mac == selfID || (gwNode != nil && mac == gwNode.ID) {
+			continue
+		}
+		target := ""
+		if node.Iface != "" {
+			if swMAC, ok := switchByIface[node.Iface]; ok {
+				target = swMAC
+			}
+		}
+		if target == "" && gwNode != nil {
+			target = gwNode.ID
+		}
+		if target != "" {
+			linkKey := fmt.Sprintf("%s|%s", target, mac)
+			linkSet[linkKey] = &Link{
+				SourceID: target,
+				TargetID: mac,
+				Type:     LinkWired,
+			}
+			hasUpstream[mac] = true
+		}
+	}
+
+	// Rebuild the full linked set (nodes that appear in any link at all)
+	// so we can find truly orphaned nodes.
 	linked := make(map[string]bool)
 	for _, link := range linkSet {
 		linked[link.SourceID] = true
 		linked[link.TargetID] = true
 	}
 
+	// Connect remaining orphan nodes: prefer routing wired clients
+	// through a switch, otherwise connect directly to the gateway.
 	for mac, node := range nodeMap {
 		if linked[mac] {
 			continue
@@ -975,19 +1211,20 @@ func (s *Scanner) inferLinks(nodeMap map[string]*Node, linkSet map[string]*Link,
 		if mac == selfID || (gwNode != nil && mac == gwNode.ID) {
 			continue
 		}
-		if node.Type == NodeAP && gwNode != nil {
-			linkKey := fmt.Sprintf("%s|%s", gwNode.ID, mac)
-			linkSet[linkKey] = &Link{
-				SourceID: gwNode.ID,
-				TargetID: mac,
-				Type:     LinkWired,
+		target := ""
+		// Wired clients (no SSID) on a known switch interface
+		if node.SSID == "" && node.Iface != "" {
+			if swMAC, ok := switchByIface[node.Iface]; ok {
+				target = swMAC
 			}
-			continue
 		}
-		if gwNode != nil {
-			linkKey := fmt.Sprintf("%s|%s", gwNode.ID, mac)
+		if target == "" && gwNode != nil {
+			target = gwNode.ID
+		}
+		if target != "" {
+			linkKey := fmt.Sprintf("%s|%s", target, mac)
 			linkSet[linkKey] = &Link{
-				SourceID: gwNode.ID,
+				SourceID: target,
 				TargetID: mac,
 				Type:     LinkWired,
 			}
