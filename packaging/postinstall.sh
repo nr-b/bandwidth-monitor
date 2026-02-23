@@ -5,9 +5,12 @@ set -e
 mkdir -p /var/lib/bandwidth-monitor
 chmod 0755 /var/lib/bandwidth-monitor
 
-# Reload systemd
+# Reload systemd and restart service if already enabled (upgrade path)
 if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload
+    if systemctl is-enabled bandwidth-monitor >/dev/null 2>&1; then
+        systemctl restart bandwidth-monitor
+    fi
 fi
 
 echo ""
