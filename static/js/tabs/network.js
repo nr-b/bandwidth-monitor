@@ -79,13 +79,14 @@
         var h = '';
         for (var i = 0; i < nodes.length; i++) {
             var n = nodes[i];
-            var typeIcon = nodeTypeIcon(n.type);
+            var typeIcon = n.device_class ? deviceClassIcon(n.device_class) : nodeTypeIcon(n.type);
+            var typeLabel = n.device_class || n.type;
             var sigStr = '';
             if (n.signal && n.signal !== 0) {
                 sigStr = n.signal + ' dBm';
             }
             h += '<tr>';
-            h += '<td><span class="net-type-badge net-type-' + n.type + '">' + typeIcon + ' ' + n.type + '</span></td>';
+            h += '<td><span class="net-type-badge net-type-' + n.type + '">' + typeIcon + ' ' + typeLabel + '</span></td>';
             h += '<td>' + (n.hostname || '<span style="color:var(--text-2)">—</span>') + '</td>';
             h += '<td style="font-family:JetBrains Mono,monospace;font-size:12px">' + formatClickableIPs(n.ips) + '</td>';
             h += '<td style="font-family:JetBrains Mono,monospace;font-size:12px">' + (n.mac || '—') + '</td>';
@@ -116,6 +117,21 @@
             case 'self': return '💻';
             case 'client': return '📱';
             default: return '❓';
+        }
+    }
+
+    function deviceClassIcon(dc) {
+        switch (dc) {
+            case 'camera': return '📷';
+            case 'iot': return '💡';
+            case 'voice': return '🎙️';
+            case 'phone': return '📱';
+            case 'computer': return '💻';
+            case 'media': return '🎵';
+            case 'server': return '🖥️';
+            case 'printer': return '🖨️';
+            case 'gaming': return '🎮';
+            default: return '📱';
         }
     }
 
@@ -302,11 +318,13 @@
             var r = nodeRadius(node.type);
             var fill = nodeColor(node.type);
             svgHtml += '<circle cx="' + pos.x + '" cy="' + pos.y + '" r="' + r + '" fill="' + fill + '" stroke="' + fill + '" stroke-width="2" fill-opacity="0.15"/>';
-            svgHtml += '<text x="' + pos.x + '" y="' + (pos.y + 4) + '" text-anchor="middle" font-size="' + (r > 14 ? 14 : 11) + '" fill="' + fill + '">' + nodeTypeEmoji(node.type) + '</text>';
+            var emoji = node.type === 'client' && node.device_class ? deviceClassEmoji(node.device_class) : nodeTypeEmoji(node.type);
+            svgHtml += '<text x="' + pos.x + '" y="' + (pos.y + 4) + '" text-anchor="middle" font-size="' + (r > 14 ? 14 : 11) + '" fill="' + fill + '">' + emoji + '</text>';
             var label = node.hostname || (node.ips && node.ips[0]) || node.mac || node.id;
             if (label.length > 20) label = label.substring(0, 18) + '…';
             svgHtml += '<text x="' + pos.x + '" y="' + (pos.y + r + 14) + '" text-anchor="middle" font-size="11" fill="' + textCol + '">' + BM.escSvg(label) + '</text>';
-            svgHtml += '<text x="' + pos.x + '" y="' + (pos.y + r + 26) + '" text-anchor="middle" font-size="9" fill="' + textCol2 + '">' + node.type + '</text>';
+            var typeLabel = node.device_class || node.type;
+            svgHtml += '<text x="' + pos.x + '" y="' + (pos.y + r + 26) + '" text-anchor="middle" font-size="9" fill="' + textCol2 + '">' + typeLabel + '</text>';
         }
 
         svg.innerHTML = svgHtml;
@@ -535,6 +553,21 @@
             case 'self': return '&#x1F4BB;';
             case 'client': return '&#x1F4F1;';
             default: return '?';
+        }
+    }
+
+    function deviceClassEmoji(dc) {
+        switch (dc) {
+            case 'camera': return '&#x1F4F7;';
+            case 'iot': return '&#x1F4A1;';
+            case 'voice': return '&#x1F399;';
+            case 'phone': return '&#x1F4F1;';
+            case 'computer': return '&#x1F4BB;';
+            case 'media': return '&#x1F3B5;';
+            case 'server': return '&#x1F5A5;';
+            case 'printer': return '&#x1F5A8;';
+            case 'gaming': return '&#x1F3AE;';
+            default: return '&#x1F4F1;';
         }
     }
 })();
