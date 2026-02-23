@@ -19,6 +19,8 @@ type Summary struct {
 	APs          []APInfo     `json:"aps"`
 	SSIDs        []SSIDStat   `json:"ssids"`
 	Clients      []ClientInfo `json:"clients"`
+	Switches     []SwitchInfo `json:"switches,omitempty"`
+	WiredClients []ClientInfo `json:"wired_clients,omitempty"`
 }
 
 // APInfo describes a single access point.
@@ -37,6 +39,14 @@ type APInfo struct {
 	RxRate     float64 `json:"rx_rate"`
 }
 
+// SwitchInfo describes a managed switch discovered from a WiFi controller.
+type SwitchInfo struct {
+	Name  string `json:"name"`
+	Model string `json:"model"`
+	MAC   string `json:"mac"`
+	IP    string `json:"ip"`
+}
+
 // SSIDStat aggregates per-SSID stats.
 type SSIDStat struct {
 	Name       string  `json:"name"`
@@ -49,19 +59,20 @@ type SSIDStat struct {
 
 // ClientInfo describes a single wireless client.
 type ClientInfo struct {
-	MAC      string  `json:"mac"`
-	Hostname string  `json:"hostname"`
-	IP       string  `json:"ip"`
-	SSID     string  `json:"ssid"`
-	APMAC    string  `json:"ap_mac"`
-	APName   string  `json:"ap_name"`
-	Signal   int     `json:"signal"`
-	Channel  int     `json:"channel"`
-	Radio    string  `json:"radio"`
-	TxBytes  int64   `json:"tx_bytes"`
-	RxBytes  int64   `json:"rx_bytes"`
-	TxRate   float64 `json:"tx_rate"`
-	RxRate   float64 `json:"rx_rate"`
+	MAC       string  `json:"mac"`
+	Hostname  string  `json:"hostname"`
+	IP        string  `json:"ip"`
+	SSID      string  `json:"ssid"`
+	APMAC     string  `json:"ap_mac"`
+	APName    string  `json:"ap_name"`
+	SwitchMAC string  `json:"switch_mac,omitempty"`
+	Signal    int     `json:"signal"`
+	Channel   int     `json:"channel"`
+	Radio     string  `json:"radio"`
+	TxBytes   int64   `json:"tx_bytes"`
+	RxBytes   int64   `json:"rx_bytes"`
+	TxRate    float64 `json:"tx_rate"`
+	RxRate    float64 `json:"rx_rate"`
 }
 
 // ByteSnap stores TX/RX byte counters for rate delta computation.
@@ -97,18 +108,23 @@ type NormalizedAP struct {
 	Uptime, TxBytes, RxBytes              int64
 }
 
-// NormalizedClient is a controller-agnostic client for BuildSummary.
-type NormalizedClient struct {
-	MAC, Hostname, IP, SSID, APMAC, APName string
-	Signal, Channel                        int
-	Radio                                  string
-	TxBytes, RxBytes                       int64
-	IsWireless                             bool
+// NormalizedSwitch is a controller-agnostic switch representation.
+type NormalizedSwitch struct {
+	Name, Model, MAC, IP string
 }
 
-// BuildSummary creates a Summary from normalized AP and client data.
+// NormalizedClient is a controller-agnostic client for BuildSummary.
+type NormalizedClient struct {
+	MAC, Hostname, IP, SSID, APMAC, APName, SwitchMAC string
+	Signal, Channel                                   int
+	Radio                                             string
+	TxBytes, RxBytes                                  int64
+	IsWireless                                        bool
+}
+
+// BuildSummary creates a Summary from normalized AP, switch, and client data.
 // It handles SSID aggregation, rate computation, and sorting.
-func BuildSummary(providerName string, rawAPs []NormalizedAP, rawClients []NormalizedClient, dt float64, prevAP, prevSSID, prevCli map[string]ByteSnap) *Summary {
+func BuildSummary(providerName string, rawAPs []NormalizedAP, rawSwitches []NormalizedSwitch, rawClients []NormalizedClient, dt float64, prevAP, prevSSID, prevCli map[string]ByteSnap) *Summary {
 	// Build APs
 	var aps []APInfo
 	for _, d := range rawAPs {
@@ -186,7 +202,27 @@ func BuildSummary(providerName string, rawAPs []NormalizedAP, rawClients []Norma
 		return (clients[i].TxBytes + clients[i].RxBytes) > (clients[j].TxBytes + clients[j].RxBytes)
 	})
 
-	return &Summary{ProviderName: providerName, TotalAPs: len(aps), TotalClients: totalWireless, APs: aps, SSIDs: ssids, Clients: clients}
+	// Build switches
+	var switches []SwitchInfo
+	for _, d := range rawSwitches {
+		switches = append(switches, SwitchInfo{Name: d.Name, Model: d.Model, MAC: d.MAC, IP: d.IP})
+	}
+
+	// Build wired clients with switch association (for topology)
+	var wiredClients []ClientInfo
+	for _, cl := range rawClients {
+		if cl.IsWireless || cl.SwitchMAC == "" {
+			continue
+		}
+		wiredClients = append(wiredClients, ClientInfo{
+			MAC:       cl.MAC,
+			Hostname:  cl.Hostname,
+			IP:        cl.IP,
+			SwitchMAC: cl.SwitchMAC,
+		})
+	}
+
+	return &Summary{ProviderName: providerName, TotalAPs: len(aps), TotalClients: totalWireless, APs: aps, SSIDs: ssids, Clients: clients, Switches: switches, WiredClients: wiredClients}
 }
 
 // StoreSnapshots returns prev-maps for the next delta cycle from a Summary.

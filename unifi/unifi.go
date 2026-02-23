@@ -104,7 +104,7 @@ func (c *Client) poll() {
 		dt = 0
 	}
 
-	sum := wifi.BuildSummary("UniFi", c.normalizeAPs(devices), c.normalizeClients(clients), dt, c.prevAP, c.prevSSID, c.prevCli)
+	sum := wifi.BuildSummary("UniFi", c.normalizeAPs(devices), c.normalizeSwitches(devices), c.normalizeClients(clients), dt, c.prevAP, c.prevSSID, c.prevCli)
 
 	// Store current counters for next delta
 	newAP, newSSID, newCli := wifi.StoreSnapshots(sum)
@@ -228,6 +228,7 @@ type rawClient struct {
 	TxBytes  int64  `json:"tx_bytes"`
 	RxBytes  int64  `json:"rx_bytes"`
 	APMAC    string `json:"ap_mac"`
+	SwMac    string `json:"sw_mac"`
 	Signal   int    `json:"signal"`
 	Channel  int    `json:"channel"`
 	Radio    string `json:"radio"`
@@ -298,6 +299,19 @@ func (c *Client) normalizeAPs(devices []rawDevice) []wifi.NormalizedAP {
 	return aps
 }
 
+func (c *Client) normalizeSwitches(devices []rawDevice) []wifi.NormalizedSwitch {
+	var switches []wifi.NormalizedSwitch
+	for _, d := range devices {
+		if d.Type != "usw" {
+			continue
+		}
+		switches = append(switches, wifi.NormalizedSwitch{
+			Name: d.Name, Model: d.Model, MAC: d.MAC, IP: d.IP,
+		})
+	}
+	return switches
+}
+
 func (c *Client) normalizeClients(clients []rawClient) []wifi.NormalizedClient {
 	var ncs []wifi.NormalizedClient
 	for _, cl := range clients {
@@ -305,6 +319,7 @@ func (c *Client) normalizeClients(clients []rawClient) []wifi.NormalizedClient {
 			MAC: cl.MAC, Hostname: cl.Hostname, IP: cl.IP, SSID: cl.ESSID,
 			APMAC: cl.APMAC, Signal: cl.Signal, Channel: cl.Channel,
 			Radio: cl.Radio, TxBytes: cl.TxBytes, RxBytes: cl.RxBytes,
+			SwitchMAC:  cl.SwMac,
 			IsWireless: !cl.IsWired,
 		})
 	}

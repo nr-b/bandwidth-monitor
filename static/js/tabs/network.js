@@ -178,12 +178,16 @@
 
         var childrenMap = {};
         var linkedSet = {};
+        // Build a bidirectional adjacency list so that BFS from the root
+        // can reach every connected node regardless of link direction.
         links.forEach(function(l) {
-            var parent = l.source, child = l.target;
-            if (!childrenMap[parent]) childrenMap[parent] = [];
-            childrenMap[parent].push({ id: child, link: l });
-            linkedSet[child] = true;
-            linkedSet[parent] = true;
+            var a = l.source, b = l.target;
+            if (!childrenMap[a]) childrenMap[a] = [];
+            childrenMap[a].push({ id: b, link: l });
+            if (!childrenMap[b]) childrenMap[b] = [];
+            childrenMap[b].push({ id: a, link: l });
+            linkedSet[a] = true;
+            linkedSet[b] = true;
         });
 
         nodes.forEach(function(n) {
@@ -193,8 +197,18 @@
             }
         });
 
+        // Sort children so that downstream infrastructure (gateway, switch,
+        // ap) comes first, keeping WAN/tunnel nodes to the edges.
+        var childSortPrio = { 'gateway': 0, 'self': 1, 'switch': 2, 'ap': 3, 'client': 4, 'wan_gw': 5, 'tunnel': 6 };
         for (var parentId in childrenMap) {
-            childrenMap[parentId].sort(function(a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });
+            childrenMap[parentId].sort(function(a, b) {
+                var at = (nodeById[a.id] || {}).type || '';
+                var bt = (nodeById[b.id] || {}).type || '';
+                var ap = childSortPrio[at] !== undefined ? childSortPrio[at] : 4;
+                var bp = childSortPrio[bt] !== undefined ? childSortPrio[bt] : 4;
+                if (ap !== bp) return ap - bp;
+                return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+            });
         }
 
         var layout = _networkLayout;
@@ -206,13 +220,20 @@
             computeTreeLayout(rootId, childrenMap, nodeById, nodePositions, W, nodes.length);
         }
 
+        // Use the computed tree width if the tree is wider than the container
+        var svgW = (nodePositions._treeWidth && nodePositions._treeWidth > W) ? nodePositions._treeWidth : W;
+        delete nodePositions._treeWidth;
+
         var maxY = 100;
         for (var id in nodePositions) {
-            if (nodePositions[id].y + 40 > maxY) maxY = nodePositions[id].y + 40;
+            if (nodePositions[id] && nodePositions[id].y + 40 > maxY) maxY = nodePositions[id].y + 40;
         }
         var H = Math.max(500, maxY + 60);
-        svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+        svg.setAttribute('viewBox', '0 0 ' + svgW + ' ' + H);
+        svg.style.width = svgW + 'px';
+        svg.style.minWidth = '100%';
         svg.style.height = H + 'px';
+        container.style.overflowX = svgW > W ? 'auto' : 'hidden';
 
         var svgHtml = '';
         var textCol = getComputedStyle(document.documentElement).getPropertyValue('--text-0').trim() || '#fafafa';
@@ -267,7 +288,7 @@
             } else {
                 svgHtml += '<line x1="' + from.x + '" y1="' + from.y + '" x2="' + to.x + '" y2="' + to.y + '" stroke="' + col + '" stroke-width="' + sw + '" ' + dash + ' opacity="0.6"/>';
             }
-            if (l.label) {
+            if (l.label && l.type !== 'tunnel' && l.type !== 'wan') {
                 var mx = (from.x + to.x) / 2;
                 var my = (from.y + to.y) / 2;
                 svgHtml += '<text x="' + mx + '" y="' + (my - 4) + '" text-anchor="middle" font-size="9" fill="' + textCol2 + '">' + BM.escSvg(l.label) + '</text>';
@@ -313,38 +334,128 @@
     }
 
     function computeTreeLayout(rootId, childrenMap, nodeById, positions, W, totalNodes) {
-        var levels = [];
+        // Build a proper tree with subtree width calculation to prevent overlap.
+        var MIN_X_GAP = 120; // minimum horizontal distance between nodes
+        var Y_GAP = 100;     // vertical distance between levels
         var visited = {};
-        var queue = [{ id: rootId, depth: 0 }];
-        visited[rootId] = true;
-        while (queue.length > 0) {
-            var item = queue.shift();
-            if (!levels[item.depth]) levels[item.depth] = [];
-            levels[item.depth].push(item.id);
-            var kids = childrenMap[item.id] || [];
+
+        // 1. Compute the width (in node-slots) of each subtree.
+        function subtreeWidth(id) {
+            if (visited[id]) return 0;
+            visited[id] = true;
+            var kids = childrenMap[id] || [];
+            var unvisitedKids = kids.filter(function(k) { return !visited[k.id]; });
+            if (unvisitedKids.length === 0) return 1;
+            var w = 0;
+            for (var i = 0; i < unvisitedKids.length; i++) {
+                w += subtreeWidth(unvisitedKids[i].id);
+            }
+            return Math.max(1, w);
+        }
+        var widths = {};
+        // We need to compute widths in BFS order to handle the visited logic
+        // correctly, so reset and do a two-pass approach.
+        // Pass 1: determine tree membership via BFS
+        var treeChildren = {}; // parentId -> [childId, ...]
+        var bfsVisited = {};
+        var bfsQueue = [rootId];
+        bfsVisited[rootId] = true;
+        while (bfsQueue.length > 0) {
+            var cur = bfsQueue.shift();
+            treeChildren[cur] = [];
+            var kids = childrenMap[cur] || [];
             for (var i = 0; i < kids.length; i++) {
-                if (!visited[kids[i].id]) {
-                    visited[kids[i].id] = true;
-                    queue.push({ id: kids[i].id, depth: item.depth + 1 });
+                if (!bfsVisited[kids[i].id]) {
+                    bfsVisited[kids[i].id] = true;
+                    treeChildren[cur].push(kids[i].id);
+                    bfsQueue.push(kids[i].id);
                 }
             }
         }
-        for (var id in nodeById) {
-            if (!visited[id]) {
-                if (!levels[levels.length - 1]) levels.push([]);
-                levels[levels.length - 1].push(id);
+        // Add orphans
+        var orphans = [];
+        for (var nid in nodeById) {
+            if (!bfsVisited[nid]) orphans.push(nid);
+        }
+        if (orphans.length > 0) {
+            if (!treeChildren[rootId]) treeChildren[rootId] = [];
+            for (var oi = 0; oi < orphans.length; oi++) {
+                treeChildren[rootId].push(orphans[oi]);
+                treeChildren[orphans[oi]] = [];
             }
         }
 
-        var yGap = Math.max(80, Math.min(120, 500 / (levels.length || 1)));
-        var padding = 60;
-        for (var d = 0; d < levels.length; d++) {
-            var row = levels[d];
-            var xGap = (W - 2 * padding) / (row.length + 1);
-            for (var j = 0; j < row.length; j++) {
-                positions[row[j]] = { x: padding + xGap * (j + 1), y: 40 + d * yGap };
+        // Re-parent WAN/tunnel nodes: move them from the gateway to the root
+        // so the gateway stays centered over its downstream network.
+        var rootType = (nodeById[rootId] || {}).type;
+        if (rootType === 'tunnel' || rootType === 'wan_gw') {
+            for (var pid in treeChildren) {
+                if (pid === rootId) continue;
+                var kept = [];
+                for (var ki = 0; ki < treeChildren[pid].length; ki++) {
+                    var cid = treeChildren[pid][ki];
+                    var ctype = (nodeById[cid] || {}).type;
+                    if (ctype === 'tunnel' || ctype === 'wan_gw') {
+                        treeChildren[rootId].push(cid);
+                    } else {
+                        kept.push(cid);
+                    }
+                }
+                treeChildren[pid] = kept;
             }
         }
+
+        // Pass 2: compute subtree widths bottom-up
+        function calcWidth(id) {
+            var ch = treeChildren[id] || [];
+            if (ch.length === 0) { widths[id] = 1; return 1; }
+            var w = 0;
+            for (var i = 0; i < ch.length; i++) w += calcWidth(ch[i]);
+            widths[id] = w;
+            return w;
+        }
+        calcWidth(rootId);
+
+        // Pass 3: assign x positions based on subtree widths, with a minimum total width
+        var totalSlots = widths[rootId] || 1;
+        var neededWidth = totalSlots * MIN_X_GAP + 120;
+        var useW = Math.max(W, neededWidth);
+
+        // Collect depths for y positions
+        var nodeDepth = {};
+        var depthQueue = [{ id: rootId, depth: 0 }];
+        var maxDepth = 0;
+        var idx = 0;
+        while (idx < depthQueue.length) {
+            var item = depthQueue[idx++];
+            nodeDepth[item.id] = item.depth;
+            if (item.depth > maxDepth) maxDepth = item.depth;
+            var ch = treeChildren[item.id] || [];
+            for (var ci = 0; ci < ch.length; ci++) {
+                depthQueue.push({ id: ch[ci], depth: item.depth + 1 });
+            }
+        }
+
+        function assignPositions(id, left, right, depth) {
+            var cx = (left + right) / 2;
+            positions[id] = { x: cx, y: 40 + depth * Y_GAP };
+            var ch = treeChildren[id] || [];
+            if (ch.length === 0) return;
+            var parentWidth = widths[id] || 1;
+            var span = right - left;
+            var offset = left;
+            for (var i = 0; i < ch.length; i++) {
+                var childSlots = widths[ch[i]] || 1;
+                var childSpan = (childSlots / parentWidth) * span;
+                assignPositions(ch[i], offset, offset + childSpan, depth + 1);
+                offset += childSpan;
+            }
+        }
+        var padding = 40;
+        assignPositions(rootId, padding, useW - padding, 0);
+
+        // If the tree is wider than the container, update W reference via positions._width
+        positions._treeWidth = useW;
     }
 
     function computeRadialLayout(rootId, childrenMap, nodeById, positions, W, totalNodes) {
