@@ -158,21 +158,44 @@
         }
 
         var ipRates = {};
+        function normalizeIP(ip) {
+            if (!ip) return '';
+            var z = ip.indexOf('%');
+            if (z >= 0) ip = ip.slice(0, z);
+            return ip.toLowerCase();
+        }
         for (var bi = 0; bi < bandwidth.length; bi++) {
             var t = bandwidth[bi];
-            if (t.ip) ipRates[t.ip] = { rx: t.rx_rate || 0, tx: t.tx_rate || 0, total: t.rate_bytes || 0, hostname: t.hostname || '' };
+            var ipKey = normalizeIP(t.ip);
+            if (!ipKey) continue;
+            if (!ipRates[ipKey]) {
+                ipRates[ipKey] = { rx: 0, tx: 0, total: 0, hostname: t.hostname || '' };
+            }
+            ipRates[ipKey].rx += t.rx_rate || 0;
+            ipRates[ipKey].tx += t.tx_rate || 0;
+            ipRates[ipKey].total += t.rate_bytes || 0;
+            if (!ipRates[ipKey].hostname && t.hostname) ipRates[ipKey].hostname = t.hostname;
         }
 
         var nodeRates = {};
         var maxNodeRate = 1;
         nodes.forEach(function(n) {
-            var best = { rx: 0, tx: 0, total: 0 };
+            var sum = { rx: 0, tx: 0, total: 0, hostname: '' };
+            var seen = {};
             (n.ips || []).forEach(function(ip) {
-                if (ipRates[ip] && ipRates[ip].total > best.total) best = ipRates[ip];
+                var ipKey = normalizeIP(ip);
+                if (!ipKey || seen[ipKey]) return;
+                seen[ipKey] = true;
+                var r = ipRates[ipKey];
+                if (!r) return;
+                sum.rx += r.rx || 0;
+                sum.tx += r.tx || 0;
+                sum.total += r.total || 0;
+                if (!sum.hostname && r.hostname) sum.hostname = r.hostname;
             });
-            if (best.total > 0) {
-                nodeRates[n.id] = best;
-                if (best.total > maxNodeRate) maxNodeRate = best.total;
+            if (sum.total > 0) {
+                nodeRates[n.id] = sum;
+                if (sum.total > maxNodeRate) maxNodeRate = sum.total;
             }
         });
 
@@ -278,28 +301,46 @@
                 var perpX = -dy / len;
                 var perpY = dx / len;
 
-                var rxRatio = Math.min(childRate.rx / maxNodeRate, 1);
-                var txRatio = Math.min(childRate.tx / maxNodeRate, 1);
+                var visualRx = childRate.rx || 0;
+                var visualTx = childRate.tx || 0;
+                if (visualRx <= 0 && visualTx <= 0 && childRate.total > 0) {
+                    // Direction unknown for this host in current sample;
+                    // split total evenly so both lanes remain visible.
+                    visualRx = childRate.total / 2;
+                    visualTx = childRate.total / 2;
+                }
+
+                var rxRatio = Math.min(visualRx / maxNodeRate, 1);
+                var txRatio = Math.min(visualTx / maxNodeRate, 1);
+                var totalRatio = Math.min(childRate.total / maxNodeRate, 1);
                 var rxSw = (1.5 + rxRatio * 3).toFixed(1);
                 var txSw = (1.5 + txRatio * 3).toFixed(1);
-                var sep = Math.max(2, Math.min(5, Math.max(parseFloat(rxSw), parseFloat(txSw)) * 0.8));
+                var hasTwoLanes = visualRx > 0 && visualTx > 0;
 
                 svgHtml += '<line x1="' + from.x + '" y1="' + from.y + '" x2="' + to.x + '" y2="' + to.y + '" stroke="' + lineCol + '" stroke-width="1" opacity="0.15"/>';
 
-                if (childRate.rx > 0) {
+                // Always render a clear total-traffic backbone for active links,
+                // even when directional split (rx/tx) is zero or unavailable.
+                var totalSw = (1.2 + totalRatio * 2.6).toFixed(1);
+                var totalOp = (hasTwoLanes ? 0.18 : (0.45 + totalRatio * 0.35)).toFixed(2);
+                var sepBase = Math.max(parseFloat(rxSw), parseFloat(txSw), parseFloat(totalSw));
+                var sep = Math.max(4, Math.min(10, sepBase * 1.15));
+                svgHtml += '<line x1="' + from.x + '" y1="' + from.y + '" x2="' + to.x + '" y2="' + to.y + '" stroke="' + rxColor + '" stroke-width="' + totalSw + '" opacity="' + totalOp + '" stroke-linecap="round"/>';
+
+                if (visualRx > 0) {
                     var rxOp = (0.3 + rxRatio * 0.5).toFixed(2);
                     var rx1x = (from.x + perpX * sep).toFixed(1), rx1y = (from.y + perpY * sep).toFixed(1);
                     var rx2x = (to.x + perpX * sep).toFixed(1), rx2y = (to.y + perpY * sep).toFixed(1);
                     svgHtml += '<line x1="' + rx1x + '" y1="' + rx1y + '" x2="' + rx2x + '" y2="' + rx2y + '" stroke="' + rxColor + '" stroke-width="' + rxSw + '" stroke-dasharray="6 4" opacity="' + rxOp + '" stroke-linecap="round"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.5s" repeatCount="indefinite"/></line>';
                 }
-                if (childRate.tx > 0) {
+                if (visualTx > 0) {
                     var txOp = (0.3 + txRatio * 0.5).toFixed(2);
                     var tx1x = (to.x - perpX * sep).toFixed(1), tx1y = (to.y - perpY * sep).toFixed(1);
                     var tx2x = (from.x - perpX * sep).toFixed(1), tx2y = (from.y - perpY * sep).toFixed(1);
                     svgHtml += '<line x1="' + tx1x + '" y1="' + tx1y + '" x2="' + tx2x + '" y2="' + tx2y + '" stroke="' + txColor + '" stroke-width="' + txSw + '" stroke-dasharray="6 4" opacity="' + txOp + '" stroke-linecap="round"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.5s" repeatCount="indefinite"/></line>';
                 }
 
-                var tip = (childRate.hostname || l.target) + ': \u2193 ' + BM.formatRate(childRate.rx) + ' \u2191 ' + BM.formatRate(childRate.tx);
+                var tip = (childRate.hostname || l.target) + ': \u2193 ' + BM.formatRate(childRate.rx) + ' \u2191 ' + BM.formatRate(childRate.tx) + ' Total ' + BM.formatRate(childRate.total);
                 svgHtml += '<line x1="' + from.x + '" y1="' + from.y + '" x2="' + to.x + '" y2="' + to.y + '" stroke="transparent" stroke-width="12" style="cursor:pointer" class="net-link-hover" data-tip="' + BM.escSvg(tip) + '"/>';
             } else {
                 svgHtml += '<line x1="' + from.x + '" y1="' + from.y + '" x2="' + to.x + '" y2="' + to.y + '" stroke="' + col + '" stroke-width="' + sw + '" ' + dash + ' opacity="0.6"/>';
@@ -318,6 +359,14 @@
             var r = nodeRadius(node.type);
             var fill = nodeColor(node.type);
             svgHtml += '<circle cx="' + pos.x + '" cy="' + pos.y + '" r="' + r + '" fill="' + fill + '" stroke="' + fill + '" stroke-width="2" fill-opacity="0.15"/>';
+            var nr = nodeRates[nid];
+            if (nr && nr.total > 0) {
+                var nratio = Math.min(nr.total / maxNodeRate, 1);
+                var rr = (r + 2 + nratio * 6).toFixed(1);
+                var rop = (0.3 + nratio * 0.45).toFixed(2);
+                var rsw = (1 + nratio * 2.2).toFixed(1);
+                svgHtml += '<circle cx="' + pos.x + '" cy="' + pos.y + '" r="' + rr + '" fill="none" stroke="' + rxColor + '" stroke-width="' + rsw + '" opacity="' + rop + '"><animate attributeName="opacity" values="' + rop + ';' + Math.max(0.15, nratio * 0.2).toFixed(2) + ';' + rop + '" dur="1.8s" repeatCount="indefinite"/></circle>';
+            }
             var emoji = node.type === 'client' && node.device_class ? deviceClassEmoji(node.device_class) : nodeTypeEmoji(node.type);
             svgHtml += '<text x="' + pos.x + '" y="' + (pos.y + 4) + '" text-anchor="middle" font-size="' + (r > 14 ? 14 : 11) + '" fill="' + fill + '">' + emoji + '</text>';
             var label = node.hostname || (node.ips && node.ips[0]) || node.mac || node.id;

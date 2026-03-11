@@ -575,20 +575,40 @@ func fetchExternalIP() string {
 // buildPayload assembles the JSON payload sent over the SSE stream.
 func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, wp wifi.Provider, ct *conntrack.Tracker, lm *latency.Monitor, ts *topology.Scanner, dnsRes *resolver.Resolver, origin *originResolver) map[string]interface{} {
 	geo := t.GetGeoBreakdown()
+	var ov *topology.Overview
+	if ts != nil {
+		ov = ts.GetOverview()
+	}
+
+	var topologyBandwidth []talkers.TalkerStat
+	if ov != nil {
+		ips := make([]string, 0, len(ov.Nodes)*2)
+		for _, n := range ov.Nodes {
+			for _, ip := range n.IPs {
+				if ip == "" {
+					continue
+				}
+				ips = append(ips, ip)
+			}
+		}
+		topologyBandwidth = t.BandwidthForIPs(ips)
+	}
+
 	payload := map[string]interface{}{
-		"interfaces":    c.GetAll(),
-		"sparklines":    c.GetSparklines(5*time.Minute, 50),
-		"protocols":     t.GetProtocolBreakdown(),
-		"ip_versions":   t.GetIPVersionBreakdown(),
-		"countries":     geo.Countries,
-		"asns":          geo.ASNs,
-		"top_bandwidth": t.TopByBandwidth(10),
-		"top_volume":    t.TopByVolume(10),
-		"unique_ips":    t.UniqueIPs(),
-		"uptime_secs":   readUptime(),
-		"load_avg":      readLoadAvg(),
-		"processes":     func() map[string]int { r, t := readProcessCount(); return map[string]int{"running": r, "total": t} }(),
-		"timestamp":     time.Now().UnixMilli(),
+		"interfaces":         c.GetAll(),
+		"sparklines":         c.GetSparklines(5*time.Minute, 50),
+		"protocols":          t.GetProtocolBreakdown(),
+		"ip_versions":        t.GetIPVersionBreakdown(),
+		"countries":          geo.Countries,
+		"asns":               geo.ASNs,
+		"top_bandwidth":      t.TopByBandwidth(10),
+		"topology_bandwidth": topologyBandwidth,
+		"top_volume":         t.TopByVolume(10),
+		"unique_ips":         t.UniqueIPs(),
+		"uptime_secs":        readUptime(),
+		"load_avg":           readLoadAvg(),
+		"processes":          func() map[string]int { r, t := readProcessCount(); return map[string]int{"running": r, "total": t} }(),
+		"timestamp":          time.Now().UnixMilli(),
 	}
 	if origin != nil {
 		if og := origin.resolve(c); og != nil {
@@ -621,10 +641,8 @@ func buildPayload(c *collector.Collector, t *talkers.Tracker, dp dns.Provider, w
 	if lm != nil {
 		payload["latency"] = lm.GetStatus()
 	}
-	if ts != nil {
-		if ov := ts.GetOverview(); ov != nil {
-			payload["topology"] = ov
-		}
+	if ov != nil {
+		payload["topology"] = ov
 	}
 	return payload
 }

@@ -340,6 +340,68 @@ func (t *Tracker) TopByBandwidth(n int) []TalkerStat {
 	return list
 }
 
+// BandwidthForIPs returns current bandwidth stats for the given IP list.
+//
+// It uses the short rate ring (same source as TopByBandwidth) but only for
+// explicitly requested IPs, avoiding top-N truncation and expensive enrichment.
+func (t *Tracker) BandwidthForIPs(ips []string) []TalkerStat {
+	if len(ips) == 0 {
+		return nil
+	}
+
+	wanted := make(map[string]struct{}, len(ips))
+	for _, ip := range ips {
+		if ip == "" {
+			continue
+		}
+		wanted[ip] = struct{}{}
+	}
+	if len(wanted) == 0 {
+		return nil
+	}
+
+	t.mu.RLock()
+	if t.current == nil {
+		t.mu.RUnlock()
+		return nil
+	}
+	rates, elapsed := t.rateFromRing()
+	t.mu.RUnlock()
+
+	list := make([]TalkerStat, 0, len(wanted))
+	for ip := range wanted {
+		r, ok := rates[ip]
+		if !ok {
+			continue
+		}
+		parsedIP := net.ParseIP(ip)
+		if _, isSelf := t.selfIPs[ip]; isSelf {
+			continue
+		}
+		if parsedIP != nil && parsedIP.IsLoopback() {
+			continue
+		}
+		isLocal := parsedIP != nil && netutil.IsLocal(parsedIP, t.localNets)
+		list = append(list, TalkerStat{
+			IP:         ip,
+			TotalBytes: r.bytes,
+			RxBytes:    r.rxBytes,
+			TxBytes:    r.txBytes,
+			RateBytes:  float64(r.bytes) / elapsed,
+			RxRate:     float64(r.rxBytes) / elapsed,
+			TxRate:     float64(r.txBytes) / elapsed,
+			Packets:    r.packets,
+			IsLocal:    isLocal,
+		})
+	}
+
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].RateBytes > list[j].RateBytes
+	})
+
+	return list
+}
+
 func (t *Tracker) getDevices() ([]string, error) {
 	if len(t.devices) > 0 {
 		return t.devices, nil
@@ -508,6 +570,14 @@ func (t *Tracker) accountDirection(p *parsedPkt, current *bucket, rSlot *rateSlo
 		return
 	}
 	if p.srcLocal && !p.dstLocal {
+		if h, ok := current.hosts[p.srcStr]; ok {
+			h.txBytes += p.wireLen
+		}
+		if rSlot != nil {
+			if h, ok := rSlot.hosts[p.srcStr]; ok {
+				h.txBytes += p.wireLen
+			}
+		}
 		if h, ok := current.hosts[p.dstStr]; ok {
 			h.txBytes += p.wireLen
 		}
@@ -517,6 +587,14 @@ func (t *Tracker) accountDirection(p *parsedPkt, current *bucket, rSlot *rateSlo
 			}
 		}
 	} else if !p.srcLocal && p.dstLocal {
+		if h, ok := current.hosts[p.dstStr]; ok {
+			h.rxBytes += p.wireLen
+		}
+		if rSlot != nil {
+			if h, ok := rSlot.hosts[p.dstStr]; ok {
+				h.rxBytes += p.wireLen
+			}
+		}
 		if h, ok := current.hosts[p.srcStr]; ok {
 			h.rxBytes += p.wireLen
 		}
