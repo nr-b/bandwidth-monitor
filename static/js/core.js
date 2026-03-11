@@ -94,7 +94,7 @@
         } else if (tab === 'wifi') {
             if (BM.updateWiFi) BM.updateWiFi(d.wifi || null);
         } else if (tab === 'network') {
-            if (BM.updateNetwork) BM.updateNetwork(d.topology || null, d.top_bandwidth || []);
+            if (BM.updateNetwork) BM.updateNetwork(d.topology || null, d.topology_bandwidth || d.top_bandwidth || []);
         } else if (tab === 'nat') {
             if (BM.updateNAT) BM.updateNAT(d.conntrack || null);
         }
