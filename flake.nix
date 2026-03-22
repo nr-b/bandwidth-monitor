@@ -17,7 +17,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, geolite2-country, geolite2-asn }:
+  outputs = { self, nixpkgs, flake-utils, geolite2-city, geolite2-asn }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
