@@ -32,7 +32,6 @@
           buildInputs = [ pkgs.libpcap ];
           nativeBuildInputs = [ pkgs.pkg-config ];
 
-          CGO_ENABLED = 1;
           ldflags = [
             "-s" "-w"
             "-X" "bandwidth-monitor/version.Version=${bandwidth-monitor.version}"
